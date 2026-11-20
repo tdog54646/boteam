@@ -1,0 +1,96 @@
+.slash-menu {
+  position: absolute;
+  z-index: 8;
+  inset-inline: 0;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: 0 3px 14px rgb(0 0 0 / 5%);
+}
+.slash-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 29px;
+  padding: 4px 9px;
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.slash-row[aria-selected="true"] {
+  background: var(--hover);
+}
+.slash-row svg {
+  flex: none;
+  color: var(--muted);
+}
+.slash-row span {
+  flex: none;
+  max-width: 48%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slash-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--subtle);
+  font-size: 13px;
+}
+.slash-row kbd {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--subtle);
+  font: 11px/16px var(--mono);
+}
+.slash-row[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: help;
+}
+.slash-member-select,
+.slash-caption,
+.slash-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 9px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.slash-member-select {
+  position: sticky;
+  top: -4px;
+  z-index: 1;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.slash-member-select select {
+  min-width: 0;
+  max-width: 100%;
+  font: inherit;
+  color: var(--muted);
+  background: var(--surface);
+  border: 0;
+}
+.slash-status button {
+  color: var(--accent);
+}
+.slash-info {
+  margin: 8px 0;
+  padding-inline-start: 18px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}

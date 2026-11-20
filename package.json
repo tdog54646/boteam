@@ -1,0 +1,29 @@
+{
+  "name": "boteam",
+  "productName": "BoTeam",
+  "version": "0.1.0",
+  "private": true,
+  "description": "使用本机 AI 订阅的私聊与群聊工作台",
+  "main": "desktop/main.mjs",
+  "type": "module",
+  "scripts": {
+    "build": "vite build --base=./",
+    "start": "npm run build && electron .",
+    "test": "node --test tests/*.test.mjs",
+    "package": "npm run build && node scripts/package.mjs",
+    "verify:desktop": "npm run build && node scripts/verify-desktop.mjs"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "@playwright/test": "^1.65.1",
+    "electron": "^45.2.1",
+    "lucide-react": "^1.77.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "vite": "^8.3.8"
+  }
+}
