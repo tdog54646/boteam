@@ -64,6 +64,14 @@ export class Database {
       CREATE TABLE IF NOT EXISTS chats(
         id TEXT PRIMARY KEY, kind TEXT NOT NULL,name TEXT NOT NULL,updatedAt TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS chat_sections(
+        id TEXT PRIMARY KEY,name TEXT NOT NULL COLLATE NOCASE UNIQUE
+      );
+      CREATE TABLE IF NOT EXISTS chat_organization(
+        chatId TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+        pinned INTEGER NOT NULL DEFAULT 0,unread INTEGER NOT NULL DEFAULT 0,archived INTEGER NOT NULL DEFAULT 0,
+        sectionId TEXT REFERENCES chat_sections(id) ON DELETE SET NULL
+      );
       CREATE TABLE IF NOT EXISTS chat_forks(
         chatId TEXT PRIMARY KEY REFERENCES chats(id),sourceChatId TEXT NOT NULL REFERENCES chats(id)
       );
@@ -119,6 +127,11 @@ export class Database {
       CREATE VIEW IF NOT EXISTS message_attachments AS
         SELECT messageId,id AS attachmentId FROM attachments WHERE messageId IS NOT NULL
         UNION ALL SELECT messageId,attachmentId FROM fork_attachments;
+      CREATE TABLE IF NOT EXISTS fork_member_context(
+        chatId TEXT NOT NULL REFERENCES chats(id),botId TEXT NOT NULL REFERENCES bots(id),
+        cwd TEXT NOT NULL,seedMessageId TEXT REFERENCES messages(id),PRIMARY KEY(chatId,botId)
+      );
+      CREATE INDEX IF NOT EXISTS messages_by_chat ON messages(chatId);
       UPDATE tasks SET status='interrupted',approval=NULL,error='上次运行因应用关闭而中断，可继续发送消息。'
         WHERE status IN ('running','queued','approval');
     `)
@@ -141,6 +154,17 @@ export class Database {
             AND NOT EXISTS (SELECT 1 FROM messages WHERE chatId=c.id)
             AND NOT EXISTS (SELECT 1 FROM chat_forks WHERE chatId=c.id);`)
       }
+      if (!this.get("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='native_fork_attachments'")) {
+        this.db.exec(`CREATE TABLE native_fork_attachments(
+          chatId TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,botId TEXT NOT NULL,
+          attachmentId TEXT NOT NULL REFERENCES attachments(id),PRIMARY KEY(chatId,botId,attachmentId))`)
+        // Older /fork branches have native prompts with attachment paths but no
+        // copied local bubbles. Their first local turn bounds the inherited files.
+        for (const f of this.all(`SELECT f.*,m.botId,coalesce((SELECT min(createdAt) FROM messages WHERE chatId=c.id),c.updatedAt) AS cutoff
+          FROM chat_forks f JOIN chats c ON c.id=f.chatId JOIN members m ON m.chatId=c.id ORDER BY c.rowid`)) {
+          this.retainNativeAttachments(f.sourceChatId, f.chatId, f.botId, f.cutoff)
+        }
+      }
       if (!columns.includes('model')) this.db.exec("ALTER TABLE bots ADD COLUMN model TEXT NOT NULL DEFAULT ''")
       if (!columns.includes('effort')) this.db.exec("ALTER TABLE bots ADD COLUMN effort TEXT NOT NULL DEFAULT ''")
       if (!taskColumns.includes('groupCutoff')) this.db.exec('ALTER TABLE tasks ADD COLUMN groupCutoff INTEGER')
@@ -155,6 +179,14 @@ export class Database {
       this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS messages_by_publication
         ON messages(chatId,publishSeq) WHERE publishSeq IS NOT NULL`)
     })
+  }
+  retainNativeAttachments(sourceId, chatId, botId, cutoff = null) {
+    this.run(`INSERT OR IGNORE INTO native_fork_attachments(chatId,botId,attachmentId)
+      SELECT ?,?,a.attachmentId FROM message_attachments a JOIN messages m ON m.id=a.messageId
+      WHERE m.chatId=? AND (? IS NULL OR m.createdAt<=?) AND EXISTS (
+        SELECT 1 FROM json_each(m.recipients) WHERE value=?)
+      UNION ALL SELECT ?,?,attachmentId FROM native_fork_attachments WHERE chatId=? AND botId=?`,
+      chatId, botId, sourceId, cutoff, cutoff, botId, chatId, botId, sourceId, botId)
   }
   groupBoundary(chatId) {
     return this.get(`SELECT coalesce(max(publishSeq),0) AS seq FROM messages
@@ -206,7 +238,8 @@ export class Database {
     }
     const byMessage = new Map()
     for (const {messageId, fileCount, skippedCount, ...file} of this.all(
-      'SELECT messageId,a.id,name,size,kind,fileCount,skippedCount FROM attachments a LEFT JOIN attachment_folders USING(id) WHERE messageId IS NOT NULL ORDER BY a.rowid',
+      `SELECT ma.messageId,a.id,name,size,kind,fileCount,skippedCount FROM message_attachments ma
+       JOIN attachments a ON a.id=ma.attachmentId LEFT JOIN attachment_folders f ON f.id=a.id ORDER BY a.rowid`,
     )) {
       if (!byMessage.has(messageId)) byMessage.set(messageId, [])
       byMessage.get(messageId).push(file.kind === 'folder' ? { ...file, fileCount, skippedCount } : file)
@@ -226,9 +259,12 @@ export class Database {
         ...b,
         archived: Boolean(b.archived),
       })),
-      chats: this.all(`SELECT c.*,f.sourceChatId FROM chats c LEFT JOIN chat_forks f ON c.id=f.chatId
+      chatSections: this.all('SELECT id,name FROM chat_sections ORDER BY rowid'),
+      chats: this.all(`SELECT c.*,c.rowid AS creationOrder,f.sourceChatId,o.sectionId,o.pinned,o.unread,o.archived FROM chats c
+        LEFT JOIN chat_forks f ON c.id=f.chatId LEFT JOIN chat_organization o ON c.id=o.chatId
         ORDER BY c.updatedAt DESC,c.rowid DESC`).map((c) => ({
         ...c,
+        pinned: Boolean(c.pinned), unread: Boolean(c.unread), archived: Boolean(c.archived),
         members: byChat.get(c.id) || [],
       })),
       messages: this.all('SELECT * FROM messages ORDER BY rowid').map((m) => ({

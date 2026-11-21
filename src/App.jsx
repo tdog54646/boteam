@@ -9,6 +9,10 @@ import {
 import { AccountDialog, AccountList, Discovery, LoginDialog } from "./Accounts";
 import { BotForm, BotList, ChatDialog } from "./Bots";
 import { Conversation } from "./Conversation";
+import { ChatToolbar } from "./ChatToolbar";
+import { ChatActionMenu } from "./ChatActionMenu";
+import { ChatActionDialog, useChatActions } from "./ChatActions";
+import "./chat-management.css";
 import { Onboarding } from "./Onboarding";
 import { Sidebar, ChatSearch } from "./Sidebar";
 import { Home } from "./Home";
@@ -18,23 +22,31 @@ const empty = {
   accounts: [],
   bots: [],
   chats: [],
+  chatSections: [],
   messages: [],
   tasks: [],
   onboarded: false,
 };
 const invoke = (method, payload = {}) => window.boteam.invoke(method, payload);
+const initialChat = window.boteam?.initialChatId;
+const navigationStorage = initialChat ? sessionStorage : localStorage;
+const builtInPages = new Set(["home", "accounts", "bots"]);
 export default function App() {
   const [state, setState] = useState(empty);
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
   const [page, setPage] = useState(
-    () => localStorage.getItem("boteam:page") || "home",
+    () => navigationStorage.getItem("boteam:page") || initialChat || "home",
   );
   const [dialog, setDialog] = useState(null);
   const [collapsed, setCollapsed] = useState(false);
+  const currentPage = useRef(page);
+  currentPage.current = page;
   const trail = useRef([page]);
   const [position, setPosition] = useState(0);
+  const historyPosition = useRef(0);
+  const latest = useRef(empty);
   const [busy, setBusy] = useState(false);
   const revision = useRef(0);
   const hasLaunched = useRef(false);
@@ -42,22 +54,51 @@ export default function App() {
     const request = ++revision.current;
     const snapshot = await invoke("snapshot");
     if (request === revision.current) {
+      const before = latest.current;
+      latest.current = snapshot;
       if (!hasLaunched.current) {
         hasLaunched.current = true;
-        const lastPage = localStorage.getItem("boteam:page");
+        const lastPage = navigationStorage.getItem("boteam:page");
         if (
-          snapshot.onboarded &&
+          !initialChat && snapshot.onboarded &&
           ["accounts", "bots"].includes(lastPage) &&
           snapshot.bots.some((bot) => !bot.archived)
         ) {
-          const lastChat = localStorage.getItem("boteam:last-chat");
+          const lastChat = navigationStorage.getItem("boteam:last-chat");
           const activeBots = new Set(snapshot.bots.filter((bot) => !bot.archived).map((bot) => bot.id));
-          const usable = snapshot.chats.filter((chat) => chat.members.some((id) => activeBots.has(id)));
+          const usable = snapshot.chats.filter((chat) => !chat.archived && chat.members.some((id) => activeBots.has(id)));
           const target = usable.find((chat) => chat.id === lastChat)?.id || usable[0]?.id || "home";
           trail.current = [target];
+          currentPage.current = target;
           setPage(target);
-          localStorage.setItem("boteam:page", target);
+          navigationStorage.setItem("boteam:page", target);
         }
+        const opened = snapshot.chats.find(chat => chat.id === currentPage.current);
+        if (initialChat && opened?.unread) {
+          invoke("setChatUnread", { chatId: opened.id, unread: false }).catch(e => setError(errorText(e)));
+        }
+      }
+      const accessible = new Set([...builtInPages, ...snapshot.chats.map(c => c.id)]);
+      const retired = new Set(before.chats.filter(c => !accessible.has(c.id)).map(c => c.id));
+      for (const c of snapshot.chats) if (c.archived) retired.add(c.id);
+      if (retired.size) {
+        setDialog(current => current && ["chatAction", "directory", "group"].includes(current.type)
+          && !accessible.has(current.id) ? null : current);
+      }
+      const previous = trail.current;
+      const valid = previous.filter(id => accessible.has(id));
+      let index = previous.slice(0, historyPosition.current + 1).filter(id => accessible.has(id)).length - 1;
+      if (!accessible.has(currentPage.current)) {
+        const fallback = valid[index] || "home";
+        if (index < 0) { valid.unshift(fallback); index = 0; }
+        currentPage.current = fallback;
+        setPage(fallback);
+        navigationStorage.setItem("boteam:page", fallback);
+      }
+      if (valid.length !== previous.length || index !== historyPosition.current || valid[0] !== previous[0]) {
+        trail.current = valid;
+        historyPosition.current = Math.max(0, index);
+        setPosition(historyPosition.current);
       }
       setState({ ...empty, ...snapshot });
       setReady(true);
@@ -75,44 +116,52 @@ export default function App() {
       refresh().catch((e) => setError(errorText(e))),
     );
   }, [refresh]);
-  function move(direction) {
-    const index = position + direction;
-    if (index < 0 || index >= trail.current.length) return;
-    setPosition(index);
-    const id = trail.current[index];
+  const visit = useCallback(id => {
+    currentPage.current = id;
     setPage(id);
-    localStorage.setItem("boteam:page", id);
+    navigationStorage.setItem("boteam:page", id);
     setDialog(null);
-  }
-  function select(id) {
-    if (trail.current[position] !== id) {
-      trail.current = [...trail.current.slice(0, position + 1), id];
-      setPosition(trail.current.length - 1);
+    if (latest.current.chats.find(chat => chat.id === id)?.unread) {
+      invoke("setChatUnread", { chatId: id, unread: false }).catch(e => setError(errorText(e)));
     }
-    setPage(id);
-    localStorage.setItem("boteam:page", id);
-    setDialog(null);
+  }, []);
+  function move(direction) {
+    const index = historyPosition.current + direction;
+    if (index < 0 || index >= trail.current.length) return;
+    historyPosition.current = index;
+    setPosition(index);
+    visit(trail.current[index]);
   }
-  const close = () => setDialog(null);
+  const select = useCallback(id => {
+    const index = historyPosition.current;
+    if (trail.current[index] !== id) {
+      trail.current = [...trail.current.slice(0, index + 1), id];
+      historyPosition.current = trail.current.length - 1;
+      setPosition(historyPosition.current);
+    }
+    visit(id);
+  }, [visit]);
+  useEffect(() => window.boteam?.onOpenChat?.(select), [select]);
+  const actions = useChatActions({ state, page, currentPage, dialog, setDialog, invoke, select, refresh, setError });
+  const close = () => setDialog(current => current?.returnTo || null);
   async function finishDialog() {
     await refresh();
-    setDialog((current) => current === dialog ? null : current);
+    setDialog((current) => current === dialog ? (dialog?.returnTo || null) : current);
   }
   async function finishChat(id) {
-    await refresh();
+    try { await refresh(); } catch (e) {
+      setError(errorText(e));
+      if (!latest.current.chats.some(c => c.id === id)) return;
+    }
     select(id);
   }
-  async function startDirect(id) {
+  const startDirect = useCallback(async botId => {
     try {
-      const chatId = await invoke("createChat", {
-        kind: "direct",
-        members: [id],
-      });
-      await finishChat(chatId);
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }
+      const id = await invoke("createChat", { kind: "direct", members: [botId] });
+      await refresh();
+      select(id);
+    } catch (e) { setError(errorText(e)); }
+  }, [refresh, select]);
   async function finishWizard(botId) {
     setBusy(true);
     try {
@@ -130,7 +179,8 @@ export default function App() {
   }
   useEffect(() => {
     function key(e) {
-      if (!(e.metaKey || e.ctrlKey) || !ready || !state.onboarded || dialog)
+      if (e.defaultPrevented || e.repeat || e.shiftKey || e.altKey ||
+          !(e.metaKey || e.ctrlKey) || !ready || !state.onboarded || dialog)
         return;
       const key = e.key.toLowerCase();
       if (!["b", "k", "n"].includes(key)) return;
@@ -141,12 +191,13 @@ export default function App() {
     }
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
-  }, [ready, state.onboarded, dialog, position]);
+  }, [ready, state.onboarded, dialog, select]);
   const wizard = ready && !state.onboarded;
   const chat = state.chats.find((c) => c.id === page);
+  useEffect(() => { document.title = chat ? chat.name + " · BoTeam" : "BoTeam"; }, [chat?.name]);
   useEffect(() => {
-    if (chat) localStorage.setItem("boteam:last-chat", chat.id);
-  }, [chat?.id]);
+    if (chat && !chat.archived) navigationStorage.setItem("boteam:last-chat", chat.id);
+  }, [chat?.id, chat?.archived]);
   const dialogBot = dialog?.id && state.bots.find((b) => b.id === dialog.id);
   const dialogAccount =
     dialog?.id && state.accounts.find((a) => a.id === dialog.id);
@@ -162,6 +213,9 @@ export default function App() {
       {!collapsed && (
         <Sidebar
           state={state}
+          onChatMenu={actions.showMenu}
+          onChatAction={actions.act}
+          menuChatId={actions.menu?.variant === "context" ? actions.menu.chatId : null}
           page={page}
           select={select}
           open={setDialog}
@@ -184,17 +238,21 @@ export default function App() {
             />
           )}
           <div className="window-title">{pageTitle}</div>
-          {!wizard && chat?.kind === "group" && (
-            <button
-              className="header-action"
-              onClick={() => setDialog({ type: "group", id: chat.id })}
-              aria-label="群聊设置"
-              title="群聊设置"
-            >
-              <UsersRound size={15} />
-              {chat.members.length} 位成员
-            </button>
-          )}
+          <div className="header-actions">
+            {!wizard && chat?.kind === "group" && (
+              <button
+                className="header-action"
+                onClick={() => setDialog({ type: "group", id: chat.id })}
+                aria-label="群聊设置"
+                title="群聊设置"
+              >
+                <UsersRound size={15} />
+                {chat.members.length} 位成员
+              </button>
+            )}
+            {chat && <ChatToolbar chat={chat} onChatMenu={actions.showMenu} onChatAction={actions.act}
+              menuOpen={actions.menu?.variant === "header"} />}
+          </div>
         </header>
         {error && (
           <div className="global-error" role="alert">
@@ -249,6 +307,8 @@ export default function App() {
           </div>
         ) : chat ? (
           <Conversation
+            onError={setError}
+            restoreChat={() => actions.act("archive", chat)}
             onOpenChat={finishChat}
             key={chat.id}
             chat={chat}
@@ -257,14 +317,24 @@ export default function App() {
             open={setDialog}
           />
         ) : (
-          <Home
-            state={state}
-            invoke={invoke}
-            open={setDialog}
-            onChat={finishChat}
-          />
+          <Home state={state} invoke={invoke} open={setDialog} onChat={finishChat} />
         )}
       </main>
+      {actions.menuChat && !dialog && <ChatActionMenu key={actions.menu.chatId + actions.menu.variant}
+        anchor={actions.menu.anchor} variant={actions.menu.variant} chat={actions.menuChat}
+        sections={state.chatSections} openTargets={actions.openTargets} onAction={actions.act} onClose={actions.closeMenu} />}
+      {actions.notice && <div className="chat-action-status" role="status">{actions.notice}</div>}
+      {dialog?.type === "directory" && <Modal title="选择工作目录" onClose={close}>
+        <div className="member-list">{dialog.directories.map(({ botId, names, directory }, index) =>
+          <button type="button" key={botId} data-autofocus={index === 0 || undefined} className="member-row"
+            onClick={() => { close(); actions.act(dialog.action, { id: dialog.id }, { ...dialog.payload, botId }); }}>
+            <span className="row-copy"><strong>{names.join("、")}</strong><small title={directory}>{directory}</small></span>
+          </button>)}</div>
+      </Modal>}
+      {dialog?.type === "chatAction" && state.chats.some(c => c.id === dialog.id) && (
+        <ChatActionDialog key={dialog.id + dialog.action} chat={state.chats.find(c => c.id === dialog.id)}
+          action={dialog.action} invoke={invoke} onClose={close} onDone={finishDialog} />
+      )}
       {dialog?.type === "search" && (
         <Modal title="搜索对话" onClose={close}>
           <ChatSearch state={state} select={select} />
@@ -323,7 +393,7 @@ export default function App() {
                 <Button onClick={close}>取消</Button>
                 <Button
                   variant="primary"
-                  onClick={() => setDialog({ type: "import" })}
+                  onClick={() => setDialog({ type: "import", returnTo: dialog })}
                 >
                   导入账号
                 </Button>

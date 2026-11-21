@@ -13,79 +13,8 @@ import {
 } from "lucide-react";
 import { Brand, IconButton } from "./ui";
 
-function shortDate(when) {
-  const time = new Date(when);
-  if (!Number.isFinite(time.getTime())) return "";
-  if (time.toDateString() === new Date().toDateString())
-    return time.toLocaleTimeString("zh-CN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-  return time.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
-}
+import { ChatRows, SidebarSection, shortDate } from "./SidebarParts";
 
-function ChatList({
-  title,
-  kind,
-  chats,
-  tasks,
-  selected,
-  disabled,
-  select,
-  open,
-}) {
-  const [expanded, setExpanded] = useState(true);
-  return (
-    <section className="rail-section">
-      <div className="rail-section-heading">
-        <button aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-          <span>{title}</span>
-          <ChevronRight size={12} className={expanded ? "turned" : ""} />
-        </button>
-        <IconButton
-          icon={Plus}
-          label={"新建" + title}
-          disabled={disabled}
-          onClick={() => open({ type: "chat", kind })}
-        />
-      </div>
-      {expanded &&
-        (chats.length ? (
-          chats.map((chat) => {
-            const display = chat.name;
-            const running = tasks.some(
-              (t) =>
-                t.chatId === chat.id &&
-                ["running", "approval", "queued"].includes(t.status),
-            );
-            const Icon = kind === "group" ? UsersRound : MessageSquare;
-            return (
-              <button
-                key={chat.id}
-                className="rail-row thread-row"
-                aria-current={selected === chat.id ? "page" : undefined}
-                title={display}
-                onClick={() => select(chat.id)}
-              >
-                <Icon size={16} />
-                <span>{display}</span>
-                {running ? (
-                  <i className="running-dot" aria-label="正在运行" />
-                ) : (
-                  <time dateTime={chat.updatedAt}>
-                    {shortDate(chat.updatedAt)}
-                  </time>
-                )}
-              </button>
-            );
-          })
-        ) : (
-          <div className="rail-empty">暂无{title}</div>
-        ))}
-    </section>
-  );
-}
 export function Sidebar({
   state,
   page,
@@ -94,7 +23,19 @@ export function Sidebar({
   disabled,
   collapse,
   history,
+  onChatMenu, onChatAction, menuChatId,
 }) {
+  const [folded, setFolded] = useState({ archived: true });
+  const chats = disabled ? [] : state.chats;
+  const runningIds = new Set(state.tasks.filter(t => ["running", "approval", "queued"].includes(t.status)).map(t => t.chatId));
+  const sections = state.chatSections || [];
+  const sectionIds = new Set(sections.map(s => s.id));
+  const groups = [
+    { id: "pinned", title: "置顶", chats: chats.filter(c => c.pinned && !c.archived) },
+    ...sections.map(s => ({ ...s, title: s.name, chats: chats.filter(c => !c.pinned && !c.archived && c.sectionId === s.id) })),
+    { id: "recent", title: "最近", chats: chats.filter(c => !c.pinned && !c.archived && !sectionIds.has(c.sectionId)) },
+    { id: "archived", title: "已归档", chats: chats.filter(c => c.archived) },
+  ];
   return (
     <aside className="sidebar" aria-label="侧栏">
       <div className="sidebar-titlebar">
@@ -142,22 +83,14 @@ export function Sidebar({
         </button>
       </nav>
       <nav className="rail-history" aria-label="聊天列表">
-        {[
-          ["direct", "私聊"],
-          ["group", "群聊"],
-        ].map(([kind, title]) => (
-          <ChatList
-            key={kind}
-            kind={kind}
-            title={title}
-            disabled={disabled}
-            selected={page}
-            select={select}
-            open={open}
-            chats={disabled ? [] : state.chats.filter((c) => c.kind === kind)}
-            tasks={state.tasks}
-          />
-        ))}
+        {groups.filter(g => g.chats.length || g.id === "recent" || sectionIds.has(g.id)).map(g =>
+          <SidebarSection key={g.id} title={g.title} expanded={!folded[g.id]}
+            toggle={() => setFolded({ ...folded, [g.id]: !folded[g.id] })}
+            actions={g.id === "recent" && <IconButton icon={Plus} label="开始新聊天" disabled={disabled}
+              onClick={() => open({ type: "chat" })} />}>
+            <ChatRows chats={g.chats} selected={page} runningIds={runningIds} select={select}
+              onChatMenu={onChatMenu} onChatAction={onChatAction} menuChatId={menuChatId}/>
+          </SidebarSection>)}
       </nav>
       <nav className="rail-settings" aria-label="管理">
         {[

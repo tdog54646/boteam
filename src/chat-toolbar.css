@@ -1,0 +1,10 @@
+.header-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-left: auto;
+}
+.chat-tools { position: relative; display: flex; align-items: center; gap: 5px; }
+.chat-tools .icon-btn { border-radius: 50%; color: var(--fg); }
+.chat-tools .icon-btn[aria-expanded=true] { background: var(--hover); }

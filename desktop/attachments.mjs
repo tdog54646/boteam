@@ -311,7 +311,14 @@ export class AttachmentStore {
     if (typeof id !== 'string' || !uuid.test(id)) throw new Error('附件无效。')
     const result = this.db.run('DELETE FROM attachments WHERE scope=? AND id=? AND messageId IS NULL', scope, id)
     if (!result.changes) throw new Error('附件不在当前草稿中。')
-    await rm(join(this.dir, id), { recursive: true, force: true })
+    await this.discardSnapshots([id])
+  }
+  async discardSnapshots(ids) {
+    if (!ids.length) return
+    if (await realpath(this.dir) !== this.dir) throw new Error('附件目录已移动，无法清理本机快照。')
+    for (const id of ids) {
+      if (uuid.test(id)) await rm(join(this.dir, id), { recursive: true, force: true })
+    }
   }
   // Called inside the send transaction after its user message has been inserted.
   claim({ chatId, homeBotId, messageId, ids = [] }) {

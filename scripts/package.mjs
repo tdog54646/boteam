@@ -9,6 +9,7 @@ const result = await packager({
   out: process.argv[2] || join(root, 'release'),
   name: 'BoTeam',
   appBundleId: 'local.boteam.desktop',
+  protocols: [{ name: 'BoTeam 聊天', schemes: ['boteam'] }],
   icon: join(root, 'assets/BoTeam.icns'),
   platform: process.platform,
   arch: process.arch,

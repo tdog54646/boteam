@@ -13,7 +13,8 @@ import {
   Square,
   SquareTerminal,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import { linkedChatId } from "../desktop/chat-transfer.mjs";
 import { Composer } from "./Composer";
 import { MessageQuote } from "./MessageQuote";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -217,8 +218,19 @@ function TaskView({ task, bot, account, invoke, onLogin, compact = false }) {
     </div>
   );
 }
-export function Conversation({ chat, state, invoke, open, onOpenChat }) {
+export function Conversation({ chat, state, invoke, open, onOpenChat, restoreChat, onError }) {
   const { accounts, bots, messages, tasks } = state;
+  function chatLink(url, children, key) {
+    return <a className="chat-deeplink" key={key} href={url} onClick={event => {
+      event.preventDefault();
+      invoke("openChatLink", { url }).catch(error => onError(errorText(error)));
+    }}>{children}</a>;
+  }
+  function linkChatText(text) {
+    if (typeof text !== "string" || !text.toLowerCase().includes("boteam://chat/")) return text;
+    return text.split(/(boteam:\/\/chat\/[a-f\d-]{36})/gi).map((part, index) =>
+      linkedChatId(part) ? chatLink(part, part, index) : part);
+  }
   const log = useMemo(() => messages.filter(m => m.chatId === chat.id), [messages, chat.id]);
   const jobs = tasks.filter((t) => t.chatId === chat.id);
   const members = chat.members
@@ -354,13 +366,14 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
                           {sentExtensions.get(m.id).map((label, index) => <span key={index}><Plug size={13} />{label}</span>)}
                         </div>
                       )}
-                      {m.text}
+                      {linkChatText(m.text)}
                     </div>
                   ) : (
                     <div className="markdown">
-                      <ReactMarkdown
+                      <ReactMarkdown urlTransform={url => linkedChatId(url) ? url : defaultUrlTransform(url)}
                         components={{
-                          a: ({ children, href }) => (
+                          p: ({ children }) => <p>{React.Children.map(children, linkChatText)}</p>,
+                          a: ({ children, href }) => linkedChatId(href) ? chatLink(href, children) : (
                             <span className="link-text" title={href}>
                               {children}
                               {href && <small>（{href}）</small>}
@@ -373,7 +386,7 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
                       </ReactMarkdown>
                     </div>
                   )}
-                  {publicMessages.has(m.id) && (
+                  {!chat.archived && publicMessages.has(m.id) && (
                     <button type="button" className="quote-action" aria-description={`${m.name}的消息`}
                       onClick={() => quoteControl.current?.select(m.id)}>
                       <Quote size={13} aria-hidden="true" />引用
@@ -419,8 +432,10 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
           </div>
         )}
       </div>
-      <Composer onOpenChat={onOpenChat} chat={chat} members={members} state={state} invoke={invoke}
-        quoteControl={quoteControl} publicMessages={publicMessages} />
+      {chat.archived ? (
+        <div className="archived-composer"><span>此聊天已归档</span><Button onClick={restoreChat}>恢复聊天</Button></div>
+      ) : <Composer onOpenChat={onOpenChat} chat={chat} members={members} state={state} invoke={invoke}
+        quoteControl={quoteControl} publicMessages={publicMessages} />}
     </section>
   );
 }

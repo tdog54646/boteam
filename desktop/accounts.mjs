@@ -324,7 +324,7 @@ export class Accounts {
       throw new Error((ids.length ? `已导入 ${ids.length} 个账号。` : '') + errors.join(' '))
     return [...new Set(ids)]
   }
-  async login({ provider, accountId, candidateId, requestId, fresh = false }) {
+  async login({ provider, accountId, candidateId, requestId, fresh = false }, owner) {
     const candidate = candidateId ? this.candidates.get(candidateId) : null
     if (candidateId && (!candidate || candidate.provider !== 'antigravity'))
       throw new Error('检测记录已失效，请重新检测。')
@@ -341,7 +341,7 @@ export class Accounts {
     if (previous && !previous.controller.signal.aborted) throw new Error('该工具已有正在进行的授权，请先取消该次授权。')
     const abort = new AbortController()
     const { promise: done, resolve: finish } = Promise.withResolvers()
-    const login = { controller: abort, accountId: current?.id, requestId, done }
+    const login = { controller: abort, accountId: current?.id, requestId, owner, done }
     this.logins.set(key, login)
     let source, verified = false, timedOut = false
     const newScope = candidate
@@ -414,15 +414,15 @@ export class Accounts {
       }
     }
   }
-  cancelLogin({ requestId }) {
+  cancelLogin({ requestId }, owner) {
     if (typeof requestId !== 'string' || !requestId) return false
-    const login = [...this.logins.values()].find(entry => entry.requestId === requestId)
+    const login = [...this.logins.values()].find(entry => entry.requestId === requestId && entry.owner === owner)
     if (!login) return false
     login.controller.abort()
     return true
   }
-  cancelAllLogins() {
-    for (const { controller } of this.logins.values()) controller.abort()
+  cancelAllLogins(owner) {
+    for (const login of this.logins.values()) if (!owner || login.owner === owner) login.controller.abort()
   }
   async remove({ id }) {
     return this.serialize(async () => {

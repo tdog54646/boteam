@@ -55,6 +55,31 @@ test('only the first ordinary request may name a chat, including parallel recipi
   assert.doesNotMatch(owner.description, /private|omitted|@Alpha/)
 })
 
+test('manual names and explicitly named groups retain control over delayed or subsequent titles', async t => {
+  const started = Promise.withResolvers(), finish = Promise.withResolvers()
+  const f = await fixture(t, async ({ titleRequest, emit }) => {
+    if (titleRequest) {
+      started.resolve()
+      await finish.promise
+      assert.ok(!titleRequest())
+    }
+    emit({ type: 'title', value: '过时的自动名称' })
+  })
+  const chat = await f.chat()
+  await f.send(chat, 'Please help me debug the sidebar selection. More context follows.')
+  await started.promise
+  assert.equal(f.name(chat), 'debug the sidebar selection')
+  await f.app.handle('renameChat', { chatId: chat, name: '调试记录' })
+  finish.resolve()
+  await f.drain()
+  assert.equal(f.name(chat), '调试记录')
+  assert.equal(await f.suggest(chat), 'debug the sidebar selection')
+  const group = await f.chat('group', '手工命名的群')
+  await f.send(group, 'Compare the two approaches', f.bots)
+  await f.drain()
+  assert.equal(f.name(group), '手工命名的群')
+})
+
 test('local fallback handles attachments, code and private literals without reading file contents', async t => {
   const descriptions = []
   const f = await fixture(t, ({ titleRequest, emit }) => {
@@ -82,8 +107,8 @@ test('migration preserves existing history and manual names and only opts untouc
   const empty = await f.chat(), old = await f.chat(), manual = await f.chat(), group = await f.chat('group', '旧群')
   await f.send(old, 'Fix the loading spinner')
   await f.drain()
-  f.app.db.run("UPDATE chats SET name=? WHERE id=?", 'Alpha Writer', old)
-  f.app.db.run("UPDATE chats SET name=? WHERE id=?", '以前的手动命名', manual)
+  await f.app.handle('renameChat', { chatId: old, name: 'Alpha Writer' })
+  await f.app.handle('renameChat', { chatId: manual, name: '以前的手动命名' })
   f.app.db.db.exec('DROP TABLE chat_title_requests')
   await f.restart()
   assert.deepEqual(f.app.db.all('SELECT chatId FROM chat_title_requests').map(row => row.chatId), [empty])

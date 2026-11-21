@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
-import { isAbsolute, join } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { Database } from './database.mjs'
 import { beginChatTitle, applyNativeTitle, suggestChatTitle } from './chat-titles.mjs'
 import { Accounts } from './accounts.mjs'
@@ -10,6 +10,7 @@ import { AttachmentStore } from './attachments.mjs'
 import { protectedNativePaths } from './codex-permissions.mjs'
 import { commandName } from './adapters/native-slash.mjs'
 import { groupPrompt } from './group-context.mjs'
+import { manageChat } from './chat-management.mjs'
 
 const active = "('queued','running','approval')"
 const stamp = () => new Date().toISOString()
@@ -44,6 +45,7 @@ export class Workspace {
       )
     }
     this.notify = options.notify || (() => {})
+    this.onChatDeleted = options.onChatDeleted
     this.pickDirectory = options.pickDirectory
     this.pickFiles = options.pickFiles
     this.makeThumbnail = options.makeThumbnail
@@ -91,6 +93,45 @@ export class Workspace {
       this.pendingAccounts.delete(operation)
     }
   }
+  chatDirectory(chatId, bot) {
+    const thread = chatId && this.db.get('SELECT cwd FROM threads WHERE chatId=? AND botId=?', chatId, bot.id)
+    const fork = chatId && this.db.get('SELECT cwd FROM fork_member_context WHERE chatId=? AND botId=?', chatId, bot.id)
+    return thread?.cwd || fork?.cwd || bot.cwd ||
+      this.db.get("SELECT json_extract(info,'$.cwd') AS cwd FROM accounts WHERE id=?", bot.accountId)?.cwd ||
+      join(this.root, 'workspaces', chatId || '.catalog')
+  }
+  chatDirectories(chatId) {
+    if (typeof chatId !== 'string' || !this.db.get('SELECT 1 FROM chats WHERE id=?', chatId))
+      throw new Error('会话已不存在。')
+    const directories = new Map()
+    const members = this.db.all(`SELECT b.* FROM members m JOIN bots b ON b.id=m.botId
+      WHERE m.chatId=? ORDER BY m.rowid`, chatId)
+    for (const bot of members) {
+      const cwd = this.chatDirectory(chatId, bot)
+      if (typeof cwd !== 'string' || !isAbsolute(cwd) || cwd.includes('\0')) continue
+      const directory = resolve(cwd)
+      if (!directories.has(directory)) directories.set(directory, { botId: bot.id, names: [], directory })
+      directories.get(directory).names.push(bot.name)
+    }
+    return [...directories.values()]
+  }
+  async ensureChatDirectory(chatId, bot) {
+    const cwd = this.chatDirectory(chatId, bot)
+    const existing = await stat(cwd).catch(error => {
+      if (error.code !== 'ENOENT') throw error
+      return null
+    })
+    if (existing?.isDirectory()) return cwd
+    // Only lazy-create a managed directory that has never hosted a bound
+    // thread. A fork can share that directory with its source.
+    if (!existing && dirname(cwd) === join(this.root, 'workspaces') && bot.cwd !== cwd &&
+        !this.db.get('SELECT 1 FROM threads WHERE cwd=? LIMIT 1', cwd) &&
+        !this.db.get("SELECT 1 FROM accounts WHERE id=? AND json_extract(info,'$.cwd')=?", bot.accountId, cwd)) {
+      await mkdir(cwd, { recursive: true, mode: 0o700 })
+      return cwd
+    }
+    throw new Error('原生工作目录已不存在，请恢复目录或新建会话。')
+  }
   async nativeScope({ chatId, botId }) {
     const bot = chatId ? this.composer.member(chatId, botId) : this.bot(botId)
     const account = this.db.account(bot.accountId)
@@ -99,10 +140,7 @@ export class Workspace {
     const thread = chatId && this.db.get(
       'SELECT threadId,cwd,accountId FROM threads WHERE chatId=? AND botId=?', chatId, botId)
     if (thread && thread.accountId !== account.id) throw new Error('原生会话与绑定账号不符。')
-    const cwd = thread?.cwd || bot.cwd || account.cwd || join(this.root, 'workspaces', chatId || '.catalog')
-    if (!thread && !bot.cwd && !account.cwd) await mkdir(cwd, { recursive: true, mode: 0o700 })
-    if (!(await stat(cwd).catch(() => null))?.isDirectory())
-      throw new Error('原生工作目录已不存在，请恢复目录或新建会话。')
+    const cwd = await this.ensureChatDirectory(chatId, bot)
     this.lifetime.signal.throwIfAborted()
     const settings = chatId ? this.composer.read(chatId, bot) : {}
     return {
@@ -159,6 +197,7 @@ export class Workspace {
           this.addMembers(id, [bot])
           this.associateThread(id, botId, bot.accountId, result.threadId, scope.cwd)
           this.db.run('INSERT INTO chat_forks VALUES(?,?)', id, chatId)
+          this.db.retainNativeAttachments(chatId, id, botId)
           this.db.run(`INSERT INTO composer_settings(chatId,botId,model,effort,permission,planMode)
             SELECT ?,botId,model,effort,permission,planMode FROM composer_settings WHERE chatId=? AND botId=?`,
             id, chatId, botId)
@@ -307,17 +346,19 @@ export class Workspace {
     this.notify()
     return id
   }
-  async handle(method, p = {}) {
+  async handle(method, p = {}, context = {}) {
     if (this.closed) throw new Error('工作台已关闭。')
     switch (method) {
       case 'snapshot':
         return this.snapshot()
       case 'suggestChatTitle':
         return suggestChatTitle(this.db, p.chatId)
+      case 'chatDirectories':
+        return this.chatDirectories(p.chatId)
       case 'pickDirectory':
-        return this.pickDirectory()
+        return this.pickDirectory(context.window)
       case 'pickAttachments':
-        return this.accountOperation(this.attachments.pick(p.scope, this.pickFiles))
+        return this.accountOperation(this.attachments.pick(p.scope, () => this.pickFiles(context.window)))
       case 'addAttachments':
         return this.accountOperation(this.attachments.add(p.scope, p.files))
       case 'listAttachments':
@@ -347,9 +388,9 @@ export class Workspace {
       case 'import':
         return this.accountOperation(this.accounts.import(p))
       case 'login':
-        return this.accountOperation(this.accounts.login(p))
+        return this.accountOperation(this.accounts.login(p, context.window))
       case 'cancelLogin':
-        return this.accounts.cancelLogin(p)
+        return this.accounts.cancelLogin(p, context.window)
       case 'removeAccount':
         return this.accountOperation(this.accounts.remove(p))
       case 'finishOnboarding':
@@ -378,6 +419,14 @@ export class Workspace {
         break
       case 'createChat':
         return this.createChat(p)
+      case 'createChatSection':
+      case 'renameChat':
+      case 'setChatPinned':
+      case 'setChatUnread':
+      case 'setChatArchived':
+      case 'moveChatToSection':
+      case 'deleteChat':
+        return this.accountOperation(manageChat(this, method, p))
       case 'editGroup': {
         if (this.db.get('SELECT kind FROM chats WHERE id=?', p.id)?.kind !== 'group')
           throw new Error('此会话不是群聊。')
@@ -439,6 +488,8 @@ export class Workspace {
     return id
   }
   send({ chatId, recipients, text = '', attachmentIds = [], nativeActions = {}, replyToMessageId = null }, goalObjective, slash) {
+    if (this.db.get('SELECT archived FROM chat_organization WHERE chatId=?', chatId)?.archived)
+      throw new Error('请先恢复已归档的聊天，再发送消息。')
     if (!Array.isArray(attachmentIds)) throw new Error('附件列表无效。')
     const bots = this.members(recipients)
     if (!nativeActions || typeof nativeActions !== 'object' || Array.isArray(nativeActions) ||
@@ -576,10 +627,7 @@ export class Workspace {
         throw new Error(account.reason || '此账号需要重新授权或无法隔离。')
       const thread = this.db.get('SELECT threadId,cwd,accountId FROM threads WHERE chatId=? AND botId=?', chatId, bot.id)
       if (thread && thread.accountId !== account.id) throw new Error('原生会话与绑定账号不符。')
-      const cwd = thread?.cwd || bot.cwd || account.cwd || join(this.root, 'workspaces', chatId)
-      if (!thread && !bot.cwd && !account.cwd) await mkdir(cwd, { recursive: true, mode: 0o700 })
-      if (!(await stat(cwd).catch(() => null))?.isDirectory())
-        throw new Error('原生工作目录已不存在，请恢复目录或为 Bot 选择新目录并新建会话。')
+      const cwd = await this.ensureChatDirectory(chatId, bot)
       controller.signal.throwIfAborted()
       let nativeThreadId = thread?.threadId ?? null
       if (groupCutoff != null) {
@@ -638,7 +686,7 @@ export class Workspace {
                 if (!flushTimer) flushTimer = setTimeout(flushText, 65)
                 return
               case 'tool':
-                this.event(id, val)
+                this.event(id, val, event)
                 break
               case 'context':
                 this.composer.recordContext(chatId, bot.id, event.value)
@@ -686,10 +734,10 @@ export class Workspace {
       if (!this.closed) this.notify()
     }
   }
-  event(id, text) {
+  event(id, text, { agent, source } = {}) {
     this.db.run(
-      "UPDATE tasks SET events=json_insert(events,'$[#]',json_object('text',?)) WHERE id=?",
-      redact(text).slice(0, 2000),
+      "UPDATE tasks SET events=json_insert(events,'$[#]',json(?)) WHERE id=?",
+      JSON.stringify({ text: redact(text).slice(0, 2000), agent, source }),
       id,
     )
   }
