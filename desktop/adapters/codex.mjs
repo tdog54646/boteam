@@ -13,6 +13,7 @@ import {
 import { stageFork, verifyFork } from './codex-fork.mjs'
 import { codexCommands, compactThread, installedMethods, mcpInfo } from './codex-slash.mjs'
 import { contextUsage, imageSnapshots, quotaWindow } from './usage.mjs'
+import { codexActivity } from './chat-activity.mjs'
 
 export const permissionModes = [
   'default',
@@ -406,7 +407,6 @@ const toolNames = {
   commandExecution: '执行命令',
   fileChange: '修改文件',
   mcpToolCall: '调用 MCP 工具',
-  webSearch: '搜索网页',
   imageView: '查看图片',
   dynamicToolCall: '调用原生工具',
 }
@@ -937,6 +937,7 @@ export async function run(scope) {
         activeSession = active ? session : null
       }
       await scope.emit({ type: 'session', value: session })
+      if (scope.titleRequest?.() && opened.thread.name) await scope.emit({ type: 'title', value: opened.thread.name })
       await runTurns(rpc, scope, opened, {
         trackGoal,
         fields,
@@ -944,6 +945,12 @@ export async function run(scope) {
         collaboration,
         setGoalActive,
       })
+      // The server may persist the title at completion instead of notifying the running client.
+      if (scope.titleRequest?.()) {
+        const result = await rpc.request('thread/read', { threadId: session, includeTurns: false }, 1200).catch(() => null)
+        if (result?.thread?.id === session && result.thread.name)
+          await scope.emit({ type: 'title', value: result.thread.name })
+      }
     })
   } finally {
     // Aborting closes the child and its tool children immediately. Park an
@@ -1050,6 +1057,10 @@ async function runTurns(
       continue
     }
     if (p.threadId !== session) continue
+    if (msg.method === 'thread/name/updated') {
+      if (scope.titleRequest?.() && p.threadName) await emit({ type: 'title', value: p.threadName })
+      continue
+    }
     if (msg.method === 'thread/goal/updated' || msg.method === 'thread/goal/cleared') {
       const goal = checkedGoal(p.goal, session)
       // Resume can queue the previous, parked snapshot ahead of the activation
@@ -1108,6 +1119,9 @@ async function runTurns(
       const previous = sent.get(p.item.id) || ''
       if (typeof full === 'string' && full.startsWith(previous))
         append(p.item.id, full.slice(previous.length))
+    }
+    if (msg.method === 'item/started' || msg.method === 'item/completed') {
+      for (const activity of codexActivity(p.item, msg.method === 'item/completed')) await emit(activity)
     }
     if (msg.method === 'item/started' && Object.hasOwn(toolNames, p.item?.type)) {
       const item = p.item

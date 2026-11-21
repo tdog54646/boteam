@@ -104,6 +104,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
    if(scenario.staleGoal && method==='thread/resume' && goal()) notify('thread/goal/updated',{threadId,goal:goal()});
    return reply({thread:{id:threadId},approvalsReviewer:scenario.wrongReviewer?'user':p.approvalsReviewer,collaborationMode:scenario.priorPlan?{mode:'plan'}:null,model:scenario.wrongModel?'different':p.model,reasoningEffort:p.config?.model_reasoning_effort,modelProvider:'openai',approvalPolicy:p.approvalPolicy,sandbox:{type:p.sandbox==='read-only'?'readOnly':'workspaceWrite',networkAccess:false}});
  }
+ if(method==='thread/read' && scenario.metadataTitle) return reply({thread:{id:p.threadId,name:scenario.metadataTitle}});
  if(method==='thread/read' || method==='thread/fork'){
    const path=require('node:path');
    const dir=path.join(process.env.CODEX_HOME,'sessions','2026','11','20');
@@ -156,6 +157,10 @@ readline.createInterface({input:process.stdin}).on('line', line => {
      out({id:'external-refresh',method:'account/chatgptAuthTokens/refresh',params:{}});return reply({turn:{id:turnId}});
    }
    reply({turn:{id:turnId}});
+   if(scenario.eventTitle){
+     notify('thread/name/updated',{threadId:'other',threadName:'foreign'});
+     notify('thread/name/updated',{threadId,threadName:scenario.eventTitle});
+   }
    if(scenario.turnError) {
      notify('turn/completed',{threadId,turn:{id:turnId,status:'failed',error:scenario.turnError,items:[]}});
      return;
@@ -791,4 +796,14 @@ test('Codex /fork stages only its source lineage in a new home and verifies the 
   assert.ok((await fs.stat(storage('next'))).isDirectory())
   assert.ok((await fs.stat(storage('branch'))).isDirectory())
   assert.equal((await audit()).some(c => c.method === 'turn/start'), false)
+})
+
+test('Codex consumes only the bound thread title event and falls back to scoped metadata', async t => {
+  const { f, task, events } = await composerFixture(t)
+  for (const field of ['eventTitle', 'metadataTitle']) {
+    events.length = 0
+    await f.scenario({ [field]: '修复任务重试' })
+    await run({ ...task, titleRequest: () => !events.some(e => e.type === 'title') && '修复任务重试' })
+    assert.deepEqual(events.filter(e => e.type === 'title').map(e => e.value), ['修复任务重试'])
+  }
 })

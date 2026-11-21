@@ -24,6 +24,7 @@ const notifications = new Set([
   'account/login/completed',
   'account/rateLimits/updated',
   'thread/tokenUsage/updated',
+  'thread/name/updated',
   'model/rerouted',
   'thread/compacted',
   'thread/goal/updated',

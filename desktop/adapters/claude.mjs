@@ -1,3 +1,4 @@
+import { agentActivity, webActivity } from './chat-activity.mjs'
 import { execFile, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -462,6 +463,7 @@ async function nativeSession(
     threadId,
     prompt,
     attachments,
+    titleRequest,
     extensionIds = [],
     slashCommand,
     cwd,
@@ -642,6 +644,7 @@ async function nativeSession(
       parent_tool_use_id: null,
       session_id: id,
     })
+    const agentCalls = new Map()
     for await (const message of messages) {
       if (message.session_id && message.session_id !== id)
         throw new Error('Claude 返回了不匹配的原生会话。')
@@ -680,7 +683,16 @@ async function nativeSession(
         }
       } else if (message.type === 'assistant' && !message.error) {
         for (const block of message.message?.content || []) {
-          if (block.type === 'tool_use') await emit({ type: 'tool', value: toolName(block.name) })
+          if (block.type === 'tool_use') {
+            let activity
+            if (['Agent', 'Task'].includes(block.name)) {
+              activity = agentActivity(block.id, 'running', block.input?.description)
+              if (activity) agentCalls.set(block.id, block.input?.run_in_background === true)
+            } else if (['WebFetch', 'WebSearch'].includes(block.name)) {
+              activity = webActivity(block.input?.url, block.input?.query)
+            }
+            await emit(activity || { type: 'tool', value: toolName(block.name) })
+          }
           if (
             block.type === 'text' &&
             !streamed &&
@@ -692,6 +704,17 @@ async function nativeSession(
           }
         }
         streamed = false
+      } else if (message.type === 'user' && Array.isArray(message.message?.content)) {
+        for (const block of message.message.content) {
+          if (block.type === 'tool_result' && agentCalls.get(block.tool_use_id) === false) {
+            agentCalls.delete(block.tool_use_id)
+            await emit(agentActivity(block.tool_use_id, block.is_error ? 'errored' : 'completed'))
+          }
+        }
+      } else if (message.type === 'system' && message.subtype === 'task_notification') {
+        const status = { completed: 'completed', failed: 'errored', stopped: 'interrupted' }[message.status]
+        if (status && agentCalls.delete(message.tool_use_id))
+          await emit(agentActivity(message.tool_use_id, status))
       } else if (message.type === 'result') {
         if (message.is_error || message.subtype !== 'success') throw failResult(message)
         if (!seenSession) throw new Error('Claude 未返回可恢复的原生会话。')
@@ -714,6 +737,15 @@ async function nativeSession(
           if (quota) await emit({ type: 'quota', value: quota })
         } finally {
           clearTimeout(deadline)
+        }
+        const description = titleRequest?.()
+        if (description && child.exitCode === null && !child.signalCode && !signal?.aborted) {
+          let deadline
+          try {
+            const title = control({ subtype: 'generate_session_title', description, persist: false }, '').catch(() => null)
+            const result = await Promise.race([title, new Promise(resolve => { deadline = setTimeout(() => resolve(null), 6000) })])
+            if (result?.title) await emit({ type: 'title', value: result.title })
+          } finally { clearTimeout(deadline) }
         }
         return
       }

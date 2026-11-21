@@ -425,3 +425,15 @@ test(
     await assert.rejects(adapter.run({ account, cwd, permission: 'invalid' }), /权限/)
   },
 )
+
+test('ACP titles use scoped session info notifications or negotiated session metadata', mac, async t => {
+  const { account, cwd, state } = await setup(t)
+  Object.assign(account, await adapter.detect(account))
+  for (const field of ['eventTitle', 'listTitle']) {
+    await state({ [field]: '核对子目录' })
+    const titles = []
+    await adapter.run({ account, cwd, bot: {}, prompt: 'request', titleRequest: () => !titles.length && 'request',
+      emit: e => { if (e.type === 'title') titles.push(e.value) }, approve: () => false })
+    assert.deepEqual(titles, ['核对子目录'])
+  }
+})

@@ -122,7 +122,7 @@ export async function withAcp(profile, signal, handle, work) {
       waiter.resolve(msg.result)
     }
   })
-  const request = (method, params) => {
+  const request = (method, params, optionalTimeout) => {
     if (failure) return Promise.reject(failure)
     const id = ++seq
     return new Promise((resolve, reject) => {
@@ -130,7 +130,10 @@ export async function withAcp(profile, signal, handle, work) {
       const timer =
         method === 'session/prompt'
           ? null
-          : setTimeout(() => fail(new Error('Antigravity 原生请求超时。')), timeout)
+          : setTimeout(() => {
+            const error = new Error('Antigravity 原生请求超时。')
+            if (optionalTimeout) { pending.delete(id); reject(error) } else fail(error)
+          }, optionalTimeout || timeout)
       pending.set(id, { resolve, reject, timer, method })
       write({ id, method, params })
     })

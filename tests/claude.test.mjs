@@ -61,6 +61,12 @@ let model
 for await (const line of createInterface({input:process.stdin})) {
   const m = JSON.parse(line)
   if (m.type === 'control_request') {
+    if (m.request.subtype === 'generate_session_title') {
+      appendFileSync(process.env.CLAUDE_CONFIG_DIR + '/titles', JSON.stringify(m.request)+'\\n')
+      const unsupported = existsSync(process.env.CLAUDE_CONFIG_DIR + '/no-titles')
+      write({type:'control_response',response:{subtype:unsupported?'error':'success', request_id:m.request_id, response:{title:'Trace subscription usage'}}})
+      continue
+    }
     if (m.request.subtype === 'set_model') model = m.request.model
     const data = m.request.subtype === 'set_permission_mode' ? {mode:m.request.mode} : m.request.subtype === 'get_usage' ? {rate_limits_available:true,rate_limits:{five_hour:{utilization:10},seven_day:{utilization:49},seven_day_sonnet:{utilization:77}}} : m.request.subtype === 'get_context_usage' ? {totalTokens:901,maxTokens:100000,rawMaxTokens:120000,model:'claude-a'} : m.request.subtype === 'get_settings'
       ? {applied:{model:existsSync(process.env.CLAUDE_CONFIG_DIR + '/mismatch') ? 'different' : model || 'claude-a',effort:args.includes('--effort') ? args[args.indexOf('--effort')+1] : undefined}}
@@ -458,4 +464,20 @@ test('a group reply and an old quote reach the Claude CLI as one user message pe
   assert.ok(frames[0].text.includes(original.text) && frames[0].text.includes('作者'))
   assert.ok(frames[1].text.includes(original.text) && frames[1].text.endsWith('将引用的阈值降低一半'))
   assert.equal(frames[1].args[frames[1].args.indexOf('--resume') + 1], frames[0].args[frames[0].args.indexOf('--session-id') + 1])
+})
+
+test('Claude generates the first title through a native control and tolerates an older CLI', async t => {
+  const f = await fixture(t)
+  const account = { ...f, ...await detect(f) }
+  const description = 'Review subscription usage across two accounts and compare the reset times.'
+  for (const supported of [true, false]) {
+    if (!supported) await writeFile(path.join(f.source, 'no-titles'), '')
+    const events = []
+    await run({ account, cwd: f.source, prompt: 'request', titleRequest: () => description,
+      emit: event => events.push(event), approve: () => false })
+    assert.deepEqual(events.filter(e => e.type === 'title').map(e => e.value), supported ? ['Trace subscription usage'] : [])
+    assert.ok(events.some(e => e.type === 'text'))
+  }
+  const sent = (await readFile(path.join(f.source, 'titles'), 'utf8')).trim().split('\n').map(JSON.parse)
+  assert.deepEqual(sent, Array(2).fill({ subtype: 'generate_session_title', description, persist: false }))
 })

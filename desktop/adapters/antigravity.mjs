@@ -435,6 +435,7 @@ export async function run({
   threadId,
   prompt,
   attachments,
+  titleRequest,
   permission = 'default',
   planMode = false,
   extensionIds = [],
@@ -479,6 +480,8 @@ export async function run({
       }
     }
     if (msg.method !== 'session/update' || !authorized || p.sessionId !== id) return
+    if (p.update?.sessionUpdate === 'session_info_update' && p.update.title && titleRequest?.())
+      await emit({ type: 'title', value: p.update.title })
     if (p.update?.sessionUpdate === 'agent_message_chunk' && p.update.content?.type === 'text')
       await emit({ type: 'text', value: p.update.content.text })
     if (p.update?.sessionUpdate === 'usage_update') {
@@ -560,5 +563,10 @@ export async function run({
       throw new Error('Antigravity 在完成本轮前停止，请检查额度或重试。')
     const quota = await readQuota(profile, model, selectedModel, signal)
     if (quota) await emit({ type: 'quota', value: quota })
+    if (titleRequest?.() && capabilities?.sessionCapabilities?.list) {
+      const page = await request('session/list', { cwd }, 1200).catch(() => null)
+      const title = page?.sessions?.find(session => session.sessionId === id)?.title
+      if (title) await emit({ type: 'title', value: title })
+    }
   })
 }
