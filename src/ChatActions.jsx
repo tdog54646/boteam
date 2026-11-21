@@ -88,6 +88,9 @@ export function useChatActions({ state, page, currentPage, dialog, setDialog, in
         case "moveSection":
           await invoke("moveChatToSection", { chatId, sectionId: payload.sectionId ?? null });
           break;
+        case "moveProject":
+          await invoke("moveChatToProject", { chatId, projectId: payload.projectId ?? null });
+          break;
         case "archive":
           await invoke("setChatArchived", { chatId, archived: !chat.archived });
           if (!chat.archived && currentPage.current === chat.id) select("home");

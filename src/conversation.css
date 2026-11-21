@@ -361,6 +361,13 @@
   width: min(100%, var(--thread-width, 768px));
   margin-inline: auto;
 }
+.composer-project-row {
+  margin: 0 12px;
+  padding: 4px 6px 6px;
+  border-radius: 12px 12px 0 0;
+  background: var(--hover);
+  text-align: start;
+}
 .composer {
   display: flex;
   flex-direction: column;

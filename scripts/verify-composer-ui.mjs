@@ -520,7 +520,8 @@ async function verifySlash(page, expect, screenshots) {
   assert.deepEqual(sent.recipients,[third])
   assert.deepEqual(state.tasks.filter(t => t.messageId === sent.id).map(t => [t.botId,t.accountId,t.status]),[[third,'account-'+third,'done']])
   const beforeHome = (await read()).chats.length
-  await page.getByRole('button',{name:/新建对话/}).click()
+  await page.getByRole('button',{name:'切换工作台'}).click()
+  await page.getByRole('menuitemcheckbox',{name:'首页',exact:true}).click()
   const home = page.getByRole('textbox',{name:'新对话消息'})
   const homeMember = page.getByRole('combobox',{name:'选择接收 Bot'})
   await homeMember.selectOption(first)

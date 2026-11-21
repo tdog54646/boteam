@@ -9,7 +9,7 @@ const mac = /Mac/i.test(navigator.platform);
 const shortcut = (letter, shift = false) => mac
   ? (shift ? "⇧⌘" : "⌥⌘") + letter : "Ctrl+" + (shift ? "Shift+" : "Alt+") + letter;
 
-function menuGroups(chat, sections, header, openTargets) {
+function menuGroups(chat, sections, projects, header, openTargets) {
   const rename = { id: "rename", text: "重命名", icon: Pencil, key: shortcut("R") };
   const pin = { id: "pin", text: chat.pinned ? "取消置顶" : header ? "置顶聊天" : "置顶",
     icon: chat.pinned ? PinOff : Pin, key: shortcut("P") };
@@ -36,16 +36,20 @@ function menuGroups(chat, sections, header, openTargets) {
       ...sections.map(section => ({ id: "moveSection", text: section.name,
         selected: section.id === chat.sectionId && !chat.pinned, payload: { sectionId: section.id } })),
       { id: "newSection", text: "新建分区…", icon: FolderPlus },
-    ] }],
+    ] }, ...(projects.length ? [{ id: "projects", text: "移至项目", icon: Folder, children: [
+      { id: "moveProject", text: "不加入项目", selected: !chat.projectId, payload: { projectId: null } },
+      ...projects.map(project => ({ id: "moveProject", text: project.name,
+        selected: project.id === chat.projectId, payload: { projectId: project.id } })),
+    ] }] : [])],
     [{ id: "share", text: "分享", icon: Upload }, copy],
     [newWindow], [archive, remove],
   ];
 }
 
-export function ChatActionMenu({ chat, sections = [], openTargets = [], anchor, variant, onAction, onClose }) {
+export function ChatActionMenu({ chat, sections = [], projects = [], openTargets = [], anchor, variant, onAction, onClose }) {
   const header = variant === "header";
   return <ActionMenu label={header ? "更多聊天操作" : "聊天快捷菜单"}
-    groups={menuGroups(chat, sections, header, openTargets)} anchor={anchor} variant={variant} onClose={onClose}
+    groups={menuGroups(chat, sections, projects, header, openTargets)} anchor={anchor} variant={variant} onClose={onClose}
     onAction={(item, rect) => onAction(item.id, chat, item.id === "share"
       ? { x: Math.round(rect.left), y: Math.round(rect.bottom) } : item.payload)}/>;
 }

@@ -15,6 +15,7 @@ import { ChatActionDialog, useChatActions } from "./ChatActions";
 import "./chat-management.css";
 import { Onboarding } from "./Onboarding";
 import { Sidebar, ChatSearch } from "./Sidebar";
+import { ProjectActionDialog, ProjectDialog } from "./ProjectDialog";
 import { Home } from "./Home";
 import { Button, errorText, IconButton, Modal, Notice, Spinner } from "./ui";
 
@@ -23,6 +24,7 @@ const empty = {
   bots: [],
   chats: [],
   chatSections: [],
+  projects: [],
   messages: [],
   tasks: [],
   onboarded: false,
@@ -31,6 +33,7 @@ const invoke = (method, payload = {}) => window.boteam.invoke(method, payload);
 const initialChat = window.boteam?.initialChatId;
 const navigationStorage = initialChat ? sessionStorage : localStorage;
 const builtInPages = new Set(["home", "accounts", "bots"]);
+const defaultBotKey = "boteam:quick-bot";
 export default function App() {
   const [state, setState] = useState(empty);
   const [ready, setReady] = useState(false);
@@ -41,6 +44,10 @@ export default function App() {
   );
   const [dialog, setDialog] = useState(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [homeSelection, setHomeSelection] = useState(() => localStorage.getItem(defaultBotKey) || "");
+  const homeBot = state.bots.find(b => !b.archived && b.id === homeSelection) || state.bots.find(b => !b.archived);
+  const [homeProjects, setHomeProjects] = useState({});
+  const [projectBusy, setProjectBusy] = useState(false);
   const currentPage = useRef(page);
   currentPage.current = page;
   const trail = useRef([page]);
@@ -50,6 +57,18 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const revision = useRef(0);
   const hasLaunched = useRef(false);
+  function chooseHomeBot(id) {
+    localStorage.setItem(defaultBotKey, id);
+    setHomeSelection(id);
+  }
+  useEffect(() => {
+    function syncSelection(event) {
+      if (event.storageArea === localStorage && (event.key === defaultBotKey || event.key === null))
+        setHomeSelection(localStorage.getItem(defaultBotKey) || "");
+    }
+    window.addEventListener("storage", syncSelection);
+    return () => window.removeEventListener("storage", syncSelection);
+  }, []);
   const refresh = useCallback(async () => {
     const request = ++revision.current;
     const snapshot = await invoke("snapshot");
@@ -79,6 +98,8 @@ export default function App() {
         }
       }
       const accessible = new Set([...builtInPages, ...snapshot.chats.map(c => c.id)]);
+      setDialog(current => (current?.type === "project" || current?.type === "projectAction") && current.id &&
+        !snapshot.projects?.some(project => project.id === current.id) ? null : current);
       const retired = new Set(before.chats.filter(c => !accessible.has(c.id)).map(c => c.id));
       for (const c of snapshot.chats) if (c.archived) retired.add(c.id);
       if (retired.size) {
@@ -162,6 +183,12 @@ export default function App() {
       select(id);
     } catch (e) { setError(errorText(e)); }
   }, [refresh, select]);
+  const defaultBotId = homeBot?.id;
+  const newChat = useCallback(projectId => {
+    if (projectId) setDialog({ type: "chat", projectId });
+    else if (defaultBotId) startDirect(defaultBotId);
+    else select("home");
+  }, [defaultBotId, startDirect, select]);
   async function finishWizard(botId) {
     setBusy(true);
     try {
@@ -186,21 +213,53 @@ export default function App() {
       if (!["b", "k", "n"].includes(key)) return;
       e.preventDefault();
       if (key === "b") setCollapsed((value) => !value);
-      if (key === "n") select("home");
+      if (key === "n") newChat();
       if (key === "k") setDialog({ type: "search" });
     }
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
-  }, [ready, state.onboarded, dialog, select]);
+  }, [ready, state.onboarded, dialog, newChat]);
   const wizard = ready && !state.onboarded;
   const chat = state.chats.find((c) => c.id === page);
   useEffect(() => { document.title = chat ? chat.name + " · BoTeam" : "BoTeam"; }, [chat?.name]);
+  const initialProjectId = chat ? chat.projectId : homeProjects[homeBot?.id];
+  async function selectInitialProject(projectId) {
+    setError("");
+    if (!chat) {
+      if (homeBot) setHomeProjects(current => ({ ...current, [homeBot.id]: projectId }));
+      return;
+    }
+    setProjectBusy(true);
+    try {
+      await invoke("setInitialChatProject", { chatId: chat.id, projectId, expectedProjectId: initialProjectId ?? null,
+        expectedProjectCwd: chat.initialProjectCwd });
+      await refresh();
+    } catch (e) { setError(errorText(e)); }
+    finally { setProjectBusy(false); }
+  }
+  async function createInitialProject() {
+    setProjectBusy(true);
+    try {
+      const folder = await invoke("pickDirectory");
+      if (folder && currentPage.current === page) {
+        setDialog({ type: "project", initialFolder: folder,
+          initialChat: chat && { chatId: chat.id, expectedProjectId: initialProjectId ?? null,
+            expectedProjectCwd: chat.initialProjectCwd },
+          onCreated: !chat ? selectInitialProject : undefined });
+      }
+    } catch (e) { setError(errorText(e)); }
+    finally { setProjectBusy(false); }
+  }
+  const firstProject = (chat ? chat.canSelectInitialProject : homeBot) && {
+    projectId: initialProjectId, onSelect: selectInitialProject, onCreate: createInitialProject, disabled: projectBusy,
+  };
   useEffect(() => {
     if (chat && !chat.archived) navigationStorage.setItem("boteam:last-chat", chat.id);
   }, [chat?.id, chat?.archived]);
   const dialogBot = dialog?.id && state.bots.find((b) => b.id === dialog.id);
   const dialogAccount =
     dialog?.id && state.accounts.find((a) => a.id === dialog.id);
+  const dialogProject = dialog?.id && state.projects.find(p => p.id === dialog.id);
   const pageTitle = wizard
     ? "初始设置"
     : page === "bots"
@@ -213,6 +272,12 @@ export default function App() {
       {!collapsed && (
         <Sidebar
           state={state}
+          invoke={invoke}
+          refresh={refresh}
+          onNewChat={newChat}
+          dialogOpen={Boolean(dialog)}
+          homeBot={homeBot}
+          onSelectBot={chooseHomeBot}
           onChatMenu={actions.showMenu}
           onChatAction={actions.act}
           menuChatId={actions.menu?.variant === "context" ? actions.menu.chatId : null}
@@ -312,17 +377,19 @@ export default function App() {
             onOpenChat={finishChat}
             key={chat.id}
             chat={chat}
+            firstProject={firstProject}
             state={state}
             invoke={invoke}
             open={setDialog}
           />
         ) : (
-          <Home state={state} invoke={invoke} open={setDialog} onChat={finishChat} />
+          <Home state={state} invoke={invoke} open={setDialog} onChat={finishChat}
+            bot={homeBot} setSelection={chooseHomeBot} firstProject={firstProject}/>
         )}
       </main>
       {actions.menuChat && !dialog && <ChatActionMenu key={actions.menu.chatId + actions.menu.variant}
         anchor={actions.menu.anchor} variant={actions.menu.variant} chat={actions.menuChat}
-        sections={state.chatSections} openTargets={actions.openTargets} onAction={actions.act} onClose={actions.closeMenu} />}
+        sections={state.chatSections} projects={state.projects} openTargets={actions.openTargets} onAction={actions.act} onClose={actions.closeMenu} />}
       {actions.notice && <div className="chat-action-status" role="status">{actions.notice}</div>}
       {dialog?.type === "directory" && <Modal title="选择工作目录" onClose={close}>
         <div className="member-list">{dialog.directories.map(({ botId, names, directory }, index) =>
@@ -339,6 +406,18 @@ export default function App() {
         <Modal title="搜索对话" onClose={close}>
           <ChatSearch state={state} select={select} />
         </Modal>
+      )}
+      {dialog?.type === "project" && (!dialog.id || dialogProject) && (
+        <ProjectDialog key={dialog.id || "import"} project={dialogProject} initialChat={dialog.initialChat}
+          initialFolder={dialog.initialFolder} invoke={invoke} onDone={async createdId => {
+            if (createdId) await dialog.onCreated?.(createdId);
+            try { await refresh(); } catch (e) { setError(errorText(e)); }
+            setDialog(current => current === dialog ? (dialog.returnTo || null) : current);
+          }} onClose={close} />
+      )}
+      {dialog?.type === "projectAction" && dialogProject && (
+        <ProjectActionDialog key={dialog.id + dialog.action} project={dialogProject} action={dialog.action}
+          expectedChatIds={dialog.expectedChatIds} invoke={invoke} onDone={finishDialog} onClose={close} />
       )}
       {dialog?.type === "import" && (
         <Modal
@@ -408,6 +487,8 @@ export default function App() {
       {(dialog?.type === "chat" || dialog?.type === "group") && (
         <ChatDialog
           kind={dialog.kind}
+          initialProjectId={dialog.projectId}
+          defaultBotId={homeBot?.id}
           chat={
             dialog.type === "group"
               ? state.chats.find((c) => c.id === dialog.id)
@@ -417,7 +498,7 @@ export default function App() {
           invoke={invoke}
           onDone={finishChat}
           onClose={close}
-          newBot={() => setDialog({ type: "bot" })}
+          newBot={draft => setDialog({ type: "bot", returnTo: { ...dialog, ...draft } })}
         />
       )}
     </div>

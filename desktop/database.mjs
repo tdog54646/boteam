@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { chmodSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { projectSnapshot } from './projects.mjs'
 
 function publishLegacyGroupHistory(db) {
   // Old replies have a slot in the transcript, but no completion timestamp.
@@ -63,6 +64,18 @@ export class Database {
       );
       CREATE TABLE IF NOT EXISTS chats(
         id TEXT PRIMARY KEY, kind TEXT NOT NULL,name TEXT NOT NULL,updatedAt TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS projects(
+        id TEXT PRIMARY KEY,name TEXT NOT NULL,pinned INTEGER NOT NULL DEFAULT 0,
+        sectionId TEXT REFERENCES chat_sections(id) ON DELETE SET NULL
+      );
+      CREATE TABLE IF NOT EXISTS project_folders(
+        projectId TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,path TEXT NOT NULL,position INTEGER NOT NULL,
+        PRIMARY KEY(projectId,path),UNIQUE(projectId,position)
+      );
+      CREATE TABLE IF NOT EXISTS chat_projects(
+        chatId TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+        projectId TEXT REFERENCES projects(id) ON DELETE SET NULL,cwd TEXT
       );
       CREATE TABLE IF NOT EXISTS chat_sections(
         id TEXT PRIMARY KEY,name TEXT NOT NULL COLLATE NOCASE UNIQUE
@@ -132,6 +145,14 @@ export class Database {
         cwd TEXT NOT NULL,seedMessageId TEXT REFERENCES messages(id),PRIMARY KEY(chatId,botId)
       );
       CREATE INDEX IF NOT EXISTS messages_by_chat ON messages(chatId);
+      CREATE VIEW IF NOT EXISTS initial_project_chats AS
+        SELECT c.id AS chatId FROM chats c
+        WHERE NOT EXISTS(SELECT 1 FROM chat_organization o WHERE o.chatId=c.id AND o.archived=1)
+        AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.chatId=c.id)
+        AND NOT EXISTS(SELECT 1 FROM tasks t WHERE t.chatId=c.id)
+        AND NOT EXISTS(SELECT 1 FROM threads t WHERE t.chatId=c.id)
+        AND NOT EXISTS(SELECT 1 FROM chat_forks f WHERE f.chatId=c.id)
+        AND NOT EXISTS(SELECT 1 FROM fork_member_context f WHERE f.chatId=c.id);
       UPDATE tasks SET status='interrupted',approval=NULL,error='上次运行因应用关闭而中断，可继续发送消息。'
         WHERE status IN ('running','queued','approval');
     `)
@@ -145,6 +166,8 @@ export class Database {
       this.db.exec('ALTER TABLE composer_settings ADD COLUMN planMode INTEGER NOT NULL DEFAULT 0')
     const columns = this.all('PRAGMA table_info(bots)').map((column) => column.name)
     this.transaction(() => {
+      if (!this.all('PRAGMA table_info(projects)').some(c => c.name === 'sectionId'))
+        this.db.exec('ALTER TABLE projects ADD COLUMN sectionId TEXT REFERENCES chat_sections(id) ON DELETE SET NULL')
       if (!this.get("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='chat_title_requests'")) {
         this.db.exec(`CREATE TABLE chat_title_requests(chatId TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
           messageId TEXT,botId TEXT);
@@ -260,11 +283,16 @@ export class Database {
         archived: Boolean(b.archived),
       })),
       chatSections: this.all('SELECT id,name FROM chat_sections ORDER BY rowid'),
-      chats: this.all(`SELECT c.*,c.rowid AS creationOrder,f.sourceChatId,o.sectionId,o.pinned,o.unread,o.archived FROM chats c
+      projects: projectSnapshot(this),
+      chats: this.all(`SELECT c.*,c.rowid AS creationOrder,p.projectId,p.cwd AS initialProjectCwd,
+        EXISTS(SELECT 1 FROM initial_project_chats i WHERE i.chatId=c.id) AS canSelectInitialProject,
+        f.sourceChatId,o.sectionId,o.pinned,o.unread,o.archived FROM chats c
         LEFT JOIN chat_forks f ON c.id=f.chatId LEFT JOIN chat_organization o ON c.id=o.chatId
+        LEFT JOIN chat_projects p ON p.chatId=c.id
         ORDER BY c.updatedAt DESC,c.rowid DESC`).map((c) => ({
         ...c,
         pinned: Boolean(c.pinned), unread: Boolean(c.unread), archived: Boolean(c.archived),
+        canSelectInitialProject: Boolean(c.canSelectInitialProject),
         members: byChat.get(c.id) || [],
       })),
       messages: this.all('SELECT * FROM messages ORDER BY rowid').map((m) => ({

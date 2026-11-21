@@ -1,5 +1,6 @@
-import React from "react";
-import { Archive, ArchiveRestore, ChevronRight, Pin, PinOff } from "lucide-react";
+import React, { useLayoutEffect, useRef } from "react";
+import { createPortal } from "react-dom";
+import { Archive, ArchiveRestore, Check, ChevronRight, Pin, PinOff } from "lucide-react";
 import { IconButton } from "./ui";
 
 export function shortDate(when) {
@@ -48,4 +49,69 @@ export function SidebarSection({ title, expanded, toggle, actions, children }) {
     </div>
     {expanded && children}
   </section>;
+}
+
+export function MenuItem({ icon: Icon, children, checked, radio = false, label, detail, onClick }) {
+  return <button type="button" role={radio ? "menuitemradio" : checked === undefined ? "menuitem" : "menuitemcheckbox"}
+    aria-label={label} aria-description={detail} title={detail} aria-checked={checked} onClick={onClick}>
+    {Icon && <Icon size={15}/>}<span>{children}{detail && <small className="sidebar-bot-detail">{detail}</small>}</span>
+    {checked && <Check size={14}/>}</button>;
+}
+
+export function SidebarPopup({ popup, close, title, card = false, onEnter, onLeave, children }) {
+  const ref = useRef(null);
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useLayoutEffect(() => {
+    const node = ref.current;
+    const { anchor } = popup;
+    function position() {
+      if (!anchor.isConnected) { closeRef.current(); return; }
+      const rect = anchor.getBoundingClientRect();
+      const width = node.offsetWidth, height = node.offsetHeight;
+      const x = card && rect.right + width + 9 <= window.innerWidth ? rect.right + 6 : rect.left;
+      const y = card ? rect.top : rect.bottom + 4 + height < window.innerHeight ? rect.bottom + 4 : rect.top - height - 4;
+      node.style.left = Math.max(5, Math.min(x, window.innerWidth - width - 5)) + "px";
+      node.style.top = Math.max(5, Math.min(y, window.innerHeight - height - 5)) + "px";
+    }
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(node);
+    const outside = e => {
+      if (!node.contains(e.target) && !anchor.contains(e.target)) closeRef.current();
+    };
+    const key = e => {
+      if (e.key === "Escape") {
+        e.preventDefault(); e.stopPropagation(); closeRef.current();
+        if (popup.keyboard || node.contains(document.activeElement)) (popup.trigger || anchor).focus({ preventScroll: true });
+      }
+    };
+    window.addEventListener("resize", position);
+    window.addEventListener("scroll", position, true);
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("keydown", key, true);
+    if (popup.keyboard) (node.querySelector('[role="menuitemradio"][aria-checked="true"]') || node.querySelector("button:enabled"))?.focus();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", position);
+      window.removeEventListener("scroll", position, true);
+      document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("keydown", key, true);
+    };
+  }, [popup, card]);
+  return createPortal(<div ref={ref} className={card ? "project-detail-card" : "sidebar-options-menu"} role={card ? "dialog" : "menu"}
+    aria-label={title} onPointerEnter={onEnter} onPointerLeave={onLeave} onKeyDown={e => {
+      if (e.key === "Tab" && !card) {
+        (popup.trigger || popup.anchor).focus({ preventScroll: true });
+        close(); return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+      const buttons = [...ref.current.querySelectorAll("button:enabled")];
+      if (!buttons.length) return;
+      e.preventDefault();
+      const index = buttons.indexOf(document.activeElement);
+      const next = e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1
+        : (index + (e.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next].focus();
+    }}>{children}</div>, document.body);
 }

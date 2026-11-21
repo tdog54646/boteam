@@ -218,7 +218,7 @@ function TaskView({ task, bot, account, invoke, onLogin, compact = false }) {
     </div>
   );
 }
-export function Conversation({ chat, state, invoke, open, onOpenChat, restoreChat, onError }) {
+export function Conversation({ chat, state, invoke, open, onOpenChat, restoreChat, onError, firstProject }) {
   const { accounts, bots, messages, tasks } = state;
   function chatLink(url, children, key) {
     return <a className="chat-deeplink" key={key} href={url} onClick={event => {
@@ -435,7 +435,7 @@ export function Conversation({ chat, state, invoke, open, onOpenChat, restoreCha
       {chat.archived ? (
         <div className="archived-composer"><span>此聊天已归档</span><Button onClick={restoreChat}>恢复聊天</Button></div>
       ) : <Composer onOpenChat={onOpenChat} chat={chat} members={members} state={state} invoke={invoke}
-        quoteControl={quoteControl} publicMessages={publicMessages} />}
+        firstProject={firstProject} quoteControl={quoteControl} publicMessages={publicMessages} />}
     </section>
   );
 }

@@ -11,6 +11,7 @@ import { protectedNativePaths } from './codex-permissions.mjs'
 import { commandName } from './adapters/native-slash.mjs'
 import { groupPrompt } from './group-context.mjs'
 import { manageChat } from './chat-management.mjs'
+import { chatProjectCwd, configureNewChatProject, inheritProject, manageProject } from './projects.mjs'
 
 const active = "('queued','running','approval')"
 const stamp = () => new Date().toISOString()
@@ -47,6 +48,8 @@ export class Workspace {
     this.notify = options.notify || (() => {})
     this.onChatDeleted = options.onChatDeleted
     this.pickDirectory = options.pickDirectory
+    this.openProjectDirectory = options.openProjectDirectory
+    this.revealProjectDirectory = options.revealProjectDirectory
     this.pickFiles = options.pickFiles
     this.makeThumbnail = options.makeThumbnail
     this.openAntigravityInstall = options.openAntigravityInstall
@@ -96,7 +99,7 @@ export class Workspace {
   chatDirectory(chatId, bot) {
     const thread = chatId && this.db.get('SELECT cwd FROM threads WHERE chatId=? AND botId=?', chatId, bot.id)
     const fork = chatId && this.db.get('SELECT cwd FROM fork_member_context WHERE chatId=? AND botId=?', chatId, bot.id)
-    return thread?.cwd || fork?.cwd || bot.cwd ||
+    return thread?.cwd || fork?.cwd || chatProjectCwd(this.db,chatId) || bot.cwd ||
       this.db.get("SELECT json_extract(info,'$.cwd') AS cwd FROM accounts WHERE id=?", bot.accountId)?.cwd ||
       join(this.root, 'workspaces', chatId || '.catalog')
   }
@@ -197,6 +200,7 @@ export class Workspace {
           this.addMembers(id, [bot])
           this.associateThread(id, botId, bot.accountId, result.threadId, scope.cwd)
           this.db.run('INSERT INTO chat_forks VALUES(?,?)', id, chatId)
+          inheritProject(this.db, chatId, id, scope.cwd)
           this.db.retainNativeAttachments(chatId, id, botId)
           this.db.run(`INSERT INTO composer_settings(chatId,botId,model,effort,permission,planMode)
             SELECT ?,botId,model,effort,permission,planMode FROM composer_settings WHERE chatId=? AND botId=?`,
@@ -419,7 +423,19 @@ export class Workspace {
         break
       case 'createChat':
         return this.createChat(p)
+      case 'createProject':
+      case 'updateProject':
+      case 'setProjectPinned':
+      case 'removeProject':
+      case 'moveChatToProject':
+      case 'setInitialChatProject':
+      case 'openProjectFolder':
+      case 'revealProjectFolder':
+      case 'moveProjectToSection':
+      case 'archiveProjectChats':
+        return manageProject(this, method, p)
       case 'createChatSection':
+        return p.projectId === undefined ? this.accountOperation(manageChat(this, method, p)) : manageProject(this, method, p)
       case 'renameChat':
       case 'setChatPinned':
       case 'setChatUnread':
@@ -482,12 +498,13 @@ export class Workspace {
         stamp(),
       )
       this.addMembers(id, bots)
+      configureNewChatProject(this.db, id, p)
       if (!explicitName) this.db.run('INSERT INTO chat_title_requests(chatId) VALUES(?)', id)
     })
     this.notify()
     return id
   }
-  send({ chatId, recipients, text = '', attachmentIds = [], nativeActions = {}, replyToMessageId = null }, goalObjective, slash) {
+  send({ chatId, recipients, text = '', attachmentIds = [], nativeActions = {}, replyToMessageId = null, expectedProjectCwd }, goalObjective, slash) {
     if (this.db.get('SELECT archived FROM chat_organization WHERE chatId=?', chatId)?.archived)
       throw new Error('请先恢复已归档的聊天，再发送消息。')
     if (!Array.isArray(attachmentIds)) throw new Error('附件列表无效。')
@@ -519,6 +536,8 @@ export class Workspace {
     const messageId = randomUUID(),
       now = stamp()
     const tasks = this.db.transaction(() => {
+      if (expectedProjectCwd !== undefined && expectedProjectCwd !== chatProjectCwd(this.db,chatId))
+        throw new Error('聊天工作目录已在其他窗口更改，请确认后重新发送。')
       const chat = this.db.get('SELECT kind FROM chats WHERE id=?', chatId)
       const ordinaryGroup = chat.kind === 'group' && !slash && !goalObjective
       if (replyToMessageId !== null && (!ordinaryGroup || typeof replyToMessageId !== 'string' ||

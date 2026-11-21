@@ -33,6 +33,7 @@ import { ComposerTools } from "./ComposerTools";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { SketchDialog } from "./SketchDialog";
 import { MessageQuote } from "./MessageQuote";
+import { FirstChatProject } from "./FirstChatProject";
 
 const drafts = new Map();
 export function Composer({
@@ -47,9 +48,11 @@ export function Composer({
   onBusyChange,
   quoteControl,
   publicMessages,
+  firstProject,
 }) {
   const { accounts } = state;
   const scope = homeBot ? `home:${homeBot.id}` : chat.id;
+  const projectCwd = chat ? chat.initialProjectCwd ?? null : state.projects?.find(project => project.id === firstProject?.projectId)?.folders[0] ?? null;
   const ensured = () => (homeBot ? ensureHomeChat() : Promise.resolve(chat.id));
   const [text, setText] = useState(() => drafts.get(scope)?.text || "");
   const [replyToMessageId, setReplyToMessageId] = useState(() => drafts.get(scope)?.replyToMessageId || null);
@@ -192,6 +195,7 @@ export function Composer({
       !ambiguous &&
       !editingMention &&
       !busy &&
+      !firstProject?.disabled &&
       filesReady &&
       !workingFiles,
   );
@@ -384,7 +388,7 @@ export function Composer({
     ref.current?.focus();
   }
   function chooseSlash(command, fromSend = false) {
-    if (busy || !slashTarget || !command) return;
+    if (busy || firstProject?.disabled || !slashTarget || !command) return;
     if (replyToMessageId) {
       setError("请先移除引用，再执行快捷命令。");
       return;
@@ -537,6 +541,7 @@ export function Composer({
       await invoke("send", {
         ...(command ? { slash: command } : { nativeActions }),
         chatId,
+        ...(firstProject && { expectedProjectCwd: projectCwd }),
         ...(!command && replyToMessageId && { replyToMessageId }),
         text: command
           ? ("/" + command.name + " " + command.arguments).trimEnd()
@@ -566,6 +571,9 @@ export function Composer({
   return (
     <div className={`composer-area${homeBot ? " home-composer" : ""}`}>
       <div className="composer-wrap" ref={root}>
+        {firstProject && <div className="composer-project-row">
+          <FirstChatProject projects={state.projects} {...firstProject} disabled={firstProject.disabled || busy} />
+        </div>}
         {slashOpen && (
           <ComposerSlashMenu
             slash={slash}

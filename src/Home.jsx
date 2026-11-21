@@ -3,26 +3,25 @@ import { Bot, ChevronDown, WalletCards, Plus, UsersRound } from "lucide-react";
 import { Button, accountLabel } from "./ui";
 import { Composer } from "./Composer";
 
-export function Home({ state, invoke, open, onChat }) {
+export function Home({ state, invoke, open, onChat, bot, setSelection, firstProject }) {
   const bots = state.bots.filter((b) => !b.archived);
-  const [selection, setSelection] = useState("");
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState({});
   const creating = useRef(new Map());
-  const bot = bots.find((b) => b.id === selection) || bots[0];
   const account = state.accounts.find((a) => a.id === bot?.accountId);
+  const target = JSON.stringify([bot?.id, firstProject?.projectId || null]);
   async function ensureChat() {
-    if (pending[bot.id]) return pending[bot.id];
-    if (!creating.current.has(bot.id)) {
-      const task = invoke("createChat", { kind: "direct", members: [bot.id] })
+    if (pending[target]) return pending[target];
+    if (!creating.current.has(target)) {
+      const task = invoke("createChat", { kind: "direct", members: [bot.id], projectId: firstProject?.projectId })
         .then((id) => {
-          setPending((all) => ({ ...all, [bot.id]: id }));
+          setPending((all) => ({ ...all, [target]: id }));
           return id;
         })
-        .finally(() => creating.current.delete(bot.id));
-      creating.current.set(bot.id, task);
+        .finally(() => creating.current.delete(target));
+      creating.current.set(target, task);
     }
-    return creating.current.get(bot.id);
+    return creating.current.get(target);
   }
   return (
     <div className="home">
@@ -42,8 +41,9 @@ export function Home({ state, invoke, open, onChat }) {
             homeBot={bot}
             invoke={invoke}
             chat={
-              pending[bot.id] ? { id: pending[bot.id], kind: "direct" } : null
+              pending[target] ? { id: pending[target], kind: "direct" } : null
             }
+            firstProject={firstProject}
             ensureHomeChat={ensureChat}
             onSent={onChat}
             onBusyChange={setBusy}
@@ -92,7 +92,7 @@ export function Home({ state, invoke, open, onChat }) {
               <WalletCards size={14} />
               {accountLabel(account)}
             </span>
-            <button onClick={() => open({ type: "chat", kind: "group" })}>
+            <button onClick={() => open({ type: "chat", kind: "group", projectId: firstProject?.projectId })}>
               <UsersRound size={14} />
               新建群聊
             </button>

@@ -120,6 +120,8 @@ else {
         return image && !image.isEmpty() ? image.toDataURL() : null
       },
       openAntigravityInstall: () => shell.openExternal('https://antigravity.google/docs/getting-started/#download-and-install'),
+      openProjectDirectory: directory => openChatDirectory('finder', directory, shell),
+      revealProjectDirectory: directory => shell.showItemInFolder(directory),
       async pickFiles(window) {
         const result = await dialog.showOpenDialog(window, {
           properties: process.platform === 'darwin'
