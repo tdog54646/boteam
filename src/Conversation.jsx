@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -8,12 +8,14 @@ import {
   KeyRound,
   Paperclip,
   Plug,
+  Quote,
   ShieldCheck,
   Square,
   SquareTerminal,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Composer } from "./Composer";
+import { MessageQuote } from "./MessageQuote";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { Button, errorText, Notice, ProviderIcon, Spinner } from "./ui";
 import "./conversation.css";
@@ -217,12 +219,16 @@ function TaskView({ task, bot, account, invoke, onLogin, compact = false }) {
 }
 export function Conversation({ chat, state, invoke, open, onOpenChat }) {
   const { accounts, bots, messages, tasks } = state;
-  const log = messages.filter((m) => m.chatId === chat.id);
+  const log = useMemo(() => messages.filter(m => m.chatId === chat.id), [messages, chat.id]);
   const jobs = tasks.filter((t) => t.chatId === chat.id);
   const members = chat.members
     .map((id) => bots.find((b) => b.id === id))
     .filter((b) => b && !b.archived);
   const group = chat.kind === "group";
+  const quoteControl = useRef(null);
+  const publicMessages = useMemo(() => new Map(group
+    ? log.filter(m => m.publishSeq > 0).map(m => [m.id, m])
+    : []), [log, group]);
   const bottom = useRef(null);
   const scroll = useRef(null);
   const follow = useRef(true);
@@ -286,9 +292,12 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
                 (a) => a.id === (task?.accountId || bot?.accountId),
               );
               const user = m.author === "user";
+              const quoted = publicMessages.get(m.replyToMessageId);
               return (
                 <article
                   key={m.id}
+                  id={`message-${m.id}`}
+                  tabIndex={-1}
                   className={`message ${user ? "user-message" : "bot-message"}`}
                 >
                   {!user && (
@@ -313,6 +322,21 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
                             )
                             .join(" ")}
                         </div>
+                      )}
+                      {quoted && (
+                        <button
+                          type="button"
+                          className="quote-card sent-quote"
+                          aria-label="查看引用原文"
+                          aria-describedby={`quote-preview-${m.id}`}
+                          onClick={() => {
+                            const original = document.getElementById(`message-${quoted.id}`);
+                            original?.focus({ preventScroll: true });
+                            original?.scrollIntoView({ block: "center" });
+                          }}
+                        >
+                          <MessageQuote message={quoted} descriptionId={`quote-preview-${m.id}`} />
+                        </button>
                       )}
                       {m.attachments?.length > 0 && (
                         <div className="sent-attachments">
@@ -348,6 +372,12 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
                         {m.text || ""}
                       </ReactMarkdown>
                     </div>
+                  )}
+                  {publicMessages.has(m.id) && (
+                    <button type="button" className="quote-action" aria-description={`${m.name}的消息`}
+                      onClick={() => quoteControl.current?.select(m.id)}>
+                      <Quote size={13} aria-hidden="true" />引用
+                    </button>
                   )}
                   {task && taskRow(task, true)}
                   {jobs
@@ -389,7 +419,8 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
           </div>
         )}
       </div>
-      <Composer onOpenChat={onOpenChat} chat={chat} members={members} state={state} invoke={invoke} />
+      <Composer onOpenChat={onOpenChat} chat={chat} members={members} state={state} invoke={invoke}
+        quoteControl={quoteControl} publicMessages={publicMessages} />
     </section>
   );
 }

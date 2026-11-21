@@ -2,8 +2,11 @@ import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { nativeEnv } from '../native.mjs'
 import { codexFullInvocation } from '../codex-permissions.mjs'
+import { inputWindowError } from './usage.mjs'
 
-export function nativeError(message) {
+export function nativeError(message, codexErrorInfo) {
+  const overflow = inputWindowError(message, codexErrorInfo)
+  if (overflow) return overflow
   const text = String(message || '')
   if (/quota|usage.limit|rate.limit|429|credits|usage_limit_reached/i.test(text))
     return new Error('Codex 订阅额度或速率已达上限，请稍后重试。')
@@ -132,7 +135,7 @@ export class CodexRpc {
       this.#pending.delete(msg.id)
       clearTimeout(p.timeout)
       if (msg.error) {
-        const error = nativeError(msg.error.message)
+        const error = nativeError(msg.error.message, msg.error.data?.codexErrorInfo)
         const unknown =
           msg.error.code === -32600 &&
           String(msg.error.message).startsWith(

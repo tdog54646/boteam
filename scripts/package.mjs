@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const result = await packager({
   dir: root,
-  out: join(root, 'release'),
+  out: process.argv[2] || join(root, 'release'),
   name: 'BoTeam',
   appBundleId: 'local.boteam.desktop',
   icon: join(root, 'assets/BoTeam.icns'),

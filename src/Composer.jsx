@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useEffect, useId, useImperativeHandle, useRef, useState } from "react";
 import {
   ArrowUp,
   AtSign,
@@ -32,6 +32,7 @@ import { GoalDialog } from "./GoalDialog";
 import { ComposerTools } from "./ComposerTools";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { SketchDialog } from "./SketchDialog";
+import { MessageQuote } from "./MessageQuote";
 
 const drafts = new Map();
 export function Composer({
@@ -44,11 +45,16 @@ export function Composer({
   onSent,
   onOpenChat = onSent,
   onBusyChange,
+  quoteControl,
+  publicMessages,
 }) {
   const { accounts } = state;
   const scope = homeBot ? `home:${homeBot.id}` : chat.id;
   const ensured = () => (homeBot ? ensureHomeChat() : Promise.resolve(chat.id));
   const [text, setText] = useState(() => drafts.get(scope)?.text || "");
+  const [replyToMessageId, setReplyToMessageId] = useState(() => drafts.get(scope)?.replyToMessageId || null);
+  const quotedMessage = publicMessages?.get(replyToMessageId);
+  const quoteDescriptionId = useId();
   const [selected, setSelected] = useState(
     () => drafts.get(scope)?.selected || [],
   );
@@ -81,6 +87,14 @@ export function Composer({
   const fileLock = useRef(false);
   const sendLock = useRef(false);
   const pendingSlashSend = useRef(null);
+  useImperativeHandle(quoteControl, () => ({
+    select(messageId) {
+      if (sendLock.current) return;
+      setReplyToMessageId(messageId);
+      setError("");
+      ref.current?.focus();
+    },
+  }), []);
   const activeTasks = state.tasks.filter(
     (task) =>
       task.chatId === chat?.id &&
@@ -90,10 +104,10 @@ export function Composer({
     onBusyChange?.(busy || workingFiles);
   }, [busy, workingFiles, onBusyChange]);
   useEffect(() => {
-    if (text || selected.length || Object.keys(extensions).length)
-      drafts.set(scope, { text, selected, extensions, slashMember });
+    if (text || selected.length || Object.keys(extensions).length || replyToMessageId)
+      drafts.set(scope, { text, selected, extensions, slashMember, replyToMessageId });
     else drafts.delete(scope);
-  }, [scope, text, selected, extensions, slashMember]);
+  }, [scope, text, selected, extensions, slashMember, replyToMessageId]);
   useEffect(() => {
     let current = true;
     invoke("listAttachments", { scope })
@@ -371,6 +385,10 @@ export function Composer({
   }
   function chooseSlash(command, fromSend = false) {
     if (busy || !slashTarget || !command) return;
+    if (replyToMessageId) {
+      setError("请先移除引用，再执行快捷命令。");
+      return;
+    }
     const { action, name } = command;
     const botId = slashTarget.id;
     const args = slash.exact?.name === name ? slash.args : "";
@@ -519,6 +537,7 @@ export function Composer({
       await invoke("send", {
         ...(command ? { slash: command } : { nativeActions }),
         chatId,
+        ...(!command && replyToMessageId && { replyToMessageId }),
         text: command
           ? ("/" + command.name + " " + command.arguments).trimEnd()
           : text.trim(),
@@ -526,6 +545,7 @@ export function Composer({
         attachmentIds: files.map((file) => file.id),
       });
       drafts.delete(scope);
+      setReplyToMessageId(null);
       setFiles([]);
       setPopup(null);
       setText("");
@@ -656,6 +676,22 @@ export function Composer({
             }
           }}
         >
+          {replyToMessageId && (
+            <div className="quote-card draft-quote" role="group" aria-label="待发送引用">
+              {quotedMessage ? <MessageQuote message={quotedMessage} descriptionId={quoteDescriptionId} /> :
+                <span id={quoteDescriptionId}>原消息已不可用，请重新选择引用。</span>}
+              <IconButton
+                icon={X}
+                label="移除引用"
+                disabled={busy}
+                onClick={() => {
+                  setReplyToMessageId(null);
+                  setError("");
+                  ref.current?.focus();
+                }}
+              />
+            </div>
+          )}
           {files.length > 0 && (
             <div className="attachment-chips" aria-label="待发送附件">
               {files.map((file) => {
@@ -774,6 +810,7 @@ export function Composer({
             autoFocus
             maxLength={200000}
             aria-label={homeBot ? "新对话消息" : "消息内容"}
+            aria-describedby={replyToMessageId ? quoteDescriptionId : undefined}
             aria-autocomplete="list"
             aria-controls={slashOpen ? slash.listId : undefined}
             aria-activedescendant={

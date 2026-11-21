@@ -8,6 +8,7 @@ import { ComposerSettings, validateSelection } from './composer.mjs'
 import { AttachmentStore } from './attachments.mjs'
 import { protectedNativePaths } from './codex-permissions.mjs'
 import { commandName } from './adapters/native-slash.mjs'
+import { groupPrompt } from './group-context.mjs'
 
 const active = "('queued','running','approval')"
 const stamp = () => new Date().toISOString()
@@ -172,6 +173,7 @@ export class Workspace {
     }
   }
   async sendSlash(p) {
+    if (p.replyToMessageId != null) throw new Error('原生命令不能携带群消息引用。')
     const { slash, chatId, recipients } = p
     const name = slashName(slash?.name)
     if (!chatId || !Array.isArray(recipients) || recipients.length !== 1 || recipients[0] !== slash.botId)
@@ -193,9 +195,10 @@ export class Workspace {
       ? { [slash.botId]: { extensionIds: [command.extensionId], labels: [command.title || '/' + name] } }
       : {}
     return this.send({ ...p, text: '/' + name + (args ? ' ' + args : ''), nativeActions },
-      undefined, { name, args, usesExtension: command.action === 'extension' })
+      undefined, { name, args, action: command.action })
   }
-  async threadGoal({ chatId, botId, action, objective, status = 'active' }) {
+  async threadGoal({ chatId, botId, action, objective, status = 'active', replyToMessageId }) {
+    if (replyToMessageId != null) throw new Error('原生目标不能携带群消息引用。')
     const bot = this.composer.member(chatId, botId)
     const account = this.db.account(bot.accountId)
     const adapter = this.adapters[account.provider]
@@ -425,7 +428,7 @@ export class Workspace {
     this.notify()
     return id
   }
-  send({ chatId, recipients, text = '', attachmentIds = [], nativeActions = {} }, goalObjective, slash) {
+  send({ chatId, recipients, text = '', attachmentIds = [], nativeActions = {}, replyToMessageId = null }, goalObjective, slash) {
     if (!Array.isArray(attachmentIds)) throw new Error('附件列表无效。')
     const bots = this.members(recipients)
     if (!nativeActions || typeof nativeActions !== 'object' || Array.isArray(nativeActions) ||
@@ -455,19 +458,26 @@ export class Workspace {
     const messageId = randomUUID(),
       now = stamp()
     const tasks = this.db.transaction(() => {
+      const chat = this.db.get('SELECT kind FROM chats WHERE id=?', chatId)
+      const ordinaryGroup = chat.kind === 'group' && !slash && !goalObjective
+      if (replyToMessageId !== null && (!ordinaryGroup || typeof replyToMessageId !== 'string' ||
+          !this.db.get('SELECT 1 FROM messages WHERE chatId=? AND id=? AND publishSeq IS NOT NULL', chatId, replyToMessageId)))
+        throw new Error('只能引用本群已发布的文字消息，请重新选择。')
       this.db.run(
-        'INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO messages(id,chatId,author,name,text,createdAt,recipients,replyToMessageId) VALUES(?,?,?,?,?,?,?,?)',
         messageId,
         chatId,
-        null,
         'user',
         '我',
         message,
         now,
         JSON.stringify(bots.map((b) => b.id)),
-        null,
+        replyToMessageId,
       )
-      const chat = this.db.get('SELECT kind FROM chats WHERE id=?', chatId)
+      let groupCutoff = null
+      if (ordinaryGroup) {
+        groupCutoff = message ? this.db.publishGroupMessage(chatId, messageId) : this.db.groupBoundary(chatId)
+      }
       const attached = attachmentIds.length ? this.attachments.claim({
         chatId, homeBotId: chat.kind === 'direct' ? bots[0].id : null, messageId, ids: attachmentIds,
       }) : null
@@ -478,7 +488,7 @@ export class Workspace {
           id = randomUUID(),
           replyId = randomUUID()
         this.db.run(
-          'INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)',
+          'INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)',
           replyId,
           chatId,
           bot.id,
@@ -499,8 +509,8 @@ export class Workspace {
           ...(slash && { slashCommand: slash.name }),
           ...(extensionIds.length && { extensionIds, extensionLabels }), ...(goalObjective && { goalObjective, planMode: false }) }
         this.db.run(
-          `INSERT INTO tasks(id,chatId,botId,accountId,messageId,status,tool,createdAt,runSettings)
-          VALUES(?,?,?,?,?,'queued',?,?,?)`,
+          `INSERT INTO tasks(id,chatId,botId,accountId,messageId,status,tool,createdAt,runSettings,groupCutoff)
+          VALUES(?,?,?,?,?,'queued',?,?,?,?)`,
           id,
           chatId,
           bot.id,
@@ -509,11 +519,14 @@ export class Workspace {
           account.bin || account.provider,
           now,
           JSON.stringify(settings),
+          groupCutoff,
         )
         return {
           id, chatId, bot: { ...bot, model: settings.model, effort: settings.effort },
-          account, prompt, replyId, permission: settings.permission, planMode: settings.planMode,
-          extensionIds, goalObjective, slashCommand: slash?.usesExtension ? undefined : slash?.name,
+          account, prompt, replyId, messageId, groupCutoff,
+          publishReview: chat.kind === 'group' && account.provider === 'codex' && slash?.action === 'review',
+          permission: settings.permission, planMode: settings.planMode,
+          extensionIds, goalObjective, slashCommand: slash?.action === 'extension' ? undefined : slash?.name,
           attachments: attached?.attachments || [],
         }
       })
@@ -529,7 +542,7 @@ export class Workspace {
     this.notify()
     return messageId
   }
-  async execute({ id, chatId, bot, account, prompt, replyId, permission, planMode, extensionIds, goalObjective, slashCommand, attachments }) {
+  async execute({ id, chatId, bot, account, prompt, replyId, messageId, groupCutoff, publishReview, permission, planMode, extensionIds, goalObjective, slashCommand, attachments }) {
     if (this.closed || this.db.get('SELECT status FROM tasks WHERE id=?', id)?.status !== 'queued')
       return
     const controller = new AbortController()
@@ -556,6 +569,13 @@ export class Workspace {
       if (!(await stat(cwd).catch(() => null))?.isDirectory())
         throw new Error('原生工作目录已不存在，请恢复目录或为 Bot 选择新目录并新建会话。')
       controller.signal.throwIfAborted()
+      let nativeThreadId = thread?.threadId ?? null
+      if (groupCutoff != null) {
+        prompt = groupPrompt(this.db, {
+          chatId, bot: { ...bot, model: bot.model || account.model }, threadId: nativeThreadId,
+          cutoff: groupCutoff, messageId, prompt,
+        })
+      }
       await this.adapters[account.provider].run({
         account,
         bot,
@@ -564,6 +584,7 @@ export class Workspace {
         threadId: thread?.threadId || null,
         prompt,
         slashCommand,
+        publicReview: publishReview,
         permission,
         planMode,
         extensionIds,
@@ -589,6 +610,7 @@ export class Workspace {
             switch (event.type) {
               case 'session':
                 this.associateThread(chatId, bot.id, account.id, val, cwd)
+                nativeThreadId = val
                 break
               case 'goal':
                 if (event.value?.status) this.event(id, '原生目标 · ' + event.value.status)
@@ -614,8 +636,22 @@ export class Workspace {
         ask: (questions) => this.requestAnswers(id, state, questions),
       })
       if (!state.verified) throw new Error('工具未返回可核验的运行身份。')
-      if (!controller.signal.aborted && !this.closed)
-        this.db.run("UPDATE tasks SET status='done',approval=NULL WHERE id=?", id)
+      if (!controller.signal.aborted && !this.closed) {
+        clearTimeout(flushTimer)
+        flushTimer = null
+        const text = redact(rawText)
+        const publish = (groupCutoff != null || publishReview) && Boolean(text.trim())
+        this.db.transaction(() => {
+          this.db.run('UPDATE messages SET text=?,nativeThreadId=? WHERE id=?', text, publish ? nativeThreadId : null, replyId)
+          this.db.run("UPDATE tasks SET status='done',approval=NULL WHERE id=?", id)
+          if (publish) this.db.publishGroupMessage(chatId, replyId)
+          if (groupCutoff != null && nativeThreadId) {
+            this.db.run(`INSERT INTO group_delivery(chatId,botId,threadId,throughSeq) VALUES(?,?,?,?)
+              ON CONFLICT(chatId,botId,threadId) DO UPDATE SET throughSeq=max(throughSeq,excluded.throughSeq)`,
+              chatId, bot.id, nativeThreadId, groupCutoff)
+          }
+        })
+      }
     } catch (e) {
       if (!this.closed && !controller.signal.aborted) {
         const message = redact(e.message || '原生工具执行失败。').slice(0, 1200)

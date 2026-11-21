@@ -4,8 +4,13 @@ import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { invocation } from './antigravity-profile.mjs'
+import { inputWindowError } from './usage.mjs'
 
 function rpcError(error, method) {
+  if (method === 'session/prompt') {
+    const overflow = inputWindowError(error?.message)
+    if (overflow) return overflow
+  }
   if (error?.code === -32000 || /authenticat|unauthorized|sign in/i.test(error?.message))
     return Object.assign(new Error('Antigravity 原生登录已失效，请重新授权。'), {
       code: 'AGY_AUTH_REQUIRED',

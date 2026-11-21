@@ -2,6 +2,22 @@ import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 
+const inputOverflow = [
+  /\b(?:prompt|input)(?: (?:text|size|length))? (?:is |was )?too (?:long|large)\b/i,
+  /\b(?:context (?:length|window)|(?:input|prompt) token limit)(?: has been| was| is)? (?:exceeded|exhausted|full)\b/i,
+  /\bexceed(?:s|ed)? (?:the |its )?(?:model['’]s )?(?:maximum |max )?context (?:length|window)\b/i,
+  /\bmaximum context length is [\d,]+ tokens\b/i,
+  /\binput token count\b[^\n]{0,80}\bexceeds? the maximum number of tokens\b/i,
+]
+
+export function inputWindowError(message, nativeCode) {
+  const text = typeof message === 'string' ? message.replace(/[_-]/g, ' ') : ''
+  const rateLimit = /\brate limit|\bquota\b|\bper (?:second|minute|hour|day)\b|\btpm\b/i.test(text)
+  if (nativeCode === 'contextWindowExceeded' || (!rateLimit && inputOverflow.some(pattern => pattern.test(text)))) {
+    return new Error('本次输入超过模型的上下文窗口，请缩短问题、引用或附件内容后重试。')
+  }
+}
+
 export function contextUsage(used, limit, model) {
   if (!Number.isSafeInteger(used) || used < 0 || !Number.isSafeInteger(limit) || limit <= 0) return
   return { used, limit, ...(typeof model === 'string' && model && { model }) }

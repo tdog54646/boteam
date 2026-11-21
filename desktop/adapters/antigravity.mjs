@@ -554,6 +554,8 @@ export async function run({
       sessionId: id,
       prompt: [{ type: 'text', text: prompt }, ...images],
     })
+    if (result?.stopReason === 'max_tokens')
+      throw new Error('Antigravity 本轮达到 token 上限，请缩短输入或将任务分步执行。')
     if (result?.stopReason !== 'end_turn')
       throw new Error('Antigravity 在完成本轮前停止，请检查额度或重试。')
     const quota = await readQuota(profile, model, selectedModel, signal)

@@ -6,6 +6,7 @@ import path from 'node:path'
 import * as codex from '../desktop/adapters/codex.mjs'
 import { detect, login, options, prepare, run } from '../desktop/adapters/codex.mjs'
 import { locate } from '../desktop/native.mjs'
+import { nativeError } from '../desktop/adapters/codex-rpc.mjs'
 
 test('Codex discovery uses the installed desktop client ahead of an older standalone CLI', async (t) => {
   const desktop = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex'
@@ -139,8 +140,14 @@ readline.createInterface({input:process.stdin}).on('line', line => {
    const id='review-turn', item={type:'exitedReviewMode',id:'review-output',review:'Native review findings'};
    reply({turn:{id},reviewThreadId:scenario.foreignReview?'other':threadId});
    notify('item/completed',{threadId:'other',turnId:id,item:{...item,review:'WRONG'}});
-   notify('item/completed',{threadId,turnId:id,item});
-   notify('turn/completed',{threadId,turn:{id,status:'completed',items:[item]}});
+   if(scenario.reviewProgress) {
+     const progress={type:'agentMessage',id:'progress',phase:'commentary',text:'Review progress'};
+     notify('item/agentMessage/delta',{threadId,turnId:id,itemId:progress.id,delta:'Review'});
+     notify('item/completed',{threadId,turnId:id,item:progress});
+     notify('item/completed',{threadId,turnId:id,item:{type:'plan',id:'plan',text:'Review plan'}});
+   }
+   if(!scenario.missingReview)notify('item/completed',{threadId,turnId:id,item});
+   notify('turn/completed',{threadId,turn:{id,status:'completed',items:scenario.missingReview?[]:[item]}});
    return;
  }
  if(method==='turn/start') {
@@ -149,6 +156,10 @@ readline.createInterface({input:process.stdin}).on('line', line => {
      out({id:'external-refresh',method:'account/chatgptAuthTokens/refresh',params:{}});return reply({turn:{id:turnId}});
    }
    reply({turn:{id:turnId}});
+   if(scenario.turnError) {
+     notify('turn/completed',{threadId,turn:{id:turnId,status:'failed',error:scenario.turnError,items:[]}});
+     return;
+   }
    if(scenario.questions) {
      const questions=[{id:'color',header:'Color',question:'Which color?',isOther:true,isSecret:false,options:[{label:'Blue',description:'Use blue'}]}];
      out({method:'item/tool/requestUserInput',id:'ask-foreign',params:{threadId:'foreign',turnId,questions}});
@@ -718,6 +729,32 @@ test('Codex /review starts native inline reviews of local changes or supplied in
   assert.deepEqual(events.filter(e => e.type === 'text').map(e => e.value), ['Native review findings', 'Native review findings'])
   await f.scenario({ foreignReview: true })
   await assert.rejects(run({ ...task, threadId, slashCommand: 'review' }), /会话/)
+})
+
+test('public group reviews expose only confirmed native findings, including when progress was streamed', async t => {
+  const { task, f, events } = await composerFixture(t)
+  const review = { ...task, prompt: '', slashCommand: 'review' }
+  await f.scenario({ reviewProgress: true })
+  await run({ ...review, publicReview: true })
+  const text = () => events.filter(e => e.type === 'text').map(e => e.value).join('')
+  assert.equal(text(), 'Native review findings')
+  events.length = 0
+  await f.scenario({ reviewProgress: true, missingReview: true })
+  await assert.rejects(run({ ...review, publicReview: true }), /审查/)
+  assert.equal(text(), '')
+  await run(review)
+  assert.match(text(), /Review progress/)
+})
+
+test('Codex diagnoses a native context window rejection even without a prior window estimate', async t => {
+  const { task, f } = await composerFixture(t)
+  await f.scenario({ turnError: { codexErrorInfo: 'contextWindowExceeded', message: 'backend rejected private-marker' } })
+  await assert.rejects(run(task), error => /输入.*窗口/.test(error.message) && !error.message.includes('private-marker'))
+  assert.match(nativeError('Your input exceeds the context window of this model.').message, /输入.*窗口/)
+  assert.match(nativeError('input token limit exceeded').message, /输入.*窗口/)
+  assert.match(nativeError('prompt exceeds the model’s context window').message, /输入.*窗口/)
+  assert.match(nativeError('rate limit exceeded for input tokens per minute').message, /额度|速率/)
+  assert.match(nativeError('Rate limit: input token limit exceeded for tokens per minute').message, /额度|速率/)
 })
 
 test('Codex /fork stages only its source lineage in a new home and verifies the durable child', async (t) => {

@@ -66,6 +66,20 @@ test('a completed native turn has time to finish its background save after EOF',
   assert.equal(await readFile(join(account.source, 'saved'), 'utf8'), 'persisted')
 })
 
+test('ACP distinguishes input-size errors, subscription limits and a max_tokens stop', mac, async t => {
+  const { account, cwd, state } = await setup(t)
+  Object.assign(account, await adapter.detect(account))
+  for (const [outcome, expected] of [
+    [{ promptError: { code: -32000, message: 'The input token count (40970) exceeds the maximum number of tokens allowed (32768). private-marker' } }, /输入.*窗口/],
+    [{ promptError: { code: -32603, message: 'rate limit exceeded for input tokens per minute: private-marker' } }, /额度|速率/],
+    [{ stopReason: 'max_tokens' }, /token 上限/i],
+  ]) {
+    await state(outcome)
+    await assert.rejects(adapter.run({ account, cwd, prompt: 'request', emit() {} }),
+      error => expected.test(error.message) && !error.message.includes('private-marker'))
+  }
+})
+
 test(
   'managed native profile binds paid statusline identity, reads per-model effort, and runs ACP',
   mac,

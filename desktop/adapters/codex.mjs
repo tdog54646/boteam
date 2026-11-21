@@ -972,6 +972,8 @@ async function runTurns(
     goalStatus,
     activationObserved = false
   const review = scope.slashCommand === 'review'
+  const publicReview = review && scope.publicReview
+  let finalReview
   if (review) {
     const instructions = prompt?.trim()
     const target = instructions ? { type: 'custom', instructions } : { type: 'uncommittedChanges' }
@@ -1009,7 +1011,8 @@ async function runTurns(
   const sent = new Map()
   const changedFiles = new Map()
   const append = (id, delta) => {
-    if (!delta) return
+    // A group review publishes the native findings after the turn succeeds.
+    if (!delta || publicReview) return
     sent.set(id, (sent.get(id) || '') + delta)
     emit({ type: 'text', value: delta })
   }
@@ -1075,8 +1078,9 @@ async function runTurns(
       const items = msg.method === 'item/completed' ? [p.item] :
         msg.method === 'turn/completed' ? p.turn.items || [] : []
       for (const item of items) {
-        if (item?.type === 'exitedReviewMode' && typeof item.review === 'string' &&
-            ![...sent.values()].includes(item.review)) append(item.id, item.review)
+        if (item?.type !== 'exitedReviewMode' || typeof item.review !== 'string') continue
+        if (publicReview) finalReview = item.review
+        else if (![...sent.values()].includes(item.review)) append(item.id, item.review)
       }
     }
     if (msg.method === 'item/autoApprovalReview/completed') {
@@ -1118,7 +1122,11 @@ async function runTurns(
     }
     if (msg.method === 'turn/completed') {
       if (p.turn.status === 'interrupted') throw new Error('Codex 任务已中断。')
-      if (p.turn.status !== 'completed') throw nativeError(p.turn.error?.message)
+      if (p.turn.status !== 'completed') throw nativeError(p.turn.error?.message, p.turn.error?.codexErrorInfo)
+      if (publicReview) {
+        if (!finalReview?.trim()) throw new Error('Codex 未返回可在群中发布的最终审查结果。')
+        await emit({ type: 'text', value: finalReview })
+      }
       if (!trackGoal || goalStatus !== 'active') return
       turn = null
     }

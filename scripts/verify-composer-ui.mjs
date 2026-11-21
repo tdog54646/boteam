@@ -88,9 +88,14 @@ async function launchFixtureMain() {
         if (codex) windows.push({ minutes: 300, remainingPercent: 82, resetsAt: Date.now() + 2 * 3600_000 })
         return { scope: 'account', windows }
       },
-      async run({ account, bot, emit, attachments, extensionIds, planMode, goalObjective, ask, prompt, slashCommand, signal }) {
+      async run({ account, bot, chatId, emit, attachments, extensionIds, planMode, goalObjective, ask, prompt, slashCommand, signal }) {
         emit({ type: 'identity', value: account.identity, key: account.identity })
-        if (prompt === '验证模型切换后的上下文') {
+        if (prompt.endsWith('写出本周的验收阈值。') || prompt.endsWith('请检查这个阈值。')) {
+          emit({ type: 'session', value: 'quote-' + chatId + '-' + bot.id })
+          emit({ type: 'text', value: bot.id === first ? '连续五分钟超过 2% 时，请 @研究助手 复核。' : '阈值已复核。' })
+          return
+        }
+        if (prompt.endsWith('验证模型切换后的上下文')) {
           assert.equal(bot.model, 'basic')
           emit({ type: 'context', value: { model: bot.model, used: 1234, limit: 16000 } })
           emit({ type: 'text', value: '已更新用量。' })
@@ -178,15 +183,15 @@ async function seed(root) {
     db.run('INSERT INTO chats VALUES(?,?,?,?)', 'engineering-chat', 'direct', '工程助手', stamp())
     db.run('INSERT INTO members VALUES(?,?)', 'engineering-chat', first)
     db.run('INSERT INTO threads VALUES(?,?,?,?,?)','engineering-chat',first,'account-'+first,'fixture-engineering',root)
-    db.run('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)', 'question', groupId, null, 'user', '我',
+    db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)', 'question', groupId, null, 'user', '我',
       '我们先看聊天输入框，窄窗口和键盘操作分别需要关注什么？', stamp(), JSON.stringify([first,second]), null)
-    db.run('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)', 'implementation-reply', groupId, first, 'bot', '工程助手',
+    db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)', 'implementation-reply', groupId, first, 'bot', '工程助手',
       '窄窗口下要把发送按钮留在视口内。模型名称可以缩短，附件仍需显示完整名称的悬停提示。', stamp(), '[]', null)
-    db.run('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)', 'writing-reply', groupId, second, 'bot', '文案助手',
+    db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)', 'writing-reply', groupId, second, 'bot', '文案助手',
       '我会检查键盘顺序，以及额度圆环在聚焦时能否读到剩余比例和重置时间。', stamp(), '[]', null)
-    db.run('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)', 'direct-question', 'engineering-chat', null, 'user', '我',
+    db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)', 'direct-question', 'engineering-chat', null, 'user', '我',
       '我们开始检查桌面输入框的权限、附件和键盘操作。', stamp(), JSON.stringify([first]), null)
-    db.run('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)', 'direct-answer', 'engineering-chat', first, 'bot', '工程助手',
+    db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)', 'direct-answer', 'engineering-chat', first, 'bot', '工程助手',
       '可以先选择批准方式，再用输入框左下角的加号添加文件和草图。', stamp(), '[]', null)
     await mkdir(join(root,folderName))
     await writeFile(join(root,folderName,'notes.md'), '快照中的文件夹')
@@ -535,6 +540,100 @@ async function verifySlash(page, expect, screenshots) {
   console.log('Slash palette passed for per-tool catalogs, stale responses, IME, outside click, native argument routing and ordinary paths.')
 }
 
+async function verifyGroupQuotes(page, expect) {
+  const create = name => page.evaluate(payload => window.boteam.invoke('createChat', payload), {
+    kind: 'group', name, members: [first, second, third],
+  })
+  const chatId = await create('消息引用验收')
+  await create('另一讨论组')
+  const open = async title => {
+    await page.getByTitle(title, { exact: true }).click()
+    await expect(page.getByRole('region', { name: title, exact: true })).toBeVisible()
+  }
+  const button = name => page.getByRole('button', { name, exact: true })
+  const field = page.getByRole('textbox', { name: '消息内容' })
+  const log = page.getByRole('log')
+  const draft = page.getByRole('group', { name: '待发送引用' })
+  const read = () => page.evaluate(() => window.boteam.invoke('snapshot'))
+  await open('消息引用验收')
+  await button('选择接收人').click()
+  await page.getByRole('button', { name: /工程助手.*项目账号/ }).click()
+  await field.fill('写出本周的验收阈值。')
+  await field.press('Enter')
+  const original = log.getByRole('article').filter({ has: page.locator('.markdown').filter({ hasText: '连续五分钟超过 2%' }) })
+  const quote = original.getByRole('button', { name: '引用', exact: true })
+  await expect(original).toContainText('@研究助手')
+  await original.hover()
+  await expect(quote).toHaveCSS('opacity', '1')
+  await quote.click()
+  await expect(draft).toContainText('工程助手')
+  await expect(draft).toContainText('连续五分钟超过 2%')
+  await expect(button('发送消息')).toBeDisabled()
+  await open('另一讨论组')
+  await expect(draft).toHaveCount(0)
+  await open('消息引用验收')
+  await expect(draft).toContainText('连续五分钟超过 2%')
+  const user = log.getByRole('article').filter({ hasText: '写出本周的验收阈值。' })
+  await user.getByRole('button', { name: '引用', exact: true }).press('Enter')
+  await expect(draft).toContainText('写出本周的验收阈值。')
+  await button('移除引用').press('Enter')
+  await expect(draft).toHaveCount(0)
+  await quote.focus()
+  await expect(quote).toHaveCSS('opacity', '1')
+  await quote.press('Enter')
+  await expect(field).toBeFocused()
+  await expect(field).toHaveAccessibleDescription(/工程助手.*连续五分钟超过 2%/)
+  await button('添加文件或内容').click()
+  await page.getByRole('menuitem', { name: /^目标/ }).click()
+  const goal = page.getByRole('dialog', { name: '目标', exact: true })
+  await goal.getByRole('textbox').fill('单独验证原生目标')
+  await goal.getByRole('button', { name: '开始目标' }).click()
+  const goalReply = log.getByRole('article').filter({ hasText: '已收到持续目标。' })
+  await expect(goalReply).toBeVisible()
+  await expect(goalReply.getByRole('button', { name: '引用' })).toHaveCount(0)
+  await expect(draft).toContainText('连续五分钟超过 2%')
+  await button('选择接收人').click()
+  await page.getByRole('button', { name: /文案助手.*编辑账号/ }).click()
+  await field.fill('/summarize 复核')
+  await field.press('Enter')
+  await expect(page.getByText('请先移除引用，再执行快捷命令。')).toBeVisible()
+  await expect(draft).toContainText('工程助手')
+  await field.fill('请检查这个阈值。')
+  // Remove an attachment through IPC while its original composer is still open.
+  await button('添加文件或内容').click()
+  await page.getByRole('menuitem', { name: /^添加文本/ }).click()
+  await page.getByRole('textbox', { name: '文本内容' }).fill('用于验证失败后保留草稿')
+  await button('添加到消息').click()
+  await expect(button('移除附件 添加的文本.txt')).toBeVisible()
+  await page.evaluate(async scope => {
+    const [file] = await window.boteam.invoke('listAttachments', { scope })
+    await window.boteam.invoke('removeAttachment', { scope, id: file.id })
+  }, chatId)
+  await button('发送消息').click()
+  await expect(page.getByRole('alert')).toContainText('附件不在当前草稿中')
+  await expect(field).toHaveValue('请检查这个阈值。')
+  await expect(draft).toContainText('工程助手')
+  await open('另一讨论组')
+  await open('消息引用验收')
+  await expect(field).toHaveValue('请检查这个阈值。')
+  await expect(draft).toContainText('工程助手')
+  await button('发送消息').click()
+  await expect(draft).toHaveCount(0)
+  await expect(log).toContainText('阈值已复核。')
+  const state = await read()
+  const source = state.messages.find(m => m.chatId === chatId && m.text.startsWith('连续五分钟'))
+  const sent = state.messages.find(m => m.chatId === chatId && m.text === '请检查这个阈值。')
+  assert.equal(sent.replyToMessageId, source.id)
+  assert.deepEqual(sent.recipients, [second])
+  assert.deepEqual(state.tasks.filter(t => t.messageId === sent.id).map(t => t.botId), [second])
+  const link = page.getByRole('button', { name: /查看引用原文/ })
+  await expect(link).toContainText('工程助手')
+  await expect(link).toHaveAccessibleDescription(/工程助手.*连续五分钟超过 2%/)
+  await link.press('Enter')
+  await expect(original).toBeFocused()
+  console.log('Group quote checks passed for mouse and keyboard, drafts, slash controls, independent recipients and original-message navigation.')
+}
+
 async function verifyGroupPicker(page, expect, resize) {
   const ui = picker(page)
   const setting = (id) => page.evaluate(async ({ id, chatId }) => {
@@ -654,6 +753,7 @@ async function verify() {
     await resize(1120, 760)
     const button = name => page.getByRole('button', { name, exact: true })
     const panel = name => page.getByRole('dialog', { name, exact: true })
+    await verifyGroupQuotes(page, expect)
     await verifyDirectPicker(page, expect, pickerScreenshots)
     await verifyActionMenus(page, expect, menuScreenshots, resize)
     await verifyNativeQuestions(page, expect)

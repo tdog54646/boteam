@@ -169,6 +169,10 @@ if (args.includes('/usage')) {
     if (method === 'session/prompt') {
       promptId = id
       save({ method, params, ...session })
+      if (state.promptError || state.stopReason) {
+        send(state.promptError ? { id, error: state.promptError } : { id, result: { stopReason: state.stopReason } })
+        return
+      }
       send({
         method: 'session/update',
         params: {

@@ -17,7 +17,7 @@ import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { nativeEnv, redact } from '../native.mjs'
 
-import { contextUsage, inlineImages, quotaWindow } from './usage.mjs'
+import { contextUsage, inlineImages, inputWindowError, quotaWindow } from './usage.mjs'
 import { nativeSlashCatalog, slashPrompt } from './native-slash.mjs'
 
 const permissions = { default: 'default', plan: 'plan', edits: 'acceptEdits' }
@@ -281,6 +281,8 @@ function stopChild(child, how) {
 
 function failResult(result) {
   const details = [result.result, ...(Array.isArray(result.errors) ? result.errors : [])].join(' ')
+  const overflow = inputWindowError(details)
+  if (overflow) return overflow
   if (/rate.?limit|usage.?limit|quota|exhausted|overload|429/i.test(details))
     return new Error('Claude 订阅额度已用尽或服务繁忙，请稍后重试。')
   if (/auth|login|log in|sign.?in|token|401|403/i.test(details))
