@@ -120,6 +120,28 @@ test(
     assert.doesNotMatch(JSON.stringify([events, account]), /SHOULD_NOT_LEAK/)
   },
 )
+test('fresh ACP catalogs reflect changed models and preserve the initial native effort', mac, async t => {
+  const { account, state } = await setup(t)
+  await state({ initialSession: { model: 'gemini-flash', effort: 'low' } })
+  Object.assign(account, await adapter.detect(account))
+  const previous = await adapter.options({ account })
+  assert.deepEqual(previous.models.map(model => model.id), ['gemini-pro', 'gemini-flash'])
+  assert.equal(previous.defaultModel, 'gemini-flash')
+  assert.equal(previous.defaultEffort, 'low')
+
+  await state({ modelOptions: [
+    { value: 'new-native-id', name: 'New native model' },
+    { value: 'gemini-pro', name: 'Renamed Pro' },
+  ] })
+  const catalog = await adapter.options({ account })
+  assert.deepEqual(catalog.models.map(({ id, label }) => [id, label]), [
+    ['new-native-id', 'New native model'], ['gemini-pro', 'Renamed Pro'],
+  ])
+  assert.equal(catalog.defaultModel, 'gemini-pro')
+  assert.equal(catalog.defaultEffort, 'high')
+  assert.equal(catalog.models[1].defaultEffort, catalog.defaultEffort)
+})
+
 test(
   'stale binding, unpaid native identity, tier mismatch and unsupported effort never send a prompt',
   mac,

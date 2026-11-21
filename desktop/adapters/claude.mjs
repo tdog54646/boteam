@@ -166,8 +166,9 @@ export async function detect({ source = defaultSource, bin, signal, managed = fa
       '已确认本机 Claude 订阅。请重新授权到 BoTeam 独立目录，避免原生客户端在任务中途切换账号。'
   if (typeof info.orgName === 'string' && info.orgName.length <= 250)
     result.organization = info.orgName
-  if (typeof settings?.model === 'string' && /^[a-z0-9][\w.-]{0,99}$/i.test(settings.model))
-    result.model = settings.model
+  const model = settings?.model
+  if (typeof model === 'string' && model.length <= 100 && /^[a-z0-9][\w.-]*(?:\[[a-z0-9]+\])?$/i.test(model))
+    result.model = model
   return result
 }
 

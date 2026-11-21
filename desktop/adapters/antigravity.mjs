@@ -345,24 +345,21 @@ export async function options({ account, signal }) {
       const picker = select(initial, 'model'),
         models = []
       const defaultModel = account.model || picker.current
-      const available = picker.items.some(model => model.id === defaultModel)
-      let configs = available ? await configure(request, id, initial, 'model', defaultModel) : initial
-      const defaultLevels = available ? select(configs, 'thought_level') : null
+      let configs = initial
       for (const model of picker.items) {
-        configs = await configure(request, id, configs, 'model', model.id)
-        models.push({
-          ...model,
-          efforts: select(configs, 'thought_level').items,
-          defaultEffort: select(configs, 'thought_level').current,
-        })
+        // Switching back to the initial model can reset its chosen thought level.
+        if (model.id !== picker.current) configs = await configure(request, id, configs, 'model', model.id)
+        const levels = select(model.id === picker.current ? initial : configs, 'thought_level')
+        models.push({ ...model, efforts: levels.items, defaultEffort: levels.current })
       }
+      const selected = models.find(model => model.id === defaultModel)
       return {
         models,
         defaultModel,
-        efforts: defaultLevels?.items || [],
-        defaultEffort: defaultLevels?.current,
+        efforts: selected?.efforts || [],
+        defaultEffort: selected?.defaultEffort,
         reason: !models.length ? '此版本未返回可选模型。'
-          : defaultModel && !available ? '原配置中的默认模型已不可用，请重新选择。' : '',
+          : defaultModel && !selected ? '原配置中的默认模型已不可用，请重新选择。' : '',
       }
     }),
   )

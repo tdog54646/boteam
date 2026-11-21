@@ -38,7 +38,7 @@ const models = [
     supportsEffort: true,
     supportedEffortLevels: ['low', 'high'],
   },
-  { value: 'b', resolvedModel: 'claude-b', displayName: 'B' },
+  { value: 'b[1m]', resolvedModel: 'claude-b', displayName: 'B' },
 ]
 
 async function fixture(t, status = oauth, account = live, resultError = null) {
@@ -302,6 +302,14 @@ test('native account model choices and effort apply before submission for new an
     (await readFile(path.join(f.source, 'submitted'), 'utf8')).trim().split('\n').length,
     2,
   )
+})
+
+test('Claude rereads a changed profile model with a native context-window suffix', async (t) => {
+  const f = await fixture(t)
+  const account = { ...f, ...(await detect(f)) }
+  assert.equal((await options({ account })).defaultModel, 'claude-a')
+  await writeFile(path.join(f.source, 'settings.json'), JSON.stringify({ model: 'b[1m]' }))
+  assert.equal((await options({ account })).defaultModel, 'claude-b')
 })
 
 test('verified external profile retains stable identity but needs a private login before dispatch', async (t) => {

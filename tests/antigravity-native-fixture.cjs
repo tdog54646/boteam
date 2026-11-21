@@ -59,7 +59,7 @@ if (args.includes('/usage')) {
         category: 'model',
         type: 'select',
         currentValue: s.model,
-        options: [
+        options: state.modelOptions || [
           { value: 'gemini-pro', name: 'Gemini Pro' },
           { value: 'gemini-flash', name: 'Gemini Flash' },
         ],
@@ -145,7 +145,7 @@ if (args.includes('/usage')) {
       const current =
         method !== 'session/new'
           ? { model: 'gemini-flash', effort: 'low', mode: 'accept-edits' }
-          : { model: 'gemini-pro', effort: 'high' }
+          : (state.initialSession || { model: 'gemini-pro', effort: 'high' })
       sessions.set(sessionId, current)
       if (state.commands) setTimeout(() => send({
         method: 'session/update', params: { sessionId,
