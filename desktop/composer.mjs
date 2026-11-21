@@ -74,7 +74,7 @@ export class ComposerSettings {
     const model = hasModel ? (p.model ?? bot.model) : previous.model
     const effort = hasEffort ? (p.effort ?? bot.effort) : previous.effort
     if (hasModel || hasEffort) {
-      const catalog = model || effort ? await this.workspace.botOptions(account.id, true) : {}
+      const catalog = model || effort ? await this.workspace.botOptions(account.id) : {}
       validateSelection(catalog, model, effort)
     }
     this.member(chatId, botId)

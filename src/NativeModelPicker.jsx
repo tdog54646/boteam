@@ -52,7 +52,7 @@ export function describeModel(catalog, model, effort, provider) {
   };
 }
 
-function ModelMenu({ catalog, model, provider, busy, onChoose, onBack }) {
+function ModelMenu({ catalog, model, provider, busy, loading, status, onChoose, onBack }) {
   const menu = useRef(null);
   const items = catalog?.models || [];
   const currentMissing = model && !items.some((item) => item.id === model);
@@ -60,12 +60,13 @@ function ModelMenu({ catalog, model, provider, busy, onChoose, onBack }) {
   const checkedId = model || defaultEntry?.id || "";
   useLayoutEffect(() => {
     const node = menu.current;
+    if (document.activeElement !== document.body && document.activeElement !== node) return;
     const selected =
       node.querySelector('[aria-checked="true"]:enabled') ||
       node.querySelector("button:enabled");
-    selected?.focus({ preventScroll: true });
+    (selected || node).focus({ preventScroll: true });
     selected?.scrollIntoView({ block: "nearest" });
-  }, []);
+  }, [loading, catalog]);
   function navigate(event) {
     if (event.key === "Escape" || event.key === "ArrowLeft") {
       event.preventDefault();
@@ -113,17 +114,19 @@ function ModelMenu({ catalog, model, provider, busy, onChoose, onBack }) {
       className="native-model-menu"
       role="menu"
       aria-label="模型"
+      tabIndex={-1}
       ref={menu}
       onKeyDownCapture={navigate}
     >
-      {row(
+      {!loading && row(
         "",
         "默认",
         provider === "codex" ? "推荐模型集" : modelName(defaultEntry),
       )}
-      {items.map((item) => row(item.id, modelName(item)))}
-      {currentMissing &&
+      {!loading && items.map((item) => row(item.id, modelName(item)))}
+      {!loading && currentMissing &&
         row(model, modelName({ id: model }), "已保存，当前未列出", true)}
+      {status}
     </div>
   );
 }
@@ -135,7 +138,7 @@ export function NativeModelPicker({
   provider,
   busy = false,
   loading = false,
-  retry,
+  refresh,
   onChange,
   onReset,
   resetLabel = "恢复 Bot 默认设置",
@@ -160,6 +163,15 @@ export function NativeModelPicker({
     effortName(level?.label || level?.id, provider) || effortLabel || "原生默认";
   const single = levels.length === 1;
   const locked = busy || loading;
+  const reason = catalog?.reason || (catalog && !catalog.models?.length && "原生工具未返回可选模型。");
+  const status = (loading || reason) && (
+    <p className="native-model-status" role="status">
+      {loading ? "正在读取原生模型…" : reason}
+      {!loading && refresh && (
+        <button type="button" className="text-btn" onClick={refresh}>重新读取</button>
+      )}
+    </p>
+  );
 
   useLayoutEffect(() => {
     if (!showModels && inMenu.current)
@@ -167,6 +179,9 @@ export function NativeModelPicker({
     inMenu.current = showModels;
   }, [showModels]);
 
+  function openModels() {
+    if (!busy) setShowModels(true);
+  }
   function chooseModel(id) {
     const available = describeModel(catalog, id, "").levels;
     const patch = { model: id };
@@ -199,6 +214,8 @@ export function NativeModelPicker({
           model={model}
           provider={provider}
           busy={busy}
+          loading={loading}
+          status={status}
           onChoose={chooseModel}
           onBack={() => setShowModels(false)}
         />
@@ -224,14 +241,12 @@ export function NativeModelPicker({
               aria-describedby={selectionId}
               aria-haspopup="menu"
               aria-expanded={showModels}
-              aria-disabled={locked}
-              onClick={() => {
-                if (!locked) setShowModels(true);
-              }}
+              aria-disabled={busy}
+              onClick={openModels}
               onKeyDown={(event) => {
                 if (event.key === "ArrowRight" || event.key === "ArrowDown") {
                   event.preventDefault();
-                  if (!locked) setShowModels(true);
+                  openModels();
                 }
               }}
             >
@@ -311,22 +326,8 @@ export function NativeModelPicker({
               {selected === 0 && <Check size={13} aria-hidden="true" />}
             </button>
           )}
-          {loading && (
-            <p className="native-model-status" role="status">
-              正在读取原生模型…
-            </p>
-          )}
-          {catalog?.reason && (
-            <p className="native-model-status" role="status">
-              {catalog.reason}{" "}
-              {retry && (
-                <button type="button" className="text-btn" onClick={retry}>
-                  重新读取
-                </button>
-              )}
-            </p>
-          )}
-          {effort && selected < 0 && catalog && !catalog.reason && (
+          {status}
+          {effort && selected < 0 && catalog && !loading && !reason && (
             <p className="native-model-status">
               已保存的强度 {effortName(effort, provider)} 当前未列出。
             </p>

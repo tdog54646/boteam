@@ -44,6 +44,16 @@ async function launchFixtureMain() {
   const { codexCommands } = await import('../desktop/adapters/codex-slash.mjs')
   const { sessionSlashCommands } = await import('../desktop/adapters/antigravity-actions.mjs')
   const goals = new Map()
+  const modelReads = {}
+  let liveCodexCatalog = codexCatalog
+  let catalogError, catalogGate
+  app.fixtureModelCatalog = ({ catalog, error, paused }) => {
+    if (catalog) liveCodexCatalog = catalog
+    if (error !== undefined) catalogError = error
+    if (paused === true) catalogGate = Promise.withResolvers()
+    if (paused === false) { catalogGate?.resolve(); catalogGate = null }
+    return modelReads
+  }
   let cancelledQuestions = 0
   function adapter(provider) {
     const codex = provider === 'codex'
@@ -82,7 +92,13 @@ async function launchFixtureMain() {
         if (action === 'clear') goals.delete(threadId)
         return { threadId, goal: goals.get(threadId) || null }
       },
-      async options() { return codex ? codexCatalog : claudeCatalog },
+      async options({ account }) {
+        modelReads[account.id] = (modelReads[account.id] || 0) + 1
+        if (!codex) return claudeCatalog
+        if (catalogGate) await catalogGate.promise
+        if (catalogError) throw new Error(catalogError)
+        return liveCodexCatalog
+      },
       async quota() {
         const windows = [{ minutes: 10080, remainingPercent: 67, resetsAt: Date.now() + 4 * 86400_000 }]
         if (codex) windows.push({ minutes: 300, remainingPercent: 82, resetsAt: Date.now() + 2 * 3600_000 })
@@ -149,9 +165,15 @@ async function launchFixtureMain() {
       },
     }
   }
-  Workspace.prototype.handle = function(method, payload) {
-    Object.assign(this.adapters, { codex: adapter('codex'), claude: adapter('claude'), antigravity: adapter('antigravity') })
-    return original.call(this, method, payload)
+  const fixtures = Object.fromEntries(['codex', 'claude', 'antigravity'].map(provider => [provider, adapter(provider)]))
+  const warm = Workspace.prototype.warmModelCatalogs
+  Workspace.prototype.warmModelCatalogs = function() {
+    Object.assign(this.adapters, fixtures)
+    return warm.call(this)
+  }
+  Workspace.prototype.handle = function(...args) {
+    Object.assign(this.adapters, fixtures)
+    return original.apply(this, args)
   }
   dialog.showOpenDialog = async (_window, options) => {
     assert.ok(['openFile','openDirectory','multiSelections'].every(p => options.properties.includes(p)))
@@ -185,6 +207,8 @@ async function seed(root) {
     db.run('INSERT INTO chats VALUES(?,?,?,?)', 'engineering-chat', 'direct', '工程助手', stamp())
     db.run('INSERT INTO members VALUES(?,?)', 'engineering-chat', first)
     db.run('INSERT INTO threads VALUES(?,?,?,?,?)','engineering-chat',first,'account-'+first,'fixture-engineering',root)
+    db.run('INSERT INTO chats VALUES(?,?,?,?)', 'writing-chat', 'direct', '文案助手', stamp())
+    db.run('INSERT INTO members VALUES(?,?)', 'writing-chat', second)
     db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)', 'question', groupId, null, 'user', '我',
       '我们先看聊天输入框，窄窗口和键盘操作分别需要关注什么？', stamp(), JSON.stringify([first,second]), null)
     db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)', 'implementation-reply', groupId, first, 'bot', '工程助手',
@@ -232,8 +256,11 @@ async function capturePicker(page, ui, path) {
   await page.screenshot({ path, clip: { x, y, width: right - x, height: bottom - y }, animations: 'disabled' })
 }
 
-async function verifyDirectPicker(page, expect, screenshotDir) {
+async function verifyDirectPicker(page, expect, screenshotDir, catalogFixture) {
+  const readCount = async () => (await catalogFixture())['account-' + first]
+  const beforeEntry = await readCount()
   await page.getByTitle('工程助手', { exact: true }).click()
+  await expect.poll(readCount).toBe(beforeEntry + 1)
   const ui = picker(page)
   await ui.trigger.click()
   await expect(ui.card).toBeInViewport({ ratio: 1 })
@@ -286,6 +313,57 @@ async function verifyDirectPicker(page, expect, screenshotDir) {
   await page.keyboard.press('Escape')
   await expect(ui.card).toHaveCount(0)
   await expect(ui.trigger).toBeFocused()
+  const afterSelection = await readCount()
+  assert.equal(afterSelection, beforeEntry + 1, 'Model and effort selection must reuse the displayed catalog')
+  for (let repeat = 0; repeat < 2; repeat++) {
+    await ui.trigger.click()
+    await ui.model.click()
+    await expect(current).toBeEnabled()
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
+    await expect(ui.card).toHaveCount(0)
+  }
+  assert.equal(await readCount(), afterSelection, 'Opening either picker level must reuse the conversation catalog')
+
+  async function returnToChat(change) {
+    await page.getByTitle('文案助手', { exact: true }).click()
+    await expect(ui.trigger).toContainText('Sonnet')
+    const previousReads = await readCount()
+    await catalogFixture(change)
+    await page.getByTitle('工程助手', { exact: true }).click()
+    await expect.poll(readCount).toBe(previousReads + 1)
+  }
+  const next = { id: 'native-new', label: 'New native model', efforts: [] }
+  await returnToChat({ catalog: { defaultModel: next.id, models: [next] }, paused: true })
+  await ui.trigger.click()
+  await ui.model.click()
+  await expect(current).toBeEnabled()
+  await catalogFixture({ paused: false })
+  const latest = ui.menu.getByRole('menuitemradio', { name: next.label, exact: true })
+  await expect(latest).toBeEnabled()
+  await expect(ui.menu.getByText('已保存，当前未列出')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
+
+  const failure = '测试目录暂时不可用'
+  await returnToChat({ error: failure })
+  await ui.trigger.click()
+  await ui.model.click()
+  const retry = ui.menu.getByRole('button', { name: '重新读取' })
+  await expect(ui.menu).toContainText(failure)
+  await expect(latest).toBeEnabled()
+  const beforeRetry = await readCount()
+  await catalogFixture({ catalog: { models: [] }, error: null })
+  await retry.click()
+  await expect.poll(readCount).toBe(beforeRetry + 1)
+  await expect(ui.menu.getByText('原生工具未返回可选模型。')).toBeVisible()
+  await expect(latest).toHaveCount(0)
+  await catalogFixture({ catalog: codexCatalog })
+  await retry.click()
+  await expect(current).toBeEnabled()
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
+  await expect(ui.card).toHaveCount(0)
 }
 
 async function verifyActionMenus(page, expect, screenshotDir, resize) {
@@ -781,8 +859,11 @@ async function verify() {
     await resize(1120, 760)
     const button = name => page.getByRole('button', { name, exact: true })
     const panel = name => page.getByRole('dialog', { name, exact: true })
+    const catalogFixture = (change = {}) => app.evaluate(({ app }, change) => app.fixtureModelCatalog(change), change)
+    await expect.poll(async () => Object.keys(await catalogFixture()).sort())
+      .toEqual([first, second, third].map(id => 'account-' + id).sort())
     await verifyGroupQuotes(page, expect)
-    await verifyDirectPicker(page, expect, pickerScreenshots)
+    await verifyDirectPicker(page, expect, pickerScreenshots, catalogFixture)
     await verifyActionMenus(page, expect, menuScreenshots, resize)
     await verifyNativeQuestions(page, expect)
     await page.getByTitle(project, { exact: true }).click()

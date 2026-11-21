@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
+import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promises'
 import { Workspace } from '../desktop/workspace.mjs'
 
 async function fixture(t, adapter) {
@@ -31,6 +31,95 @@ async function fixture(t, adapter) {
   })
   return { app, options, bot, other, dm, group }
 }
+
+test('the picker reuses the account catalog until refreshed and saves against the refreshed choices', async t => {
+  let current = 'first', reads = 0
+  const { app, bot, dm } = await fixture(t, {
+    options: async () => {
+      reads++
+      return { models: [{ id: current, efforts: [] }], defaultModel: current }
+    },
+  })
+  const read = (refresh = false) => app.handle('botOptions', { accountId: 'a', refresh })
+  const first = await read()
+  assert.equal(first.defaultModel, 'first')
+  assert.equal(Object.hasOwn(first, 'cached'), false)
+  current = 'second'
+  assert.deepEqual(await read(), { ...first, cached: true })
+  assert.equal(reads, 1)
+  const second = await read(true)
+  assert.equal(second.defaultModel, 'second')
+  assert.equal(Object.hasOwn(second, 'cached'), false)
+  assert.deepEqual(await read(), { ...second, cached: true })
+  await assert.rejects(
+    app.handle('setComposerSettings', { chatId: dm, botId: bot, model: 'first', effort: '' }),
+    /未提供所选模型/,
+  )
+  await app.handle('setComposerSettings', { chatId: dm, botId: bot, model: 'second', effort: '' })
+  await assert.rejects(app.handle('editBot', { id: bot, name: '一', model: 'first' }), /未提供所选模型/)
+  assert.equal(reads, 2)
+})
+
+test('background refreshes share a CLI query, leave the menu readable, and reject a changed binding', async t => {
+  const pending = []
+  const { app } = await fixture(t, {
+    options: () => {
+      const query = Promise.withResolvers()
+      pending.push(query)
+      return query.promise
+    },
+  })
+  const read = (refresh = false) => app.handle('botOptions', { accountId: 'a', refresh })
+  const previous = { models: [{ id: 'previous' }], defaultModel: 'previous' }
+  const warmup = read()
+  pending[0].resolve(previous)
+  await warmup
+  const first = read(true)
+  const same = read(true)
+  const cached = await Promise.race([read(), nextTurn('still waiting for the CLI')])
+  const started = pending.length
+  app.db.run("UPDATE accounts SET identity='another-owner' WHERE id='a'")
+  const next = read()
+  const result = { models: [{ id: 'current' }], defaultModel: 'current' }
+  for (const query of pending) query.resolve(result)
+  await Promise.all([assert.rejects(first, /账号配置已变化/), assert.rejects(same, /账号配置已变化/)])
+  assert.deepEqual(cached, { ...previous, cached: true })
+  assert.deepEqual(await next, result)
+  assert.equal(started, 2)
+  assert.equal(pending.length, 3)
+})
+
+test('a failed catalog query can be retried while another account keeps its own catalog', async t => {
+  const calls = []
+  let failNext = true
+  const { app } = await fixture(t, {
+    async options({ account }) {
+      calls.push(account.id)
+      if (failNext) {
+        failNext = false
+        throw new Error('CLI temporarily unavailable')
+      }
+      const id = account.identity
+      return { models: [{ id }], defaultModel: id }
+    },
+  })
+  app.db.run('INSERT INTO accounts(id,provider,identity,info) VALUES(?,?,?,?)',
+    'b', 'codex', 'another-owner', JSON.stringify({ status: 'ready' }))
+  const read = (accountId, refresh = false) => app.handle('botOptions', { accountId, refresh })
+  await assert.rejects(read('a'), /temporarily unavailable/)
+  assert.equal((await read('b')).defaultModel, 'another-owner')
+  assert.equal((await read('a')).defaultModel, 'owner')
+  assert.equal((await read('b')).defaultModel, 'another-owner')
+  assert.equal((await read('a')).defaultModel, 'owner')
+  assert.deepEqual(calls, ['a', 'b', 'a'])
+  failNext = true
+  await assert.rejects(read('a', true), /temporarily unavailable/)
+  const retained = await read('a')
+  assert.equal(retained.defaultModel, 'owner')
+  assert.equal(retained.cached, true)
+  assert.equal((await read('a', true)).defaultModel, 'owner')
+  assert.deepEqual(calls, ['a', 'b', 'a', 'a', 'a'])
+})
 
 test('composer settings follow each chat member and queue submission, native usage survives restart', async (t) => {
   let begin, proceed

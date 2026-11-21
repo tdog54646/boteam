@@ -242,6 +242,7 @@ else {
     if (app.isPackaged && process.platform !== 'darwin') app.setAsDefaultProtocolClient('boteam')
     if (pendingLinks.length) for (const link of new Set(pendingLinks.splice(0))) incomingLink(link)
     else openWindow()
+    void workspace.accountOperation(workspace.warmModelCatalogs())
     app.on('activate', () => {
       if (!windows.size) openWindow()
     })

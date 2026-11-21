@@ -18,6 +18,11 @@ import { chatProjectCwd, configureNewChatProject, inheritProject, manageProject 
 
 const active = "('queued','running','approval')"
 const stamp = () => new Date().toISOString()
+function catalogKey(account) {
+  return JSON.stringify([account.id, account.provider, account.identity, account.status, account.bin,
+    account.source, account.credentialSource, account.managed, account.plan,
+    account.provider === 'antigravity' ? account.model : null])
+}
 function required(value, max = 120) {
   if (typeof value !== 'string' || !value.trim() || value.length > max)
     throw new Error('内容为空或超过长度限制。')
@@ -65,7 +70,7 @@ export class Workspace {
     this.attachments = new AttachmentStore(this.root, this.db)
     this.lifetime = new AbortController()
     this.pendingAccounts = new Set()
-    this.recentCatalogs = new Map()
+    this.modelCatalogs = new Map()
     this.nativeReads = new Map()
     this.threadEdits = new Map()
     this.lanes = new Map()
@@ -76,6 +81,9 @@ export class Workspace {
     const permissionModes = Object.fromEntries(Object.entries(this.adapters)
       .map(([name, adapter]) => [name, adapter.permissionModes || ['default']]))
     return { ...this.db.snapshot(), permissionModes }
+  }
+  invalidateCatalogs(accountId) {
+    this.modelCatalogs.delete(accountId)
   }
   busyAccount(id) {
     return (
@@ -298,31 +306,48 @@ export class Workspace {
       throw new Error('原生会话关联不符。')
     if (!existing) this.db.run('INSERT INTO threads VALUES(?,?,?,?,?)', chatId, botId, accountId, id, cwd)
   }
-  async botOptions(accountId, forSelection = false) {
+  async warmModelCatalogs() {
+    const accounts = this.db.all("SELECT id FROM accounts WHERE json_extract(info,'$.status')='ready' ORDER BY rowid")
+    // Warm one account at a time. The active chat can request its account immediately.
+    for (const { id } of accounts) {
+      if (this.closed) return
+      try { await this.botOptions(id) } catch { /* A foreground read can retry a failed startup probe. */ }
+    }
+  }
+  async botOptions(accountId, refresh = false) {
     const account = this.db.account(accountId)
     if (account.status !== 'ready')
       return { models: [], reason: account.reason || '请先核实此账号的原生登录。' }
     const adapter = this.accounts.adapter(account.provider)
     if (!adapter.options) return { models: [], reason: '此版本的原生工具未提供模型选项。' }
-    // Commit a slider stop against the catalog just shown. The actual native
-    // turn verifies its options again before submitting the prompt.
-    const binding = a => JSON.stringify([a.identity, a.status, a.source, a.credentialSource, a.bin])
-    const key = binding(account)
-    const cached = this.recentCatalogs.get(accountId)
-    if (forSelection && cached?.key === key && cached.until > Date.now()) return cached.options
-    this.recentCatalogs.delete(accountId)
+    const key = catalogKey(account)
+    let entry = this.modelCatalogs.get(accountId)
+    if (entry?.key !== key) {
+      entry = { key, options: null, pending: null }
+      this.modelCatalogs.set(accountId, entry)
+    }
+    if (!refresh && entry.options) return { ...entry.options, cached: true }
+    if (entry.pending) return entry.pending
+    entry.pending = this.readBotOptions(adapter, account, entry)
+    try {
+      return await entry.pending
+    } finally {
+      entry.pending = null
+    }
+  }
+  async readBotOptions(adapter, account, entry) {
     const options = await adapter.options({ account, signal: this.lifetime.signal })
     if (this.closed) throw new Error('工作台已关闭。')
-    const current = this.db.account(accountId)
-    if (binding(current) !== key)
+    const current = this.db.account(account.id)
+    if (this.modelCatalogs.get(account.id) !== entry || catalogKey(current) !== entry.key)
       throw new Error('账号配置已变化，请重新读取原生选项。')
     if (account.provider === 'codex' && typeof options.defaultModel === 'string' &&
         options.models?.some(model => model.id === options.defaultModel) &&
         options.defaultModel !== current.model) {
-      this.db.run("UPDATE accounts SET info=json_set(info,'$.model',?) WHERE id=?", options.defaultModel, accountId)
+      this.db.run("UPDATE accounts SET info=json_set(info,'$.model',?) WHERE id=?", options.defaultModel, account.id)
       this.notify()
     }
-    if (options.models?.length) this.recentCatalogs.set(accountId, { key, options, until: Date.now()+60_000 })
+    entry.options = options
     return options
   }
   async saveBot(p, editing) {
@@ -336,7 +361,7 @@ export class Workspace {
     if (typeof model !== 'string' || typeof effort !== 'string')
       throw new Error('请选择原生工具列出的模型和思考强度。')
     if ((model || effort) && (!prev || model !== prev.model || effort !== prev.effort)) {
-      const catalog = await this.botOptions(account.id, true)
+      const catalog = await this.botOptions(account.id)
       validateSelection(catalog, model, effort)
     }
     const id = prev?.id ?? randomUUID()
@@ -420,7 +445,7 @@ export class Workspace {
         )
         break
       case 'botOptions':
-        return this.accountOperation(this.botOptions(p.accountId))
+        return this.accountOperation(this.botOptions(p.accountId, p.refresh === true))
       case 'createBot':
         return this.accountOperation(this.saveBot(p, false))
       case 'editBot':

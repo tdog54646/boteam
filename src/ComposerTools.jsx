@@ -9,6 +9,7 @@ import { Plus } from "lucide-react";
 import { createPortal } from "react-dom";
 import { accountLabel, errorText, Modal, Select } from "./ui";
 import { NativeModelPicker, describeModel, modelLabelFor } from "./NativeModelPicker";
+import { useModelCatalog } from "./useModelCatalog";
 
 import {
   AddMenu,
@@ -244,40 +245,6 @@ function Ring({ values }) {
   );
 }
 
-function useCatalog(account, invoke) {
-  const [attempt, setAttempt] = useState(0);
-  const [result, setResult] = useState(null);
-  const key = JSON.stringify([
-    account?.id,
-    account?.status,
-    account?.identity,
-    account?.source,
-    account?.bin,
-    account?.model,
-    attempt,
-  ]);
-  useEffect(() => {
-    if (!account || account.status !== "ready") return;
-    let current = true;
-    invoke("botOptions", { accountId: account.id })
-      .then((data) => {
-        if (current) setResult({ key, data });
-      })
-      .catch((e) => {
-        if (current) setResult({ key, data: { reason: errorText(e) } });
-      });
-    return () => {
-      current = false;
-    };
-  }, [key, invoke]);
-  const catalog = result?.key === key ? result.data : null;
-  return {
-    catalog,
-    loading: !catalog && account?.status === "ready",
-    retry: () => setAttempt((v) => v + 1),
-  };
-}
-
 const number = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 });
 const displayTime = (date) => {
   const time = new Date(date);
@@ -358,7 +325,7 @@ export function ComposerTools({
     (choice?.recipients === recipientKey ? choice.id : recipients[0]);
   const bot = members.find((m) => m.id === activeId) || members[0];
   const account = state.accounts.find((a) => a.id === bot?.accountId);
-  const { catalog, loading, retry } = useCatalog(account, invoke);
+  const { catalog, loading, refresh } = useModelCatalog(account, invoke, { refreshOnEntry: true });
   const [pending, setPending] = useState(null);
   const saving = useRef(false);
   const stored = state.composerSettings?.find(
@@ -711,12 +678,7 @@ export function ComposerTools({
             return (
               <div className="quota-window" key={`${w.minutes}-${index}`}>
                 <div className="usage-line">
-                  <span>
-                    {windowLabel(w.minutes)}
-                    {week &&
-                      short &&
-                      (w === week ? " · 外圈" : w === short ? " · 内圈" : "")}
-                  </span>
+                  <span>{windowLabel(w.minutes)}</span>
                   <strong>
                     {value == null
                       ? "剩余未知"
@@ -764,15 +726,10 @@ export function ComposerTools({
             provider={account?.provider}
             model={model}
             effort={effort}
-            catalog={
-              catalog ||
-              (account?.status !== "ready"
-                ? { reason: account?.reason || "请先核实此账号的原生登录。" }
-                : null)
-            }
+            catalog={catalog}
             loading={loading}
             busy={busy}
-            retry={account?.status === "ready" ? retry : undefined}
+            refresh={refresh}
             onChange={(patch) => save(patch, false)}
             onReset={() => save({ model: null, effort: null }, false)}
             resetDisabled={settings.model == null && settings.effort == null}

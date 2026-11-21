@@ -41,6 +41,7 @@ async function selectNativeSettings(page) {
   await expect(trigger).toBeEnabled({timeout:80_000})
   await trigger.click()
   const choices = form.getByRole('menu', {name:'模型'}).getByRole('menuitemradio')
+  await expect(choices.first()).toBeVisible({timeout:80_000})
   const normal = value => value.toLowerCase().replace(/[-\s]+/g, '')
   const labels = await choices.allTextContents()
   const index = labels.findIndex(label => normal(label.trim()) === normal(model.label))

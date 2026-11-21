@@ -271,6 +271,7 @@ export class Accounts {
           JSON.stringify(info),
         )
       if (existing) {
+        this.workspace.invalidateCatalogs(id)
         await this.release(existing.source)
         if (existing.managed) await this.release(existing.credentialSource)
       }
@@ -436,6 +437,7 @@ export class Accounts {
         this.db.run('DELETE FROM accounts WHERE id=?', id)
         this.db.run('DELETE FROM settings WHERE key=?', stageKey)
       })
+      this.workspace.invalidateCatalogs(id)
       if (staged) await this.release(staged)
       await this.release(account.source)
       if (account.managed) await this.release(account.credentialSource)

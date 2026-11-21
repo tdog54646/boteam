@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { FolderOpen, MessageSquare, MoreHorizontal, Plus } from "lucide-react";
 import {
   accountLabel,
@@ -17,6 +17,7 @@ import {
   Status,
 } from "./ui";
 import { NativeModelPicker } from "./NativeModelPicker";
+import { useModelCatalog } from "./useModelCatalog";
 import "./settings.css";
 
 export function BotForm({
@@ -41,29 +42,11 @@ export function BotForm({
   const [cwd, setCwd] = useState(initial?.cwd || "");
   const [model, setModel] = useState(initial?.model || "");
   const [effort, setEffort] = useState(initial?.effort || "");
-  const [catalog, setCatalog] = useState(null);
-  const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const account = accounts.find((a) => a.id === accountId);
-  useEffect(() => {
-    if (!accountId) return;
-    let active = true;
-    invoke("botOptions", { accountId })
-      .then((result) => {
-        if (active) setCatalog(result);
-      })
-      .catch((err) => {
-        if (active) setCatalog({ reason: errorText(err) });
-      });
-    return () => {
-      active = false;
-    };
-  }, [invoke, accountId, attempt]);
-
-  const loading = Boolean(accountId && !catalog);
+  const { catalog, loading, refresh } = useModelCatalog(account, invoke);
   function changeAccount(id) {
-    setCatalog(null);
     setAccountId(id);
     setModel("");
     setEffort("");
@@ -134,7 +117,7 @@ export function BotForm({
           effort={effort}
           loading={loading}
           busy={busy || pending}
-          retry={() => { setCatalog(null); setAttempt((value) => value + 1); }}
+          refresh={refresh}
           onChange={(patch) => {
             if (patch.model !== undefined) setModel(patch.model);
             if (patch.effort !== undefined) setEffort(patch.effort);
