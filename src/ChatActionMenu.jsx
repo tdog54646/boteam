@@ -2,7 +2,7 @@ import React from "react";
 import { ActionMenu } from "./ActionMenu";
 import {
   AppWindow, Archive, ArchiveRestore, ArrowUpRight, Copy, Eye, EyeOff,
-  FileText, Folder, FolderPlus, Hash, Link2, List, Pencil, Pin, PinOff, Trash2, Upload,
+  FileText, Folder, FolderPlus, Hash, Link2, List, Pencil, Pin, PinOff, Split, Trash2, Upload,
 } from "lucide-react";
 
 const mac = /Mac/i.test(navigator.platform);
@@ -25,7 +25,7 @@ function menuGroups(chat, sections, projects, header, openTargets) {
     { id: "copyWorkingDirectory", text: "复制工作目录", icon: Folder },
   ] };
   const newWindow = { id: "openWindow", text: "在新窗口中打开", icon: AppWindow };
-  if (header) return [[rename, pin, copy,
+  if (header) return [[rename, pin, { id: "fork", text: "Fork chat", icon: Split }, copy,
     { id: "open", text: "打开方式", icon: ArrowUpRight, children: [newWindow, ...(openTargets.length
       ? openTargets.map(target => ({ id: "openTarget", text: target.label, payload: { target: target.id } }))
       : [{ id: "showInFinder", text: mac ? "在 Finder 中显示" : "在文件管理器中显示", icon: Folder }])] }, archive, remove]];
@@ -41,6 +41,9 @@ function menuGroups(chat, sections, projects, header, openTargets) {
       ...projects.map(project => ({ id: "moveProject", text: project.name,
         selected: project.id === chat.projectId, payload: { projectId: project.id } })),
     ] }] : [])],
+    [{ id: "forks", text: "分叉", icon: Split, children: [
+      { id: "fork", text: "在同一工作树中创建聊天分支" }, { id: "forkWorktree", text: "在新工作树中创建聊天分支" },
+    ] }],
     [{ id: "share", text: "分享", icon: Upload }, copy],
     [newWindow], [archive, remove],
   ];

@@ -69,8 +69,10 @@ export async function stageFork(rpc, scope, home, destination) {
   return stagedSource
 }
 
-export async function verifyFork(rpc, { threadId, parentId, home }) {
+export async function verifyFork(rpc, { threadId, parentId, home, cwd }) {
   const thread = await readThread(rpc, threadId)
   if (thread.forkedFromId !== parentId) throw new Error('Codex 未确认新分支的来源。')
+  if (!thread.cwd || await fs.realpath(thread.cwd) !== await fs.realpath(cwd))
+    throw new Error('Codex 原生分支的工作目录与目标工作树不一致。')
   await rolloutLocation(thread, home)
 }

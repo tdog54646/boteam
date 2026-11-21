@@ -783,6 +783,15 @@ test('Codex /fork stages only its source lineage in a new home and verifies the 
   const second = await codex.forkChat({ ...task, chatId:'branch', threadId:fork.threadId }, { destinationChatId:'next' })
   assert.deepEqual((await fs.readdir(path.join(storage('next'), ...dirs))).sort(),
     [threadId, fork.threadId, second.threadId].map(filename).sort())
+  const destinationCwd = path.join(task.cwd, 'new-checkout')
+  await fs.mkdir(destinationCwd)
+  const relocated = await codex.forkChat({ ...task, threadId }, { destinationChatId:'relocated', destinationCwd })
+  const rollout = JSON.parse(await fs.readFile(path.join(storage('relocated'), ...dirs, filename(relocated.threadId))))
+  assert.equal(rollout.cwd, destinationCwd)
+  const nested = await codex.forkChat({ ...task, cwd:destinationCwd, chatId:'relocated', threadId:relocated.threadId },
+    { destinationChatId:'relocated-child' })
+  await nested.discard()
+  await relocated.discard()
   await assert.rejects(codex.forkChat({ ...task, threadId }, { destinationChatId:'branch' }), /目录|存在/)
   await f.scenario({ wrongForkPath: true })
   await assert.rejects(codex.forkChat({ ...task, threadId }, { destinationChatId:'bad-path' }), /路径|目录|历史/)

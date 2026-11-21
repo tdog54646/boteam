@@ -240,12 +240,18 @@ export class AttachmentStore {
       'SELECT a.id,name,size,kind,fileCount,skippedCount FROM attachments a LEFT JOIN attachment_folders USING(id) WHERE scope=? AND messageId IS NULL ORDER BY a.rowid', scope,
     ).map(({ fileCount, skippedCount, ...row }) => row.kind === 'folder' ? { ...row, fileCount, skippedCount } : row)
   }
+  visible(scope, id) {
+    if (typeof scope !== 'string' || !scope || typeof id !== 'string' || !uuid.test(id)) return null
+    return this.db.get(`SELECT a.* FROM attachments a
+      WHERE a.id=? AND
+      ((a.messageId IS NULL AND a.scope=?) OR EXISTS (
+        SELECT 1 FROM message_attachments ma JOIN messages m ON m.id=ma.messageId
+        WHERE ma.attachmentId=a.id AND m.chatId=?))`, id, scope, scope)
+  }
   async thumbnail(scope, id, makeThumbnail) {
-    if (!makeThumbnail || typeof scope !== 'string' || !uuid.test(id)) return null
-    const row = this.db.get(`SELECT a.* FROM attachments a LEFT JOIN messages m ON m.id=a.messageId
-      WHERE a.id=? AND a.kind='file' AND
-      ((a.messageId IS NULL AND a.scope=?) OR (a.messageId IS NOT NULL AND m.chatId=?))`, id, scope, scope)
-    if (!row) return null
+    if (!makeThumbnail) return null
+    const row = this.visible(scope, id)
+    if (row?.kind !== 'file') return null
     const path = join(this.dir, id, row.name)
     if (!inspectCopy(path, row, 0).mimeType.startsWith('image/')) return null
     return makeThumbnail(path)

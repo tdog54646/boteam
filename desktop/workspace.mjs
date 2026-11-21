@@ -10,6 +10,7 @@ import { AttachmentStore } from './attachments.mjs'
 import { protectedNativePaths } from './codex-permissions.mjs'
 import { commandName } from './adapters/native-slash.mjs'
 import { groupPrompt } from './group-context.mjs'
+import { forkConversation, directForkPrompt } from './chat-fork.mjs'
 import { manageChat } from './chat-management.mjs'
 import { chatProjectCwd, configureNewChatProject, inheritProject, manageProject } from './projects.mjs'
 
@@ -180,6 +181,7 @@ export class Workspace {
       lines: result.lines.slice(0, 300).map(line => redact(String(line)).slice(0, 1000)) }
   }
   async forkChat({ chatId, botId }) {
+    if (botId === undefined) return forkConversation(this, chatId)
     const bot = this.composer.member(chatId, botId)
     const key = chatId + '/' + botId
     if (this.threadEdits.has(key) || this.lanes.has(key))
@@ -379,6 +381,8 @@ export class Workspace {
         return this.accountOperation(this.slashInfo(p))
       case 'forkChat':
         return this.accountOperation(this.forkChat(p))
+      case 'forkChatInWorktree':
+        return this.accountOperation(forkConversation(this, p.chatId, true))
       case 'threadGoal':
         return this.accountOperation(this.threadGoal(p))
       case 'refreshQuota':
@@ -649,6 +653,9 @@ export class Workspace {
       const cwd = await this.ensureChatDirectory(chatId, bot)
       controller.signal.throwIfAborted()
       let nativeThreadId = thread?.threadId ?? null
+      const seed = !goalObjective && !slashCommand && !publishReview && groupCutoff == null &&
+        this.db.get('SELECT seedMessageId FROM fork_member_context WHERE chatId=? AND botId=?', chatId, bot.id)?.seedMessageId
+      if (seed) prompt = directForkPrompt(this.db, this.attachments.dir, chatId, seed, prompt)
       if (groupCutoff != null) {
         prompt = groupPrompt(this.db, {
           chatId, bot: { ...bot, model: bot.model || account.model }, threadId: nativeThreadId,
@@ -729,6 +736,8 @@ export class Workspace {
         this.db.transaction(() => {
           this.db.run('UPDATE messages SET text=?,nativeThreadId=? WHERE id=?', text, publish ? nativeThreadId : null, replyId)
           this.db.run("UPDATE tasks SET status='done',approval=NULL WHERE id=?", id)
+          if (seed && nativeThreadId)
+            this.db.run('UPDATE fork_member_context SET seedMessageId=NULL WHERE chatId=? AND botId=?', chatId, bot.id)
           if (publish) this.db.publishGroupMessage(chatId, replyId)
           if (groupCutoff != null && nativeThreadId) {
             this.db.run(`INSERT INTO group_delivery(chatId,botId,threadId,throughSeq) VALUES(?,?,?,?)

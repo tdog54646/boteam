@@ -293,7 +293,7 @@ export function Conversation({ chat, state, invoke, open, onOpenChat, restoreCha
           >
             {chat.sourceChatId && (
               <p className="fork-origin">
-                已继承 {members[0]?.name || "Bot"} 的原生上下文。
+                分支自「{state.chats.find(c => c.id === chat.sourceChatId)?.name || "原会话"}」
                 <button className="text-btn" onClick={() => onOpenChat(chat.sourceChatId)}>查看原会话</button>
               </p>
             )}

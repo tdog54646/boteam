@@ -787,12 +787,12 @@ export async function slashInfo(scope, { name }) {
   })
 }
 
-export async function forkChat(scope, { destinationChatId }) {
+export async function forkChat(scope, { destinationChatId, destinationCwd = scope.cwd }) {
   if (!scope.threadId || !scope.bot?.id || !scope.chatId || !destinationChatId ||
       destinationChatId === scope.chatId)
     throw new Error('请选择已有原生历史的成员，并使用新的聊天创建分支。')
   const sourceScope = { ...scope, permission: 'read-only' }
-  const targetScope = { ...sourceScope, chatId: destinationChatId, threadId: null }
+  const targetScope = { ...sourceScope, chatId: destinationChatId, threadId: null, cwd: destinationCwd }
   const home = contextHome(scope.account.source, destinationChatId, scope.bot.id)
   await plainDir(scope.account.source)
   await plainDir(path.dirname(home), true)
@@ -821,7 +821,7 @@ export async function forkChat(scope, { destinationChatId }) {
       openThread(rpc, hints, targetScope, false, { parentId, path: staged }))
     const threadId = opened.thread.id
     // A separate process must resolve the child from its own durable store.
-    await withTaskSession(targetScope, rpc => verifyFork(rpc, { threadId, parentId, home }))
+    await withTaskSession(targetScope, rpc => verifyFork(rpc, { threadId, parentId, home, cwd: destinationCwd }))
     return { threadId, discard }
   } catch (error) {
     await discard()

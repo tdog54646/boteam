@@ -79,6 +79,16 @@ export function useChatActions({ state, page, currentPage, dialog, setDialog, in
         case "openTarget":
           await invoke("openChatDirectory", { chatId, botId, target: payload.target || "finder" });
           return;
+        case "fork":
+        case "forkWorktree": {
+          announce(action === "forkWorktree" ? "正在新工作树中创建聊天分支…" : "正在创建聊天分支…", 0);
+          const id = await invoke(action === "forkWorktree" ? "forkChatInWorktree" : "forkChat", { chatId });
+          await refresh();
+          // Right-clicking another row targets that chat. An intervening navigation keeps its destination.
+          if (currentPage.current === startPage) select(id);
+          announce("已创建聊天分支");
+          return;
+        }
         case "pin":
           await invoke("setChatPinned", { chatId, pinned: !chat.pinned });
           break;

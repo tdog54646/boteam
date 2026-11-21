@@ -55,7 +55,7 @@ test('only the first ordinary request may name a chat, including parallel recipi
   assert.doesNotMatch(owner.description, /private|omitted|@Alpha/)
 })
 
-test('manual names and explicitly named groups retain control over delayed or subsequent titles', async t => {
+test('manual names, explicitly named groups and forks retain control over delayed or subsequent titles', async t => {
   const started = Promise.withResolvers(), finish = Promise.withResolvers()
   const f = await fixture(t, async ({ titleRequest, emit }) => {
     if (titleRequest) {
@@ -77,7 +77,13 @@ test('manual names and explicitly named groups retain control over delayed or su
   const group = await f.chat('group', '手工命名的群')
   await f.send(group, 'Compare the two approaches', f.bots)
   await f.drain()
+  const branch = await f.app.handle('forkChat', { chatId: group })
+  const name = f.name(branch)
+  await f.send(branch, '为分支写文档')
+  await f.drain()
   assert.equal(f.name(group), '手工命名的群')
+  assert.equal(f.name(branch), name)
+  assert.equal(await f.suggest(branch), 'Compare the two approaches')
 })
 
 test('local fallback handles attachments, code and private literals without reading file contents', async t => {
