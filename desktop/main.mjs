@@ -7,6 +7,8 @@ import * as claude from './adapters/claude.mjs'
 import * as antigravity from './adapters/antigravity.mjs'
 import { discoverySources, locate, redact } from './native.mjs'
 import { Workspace } from './workspace.mjs'
+import { configurePanelBrowser } from './panel-browser.mjs'
+import { PanelTerminals } from './panel-terminals.mjs'
 import { chatText, linkedChatId, requireChat } from './chat-transfer.mjs'
 import { chatOpenTargets, openChatDirectory } from './chat-open-targets.mjs'
 import { installAntigravityCli } from './antigravity-install.mjs'
@@ -42,12 +44,14 @@ else {
         additionalArguments: initialChatId ? ['--boteam-chat=' + initialChatId] : [],
         sandbox: true,
         contextIsolation: true,
+        webviewTag: true,
         nodeIntegration: false,
       },
     })
     const contents = window.webContents
-    const context = { window, initialChatId }
+    const context = { window, initialChatId, terminals: new PanelTerminals() }
     windows.set(contents, context)
+    configurePanelBrowser(contents)
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', (event, url) => {
       if (url !== page) event.preventDefault()
@@ -55,6 +59,7 @@ else {
     // Release native sessions owned by a closed, reloaded or crashed renderer.
     const resetRenderer = () => {
       workspace.accounts.cancelAllLogins(window)
+      context.terminals.close()
     }
     window.webContents.on('did-navigate', resetRenderer)
     window.webContents.on('render-process-gone', resetRenderer)
@@ -111,6 +116,8 @@ else {
       codexExecutable: (await locate('codex')).bin,
       adapters: { codex, claude, antigravity },
       notify,
+      onChatDeleted(id) { for (const context of windows.values()) context.terminals.closeChat(id) },
+      hasWindowChatTerminal: id => Array.from(windows.values()).some(context => context.terminals.hasLiveChat(id)),
       locate: (provider, source) => locate(provider, source, { userData: app.getPath('userData') }),
       discoverySources,
       installAntigravityCli: signal => installAntigravityCli({ signal }),
@@ -180,10 +187,7 @@ else {
       const chat = requireChat(workspace.db, payload.chatId)
       if (method === 'openChatWindow') { openWindow(chat.id); return }
       if (method === 'showChatDirectory' || method === 'openChatDirectory' || (method === 'copyChat' && payload.format === 'cwd')) {
-        const entries = workspace.chatDirectories(chat.id)
-        const entry = payload.botId ? entries.find(item => item.botId === payload.botId) : entries[0]
-        if (!entry) throw new Error('当前会话没有可用的工作目录。')
-        const directory = entry.directory
+        const directory = await workspace.panel.directory(payload)
         if (method === 'copyChat') clipboard.writeText(directory)
         else await openChatDirectory(method === 'showChatDirectory' ? 'finder' : payload.target, directory, shell)
         return
@@ -247,6 +251,7 @@ else {
       if (readyToQuit) return
       event.preventDefault()
       clearTimeout(refresh)
+      for (const context of windows.values()) context.terminals.close()
       if (!workspace.closed)
         workspace.close().finally(() => {
           readyToQuit = true

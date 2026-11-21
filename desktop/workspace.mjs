@@ -3,6 +3,8 @@ import { mkdir, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { Database } from './database.mjs'
 import { beginChatTitle, applyNativeTitle, suggestChatTitle } from './chat-titles.mjs'
+import { WorkspacePanel } from './workspace-panel.mjs'
+import { attachmentPreview } from './panel-files.mjs'
 import { Accounts } from './accounts.mjs'
 import { redact } from './native.mjs'
 import { ComposerSettings, validateSelection } from './composer.mjs'
@@ -48,6 +50,7 @@ export class Workspace {
     }
     this.notify = options.notify || (() => {})
     this.onChatDeleted = options.onChatDeleted
+    this.hasWindowChatTerminal = options.hasWindowChatTerminal
     this.pickDirectory = options.pickDirectory
     this.openProjectDirectory = options.openProjectDirectory
     this.revealProjectDirectory = options.revealProjectDirectory
@@ -56,6 +59,7 @@ export class Workspace {
     this.openAntigravityInstall = options.openAntigravityInstall
     this.installAntigravityCli = options.installAntigravityCli
     this.adapters = options.adapters
+    this.panel = new WorkspacePanel(this)
     this.accounts = new Accounts(this, options)
     this.composer = new ComposerSettings(this)
     this.attachments = new AttachmentStore(this.root, this.db)
@@ -354,6 +358,7 @@ export class Workspace {
   }
   async handle(method, p = {}, context = {}) {
     if (this.closed) throw new Error('工作台已关闭。')
+    if (typeof method === 'string' && method.startsWith('panel')) return this.accountOperation(this.panel.handle(method, p, context.terminals))
     switch (method) {
       case 'snapshot':
         return this.snapshot()
@@ -373,6 +378,8 @@ export class Workspace {
         return this.accountOperation(this.attachments.remove(p.scope, p.id))
       case 'attachmentThumbnail':
         return this.accountOperation(this.attachments.thumbnail(p.scope, p.id, this.makeThumbnail))
+      case 'attachmentPreview':
+        return this.accountOperation(attachmentPreview(this.attachments, p, this.makeThumbnail))
       case 'setComposerSettings':
         return this.accountOperation(this.composer.set(p))
       case 'composerActions':
@@ -858,6 +865,7 @@ export class Workspace {
   close() {
     if (this.closed) return this.closing
     this.closed = true
+    this.panel.terminals.close()
     this.lifetime.abort()
     for (const { controller, approval } of this.running.values()) {
       controller.abort()

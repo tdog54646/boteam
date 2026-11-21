@@ -212,6 +212,42 @@ test('settings and the working directory have independent lifetimes across branc
   await assert.rejects(f.ws.ensureChatDirectory(child, f.ws.bot(bot)), /目录/)
 })
 
+test('attachment sources preview only staged snapshot entries in their chat, drafts and forks', async t => {
+  const f = await fixture(t)
+  const bot = f.bots.claude
+  const chat = () => f.ws.handle('createChat', { kind: 'direct', members: [bot] })
+  const parent = await chat(), foreign = await chat()
+  const open = (chatId, attachmentId, path = '') => f.ws.handle('attachmentPreview', { chatId, attachmentId, path })
+  const [text, image] = await f.ws.handle('addAttachments', { scope: parent, files: [
+    { name: 'note.md', text: 'Original text' },
+    { name: 'chart.png', bytes: Uint8Array.of(137,80,78,71,13,10,26,10) },
+  ] })
+  const folder = join(f.ws.root, 'Bundle')
+  await mkdir(join(folder, 'Docs'), { recursive: true })
+  await writeFile(join(folder, 'Docs', 'readme.md'), 'Saved copy')
+  f.ws.pickFiles = async () => [folder]
+  const [bundle] = await f.ws.handle('pickAttachments', { scope: parent })
+  assert.equal((await open(parent, text.id)).content, 'Original text')
+  assert.equal((await open(parent, image.id)).src, 'data:image/png;base64,iVBORw0KGgo=')
+  await assert.rejects(open(foreign, bundle.id), /附件/)
+  await f.send(parent, [bot], 'saved', { attachmentIds: [text.id, image.id, bundle.id] })
+  const child = await f.fork(parent)
+  await writeFile(join(folder, 'Docs', 'readme.md'), 'Later edit')
+  const staged = join(f.ws.attachments.dir, bundle.id, 'Bundle')
+  await writeFile(join(staged, 'injected.txt'), 'not part of the snapshot')
+  assert.deepEqual((await open(child, bundle.id)).entries.map(e => e.name), ['Docs'])
+  assert.deepEqual((await open(child, bundle.id, 'Docs')).entries.map(e => e.name), ['readme.md'])
+  assert.equal((await open(child, bundle.id, join('Docs','readme.md'))).content, 'Saved copy')
+  assert.equal((await open(child, text.id)).content, 'Original text')
+  for (const path of ['../note.md', 'injected.txt', folder])
+    await assert.rejects(open(child, bundle.id, path))
+  await assert.rejects(open(child, text.id, 'other-file'))
+  await assert.rejects(open(foreign, text.id), /附件/)
+  await rm(join(staged, 'Docs'), { recursive: true })
+  await symlink(join(folder, 'Docs'), join(staged, 'Docs'))
+  await assert.rejects(open(child, bundle.id, join('Docs','readme.md')))
+})
+
 test('new-worktree forks preserve the index, tracked edits, untracked files and per-member working directories', async t => {
   const f = await fixture(t)
   const repo = join(f.ws.root, 'project')

@@ -137,6 +137,11 @@ function bindInitialChatProject(workspace, p) {
       (p.expectedProjectCwd !== undefined && p.expectedProjectCwd !== (current?.cwd ?? null)))
     throw new Error('聊天项目已在其他窗口修改，请重新选择。')
   const cwd = projectId === null ? null : registeredFolder(db,projectId)
+  if ((current?.cwd ?? null) !== cwd) {
+    if (workspace.panel.pendingWrites.has(chatId)) throw new Error('请等待工作区文件保存完成后再切换项目。')
+    if (workspace.panel.terminals.hasLiveChat(chatId) || workspace.hasWindowChatTerminal?.(chatId))
+      throw new Error('请关闭此聊天的终端后再切换项目。')
+  }
   db.run(`INSERT INTO chat_projects(chatId,projectId,cwd) VALUES(?,?,?)
     ON CONFLICT(chatId) DO UPDATE SET projectId=excluded.projectId,cwd=excluded.cwd`,chatId,projectId,cwd)
   return { projectId, cwd }

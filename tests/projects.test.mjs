@@ -254,6 +254,43 @@ test('an initial project switches the actual member directories and survives res
   await assert.rejects(set(null))
 })
 
+test('initial project selection protects native bindings, empty forks, live terminal scopes, saves and stale panel requests', async t => {
+  let foreignTerminalChat
+  const f = await fixture(t,{hasWindowChatTerminal:chatId => chatId === foreignTerminalChat})
+  const projectId = await f.call('createProject',{folders:[f.b]})
+  const chatId = await f.call('createChat',{kind:'direct',members:[f.bots[0]]})
+  const set = id => f.call('setInitialChatProject',{chatId:id,projectId})
+  const branch = await f.call('forkChat',{chatId})
+  await assert.rejects(set(branch))
+  assert.equal(f.snapshot().chats.find(c=>c.id===branch).canSelectInitialProject,false)
+  const nativeId = await f.call('createChat',{kind:'direct',members:[f.bots[0]]})
+  f.ws.associateThread(nativeId,f.bots[0],'a','already-bound',f.a)
+  await assert.rejects(set(nativeId))
+  assert.equal(f.snapshot().chats.find(c=>c.id===nativeId).canSelectInitialProject,false)
+  const fresh = await f.call('createChat',{kind:'direct',members:[f.bots[0]]})
+  foreignTerminalChat = fresh
+  await assert.rejects(set(fresh),/终端/)
+  foreignTerminalChat = undefined
+  const terminal = {scope:JSON.stringify([fresh,f.bots[0]]),exited:false}
+  f.ws.panel.terminals.sessions.set('test',terminal)
+  try { await assert.rejects(set(fresh),/终端/) }
+  finally { f.ws.panel.terminals.sessions.delete('test') }
+  const saving = f.call('panelSave',{chatId:fresh,path:'a.md',content:'original',expectedProjectCwd:null})
+  await assert.rejects(set(fresh),/保存/)
+  await saving
+  const oldTerminal = assert.rejects(f.call('panelTerminalStart',{chatId:fresh,expectedProjectCwd:null}),/工作目录/)
+  await set(fresh)
+  await oldTerminal
+  assert.equal(f.ws.panel.terminals.sessions.size,0)
+  await assert.rejects(f.call('send',{chatId:fresh,recipients:[f.bots[0]],text:'from stale window',expectedProjectCwd:null}),/工作目录/)
+  assert.ok(!f.snapshot().messages.some(m => m.chatId===fresh))
+  await assert.rejects(f.call('panelSave',{chatId:fresh,path:'a.md',content:'wrong',expectedProjectCwd:null}),/工作目录/)
+  assert.equal(await readFile(join(f.a,'a.md'),'utf8'),'original')
+  await assert.rejects(readFile(join(f.b,'a.md'),'utf8'),{code:'ENOENT'})
+  await f.call('deleteChat',{chatId})
+  await assert.rejects(set(branch))
+})
+
 test('importing a project binds the requesting empty chat before legacy adoption or rolls the entire import back', async t => {
   const f = await fixture(t)
   const create = () => f.call('createChat',{kind:'direct',members:[f.bots[0]]})

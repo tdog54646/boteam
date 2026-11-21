@@ -13,6 +13,7 @@ import { ChatToolbar } from "./ChatToolbar";
 import { ChatActionMenu } from "./ChatActionMenu";
 import { ChatActionDialog, useChatActions } from "./ChatActions";
 import "./chat-management.css";
+import { WorkspacePanel } from "./WorkspacePanel";
 import { Onboarding } from "./Onboarding";
 import { Sidebar, ChatSearch } from "./Sidebar";
 import { ProjectActionDialog, ProjectDialog } from "./ProjectDialog";
@@ -46,7 +47,12 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(false);
   const [homeSelection, setHomeSelection] = useState(() => localStorage.getItem(defaultBotKey) || "");
   const homeBot = state.bots.find(b => !b.archived && b.id === homeSelection) || state.bots.find(b => !b.archived);
+  const [panel, setPanel] = useState(null);
+  const panelSequence = useRef(0);
+  const sourceControl = useRef(null);
+  const [sourceDraft, setSourceDraft] = useState(null);
   const [homeProjects, setHomeProjects] = useState({});
+  const homeChats = useRef(new Map());
   const [projectBusy, setProjectBusy] = useState(false);
   const currentPage = useRef(page);
   currentPage.current = page;
@@ -222,7 +228,30 @@ export default function App() {
   const wizard = ready && !state.onboarded;
   const chat = state.chats.find((c) => c.id === page);
   useEffect(() => { document.title = chat ? chat.name + " · BoTeam" : "BoTeam"; }, [chat?.name]);
+  const panelMembers = chat ? chat.members.map(id => state.bots.find(b => b.id === id)).filter(b => b && !b.archived)
+    : homeBot ? [homeBot] : [];
+  const workPage = ready && !wizard && Boolean(chat || page === "home");
+  const panelKey = chat?.id || "home:" + (homeBot?.id || "");
+  const panelVisible = Boolean(workPage && panel?.key === panelKey && panel.visible);
   const initialProjectId = chat ? chat.projectId : homeProjects[homeBot?.id];
+  const project = state.projects.find(p => p.id === initialProjectId);
+  const panelCwd = chat ? chat.initialProjectCwd ?? null : project?.folders[0] || null;
+  const panelScope = JSON.stringify([panelKey, panelCwd]);
+  const homeBotId = homeBot?.id;
+  const ensureHomeChat = useCallback(() => {
+    const key = JSON.stringify([homeBotId, initialProjectId || null]);
+    if (!homeChats.current.has(key)) {
+      const task = invoke("createChat", { kind: "direct", members: [homeBotId], projectId: initialProjectId })
+        .catch(error => { homeChats.current.delete(key); throw error; });
+      homeChats.current.set(key, task);
+    }
+    return homeChats.current.get(key);
+  }, [homeBotId, initialProjectId]);
+  const invokePanel = useCallback(async (method, payload) => {
+    if (!chat && initialProjectId)
+      return invoke(method, { ...payload, chatId: await ensureHomeChat() });
+    return invoke(method, payload);
+  }, [chat?.id, initialProjectId, ensureHomeChat]);
   async function selectInitialProject(projectId) {
     setError("");
     if (!chat) {
@@ -253,6 +282,10 @@ export default function App() {
   const firstProject = (chat ? chat.canSelectInitialProject : homeBot) && {
     projectId: initialProjectId, onSelect: selectInitialProject, onCreate: createInitialProject, disabled: projectBusy,
   };
+  function showPanel(request) {
+    setPanel({ key: panelKey, visible: true, expanded: false,
+      request: request && { ...request, id: ++panelSequence.current } });
+  }
   useEffect(() => {
     if (chat && !chat.archived) navigationStorage.setItem("boteam:last-chat", chat.id);
   }, [chat?.id, chat?.archived]);
@@ -293,7 +326,7 @@ export default function App() {
           }}
         />
       )}
-      <main className="main">
+      <main className="main" hidden={panelVisible && panel.expanded}>
         <header className="topbar">
           {collapsed && (
             <IconButton
@@ -315,8 +348,10 @@ export default function App() {
                 {chat.members.length} 位成员
               </button>
             )}
-            {chat && <ChatToolbar chat={chat} onChatMenu={actions.showMenu} onChatAction={actions.act}
-              menuOpen={actions.menu?.variant === "header"} />}
+            {workPage && <ChatToolbar key={panelKey} chat={chat} members={panelMembers} state={state}
+              invoke={invoke} draft={chat?.archived ? null : sourceDraft} pickSource={() => sourceControl.current?.pickFiles()} onChatMenu={actions.showMenu} onChatAction={actions.act}
+              menuOpen={actions.menu?.variant === "header"}
+              workspaceVisible={panelVisible} toggleWorkspace={() => showPanel()} openWorkspace={showPanel} />}
           </div>
         </header>
         {error && (
@@ -374,6 +409,8 @@ export default function App() {
           <Conversation
             onError={setError}
             restoreChat={() => actions.act("archive", chat)}
+            sourceControl={sourceControl}
+            onDraftFiles={setSourceDraft}
             onOpenChat={finishChat}
             key={chat.id}
             chat={chat}
@@ -384,9 +421,16 @@ export default function App() {
           />
         ) : (
           <Home state={state} invoke={invoke} open={setDialog} onChat={finishChat}
-            bot={homeBot} setSelection={chooseHomeBot} firstProject={firstProject}/>
+            bot={homeBot} setSelection={chooseHomeBot} firstProject={firstProject} ensureChat={ensureHomeChat}
+            sourceControl={sourceControl} onDraftFiles={setSourceDraft}/>
         )}
       </main>
+      {workPage && <WorkspacePanel key={panelScope} draftScope={panelScope} initialProjectCwd={panelCwd}
+        chatId={chat?.id} botId={panelMembers[0]?.id} bots={panelMembers}
+        visible={panelVisible} expanded={panelVisible && panel.expanded}
+        request={panel?.key === panelKey ? panel.request : null} invoke={invokePanel}
+        onClose={() => setPanel(previous => ({ ...previous, visible: false, expanded: false }))}
+        onToggleExpanded={() => setPanel(previous => ({ ...previous, expanded: !previous.expanded }))} />}
       {actions.menuChat && !dialog && <ChatActionMenu key={actions.menu.chatId + actions.menu.variant}
         anchor={actions.menu.anchor} variant={actions.menu.variant} chat={actions.menuChat}
         sections={state.chatSections} projects={state.projects} openTargets={actions.openTargets} onAction={actions.act} onClose={actions.closeMenu} />}

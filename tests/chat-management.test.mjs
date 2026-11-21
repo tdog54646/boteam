@@ -68,6 +68,7 @@ test('permanent deletion promotes shared snapshots, unlinks descendants and pres
   await assert.rejects(access(path(draft.id)))
   assert.equal(f.chat(a).sourceChatId,null)
   for (const chatId of [a,b]) {
+    assert.equal((await f.call('attachmentPreview',{chatId,attachmentId:file.id})).content,'retained')
     assert.equal(f.ws.snapshot().messages.filter(m=>m.chatId===chatId)[0].attachments.length,1)
   }
   await f.restart()
@@ -113,6 +114,7 @@ test('a native-only /fork keeps its referenced file until the last nested native
   await f.restart()
   const path = join(f.ws.attachments.dir,file.id,file.name)
   assert.equal(await readFile(path,'utf8'),'native path')
+  await assert.rejects(f.call('attachmentPreview',{chatId:'',attachmentId:file.id}))
   assert.deepEqual(await f.call('listAttachments',{scope:child}),[])
   await f.call('deleteChat',{chatId:child})
   await assert.rejects(access(path))

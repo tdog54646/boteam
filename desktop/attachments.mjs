@@ -142,7 +142,7 @@ async function selectedEntry(source, storeDir, protectedPaths) {
   return { name, kind: 'file', save: async destination => ({ size: await copyFileSnapshot(path, destination) }) }
 }
 
-function imageType(bytes) {
+export function imageType(bytes) {
   if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) return 'image/png'
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
   if (['GIF87a', 'GIF89a'].includes(bytes.toString('latin1', 0, 6))) return 'image/gif'

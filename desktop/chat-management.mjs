@@ -108,6 +108,7 @@ export async function manageChat(workspace, method, p) {
       requireIdleChats(workspace, [chatId])
       const removed = db.transaction(() => deleteRecords(db, chatId))
       workspace.notify()
+      workspace.panel.terminals.closeChat(chatId)
       workspace.onChatDeleted?.(chatId)
       await workspace.attachments.discardSnapshots(removed)
       return

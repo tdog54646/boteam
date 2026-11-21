@@ -1,27 +1,19 @@
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import { Bot, ChevronDown, WalletCards, Plus, UsersRound } from "lucide-react";
 import { Button, accountLabel } from "./ui";
 import { Composer } from "./Composer";
 
-export function Home({ state, invoke, open, onChat, bot, setSelection, firstProject }) {
+export function Home({ state, invoke, open, onChat, bot, setSelection, firstProject, ensureChat, sourceControl, onDraftFiles }) {
   const bots = state.bots.filter((b) => !b.archived);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState({});
-  const creating = useRef(new Map());
   const account = state.accounts.find((a) => a.id === bot?.accountId);
   const target = JSON.stringify([bot?.id, firstProject?.projectId || null]);
-  async function ensureChat() {
+  async function currentChat() {
     if (pending[target]) return pending[target];
-    if (!creating.current.has(target)) {
-      const task = invoke("createChat", { kind: "direct", members: [bot.id], projectId: firstProject?.projectId })
-        .then((id) => {
-          setPending((all) => ({ ...all, [target]: id }));
-          return id;
-        })
-        .finally(() => creating.current.delete(target));
-      creating.current.set(target, task);
-    }
-    return creating.current.get(target);
+    const id = await ensureChat();
+    setPending(all => ({ ...all, [target]: id }));
+    return id;
   }
   return (
     <div className="home">
@@ -43,8 +35,10 @@ export function Home({ state, invoke, open, onChat, bot, setSelection, firstProj
             chat={
               pending[target] ? { id: pending[target], kind: "direct" } : null
             }
+            sourceControl={sourceControl}
+            onDraftFiles={onDraftFiles}
             firstProject={firstProject}
-            ensureHomeChat={ensureChat}
+            ensureHomeChat={currentChat}
             onSent={onChat}
             onBusyChange={setBusy}
           />

@@ -47,6 +47,8 @@ export function Composer({
   onOpenChat = onSent,
   onBusyChange,
   quoteControl,
+  sourceControl,
+  onDraftFiles,
   publicMessages,
   firstProject,
 }) {
@@ -90,6 +92,11 @@ export function Composer({
   const fileLock = useRef(false);
   const sendLock = useRef(false);
   const pendingSlashSend = useRef(null);
+  useImperativeHandle(sourceControl, () => ({ pickFiles }));
+  const canPick = filesReady && !busy && !workingFiles && members.length > 0;
+  useEffect(() => {
+    onDraftFiles?.({ chatId: chat?.id, files, canPick });
+  }, [chat?.id, files, canPick, onDraftFiles]);
   useImperativeHandle(quoteControl, () => ({
     select(messageId) {
       if (sendLock.current) return;
@@ -336,6 +343,12 @@ export function Composer({
   async function addFiles(files) {
     const added = await invoke("addAttachments", { scope, files });
     setFiles((previous) => [...previous, ...added]);
+  }
+  function pickFiles() {
+    return modifyFiles(async () => {
+      const added = await invoke("pickAttachments", { scope });
+      setFiles(previous => [...previous, ...added]);
+    });
   }
   function importFiles(list, dropped = false, hasFolder = false) {
     const incoming = Array.from(list);
@@ -884,12 +897,7 @@ export function Composer({
               filesDisabled={
                 !members.length || workingFiles || !filesReady || busy
               }
-              onFiles={() =>
-                modifyFiles(async () => {
-                  const added = await invoke("pickAttachments", { scope });
-                  setFiles((previous) => [...previous, ...added]);
-                })
-              }
+              onFiles={pickFiles}
               onSnippet={() => {
                 setError("");
                 setPopup(null);
