@@ -31,6 +31,7 @@ import {
 } from "./ComposerSlash";
 import { GoalDialog } from "./GoalDialog";
 import { ComposerTools } from "./ComposerTools";
+import { useComposerActions } from "./useComposerActions";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { SketchDialog } from "./SketchDialog";
 import { MessageQuote } from "./MessageQuote";
@@ -162,13 +163,19 @@ export function Composer({
         (b) => b.id === (slashMember || (selected.length === 1 && selected[0])),
       )
     : members[0];
-  const slash = useComposerSlash({
-    text,
-    target: slashTarget,
-    chatId: chat?.id,
-    draft,
-    invoke,
-  });
+  const match = slashToken(text);
+  const tokens = isGroup && !match ? resolveMentions(text, members, selected) : [];
+  const recipients = isGroup
+    ? [...new Set([...selected, ...tokens.flatMap(token => token.ids)])].filter(id => members.some(bot => bot.id === id))
+    : members.slice(0, 1).map(b => b.id);
+  const recipientKey = recipients.join(",");
+  const [inspected, setInspected] = useState(null);
+  const inspectedId = (match && slashTarget?.id) || popup?.botId ||
+    (inspected?.recipients === recipientKey ? inspected.id : recipients[0]);
+  const inspectedBot = members.find(member => member.id === inspectedId) || members[0];
+  const actions = useComposerActions({ state, chat, draft, bot: inspectedBot, projectCwd,
+    draftSettings: draft && settingsByBot[inspectedBot?.id], invoke });
+  const slash = useComposerSlash({ match, target: slashTarget, actions });
   const slashOpen = slash.open && !popup && !open && !slashDialog && !busy;
   useEffect(() => {
     if (!slashOpen) return;
@@ -184,14 +191,7 @@ export function Composer({
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
   }, [slashOpen]);
-  const tokens =
-    isGroup && !slash.match ? resolveMentions(text, members, selected) : [];
   const ambiguous = tokens.some((token) => token.ambiguous);
-  const recipients = isGroup
-    ? [
-        ...new Set([...selected, ...tokens.flatMap((token) => token.ids)]),
-      ].filter((id) => members.some((bot) => bot.id === id))
-    : members.slice(0, 1).map((b) => b.id);
   const editingMention =
     mention &&
     !tokens.some(
@@ -471,6 +471,7 @@ export function Composer({
         } else if (action === "mcp") {
           const info = await invoke("slashInfo", {
             ...(chat?.id && { chatId: chat.id }),
+            ...(draft && settingsByBot[botId] && { settings: settingsByBot[botId] }),
             botId,
             name,
           });
@@ -504,8 +505,8 @@ export function Composer({
       if (!slashTarget || !slash.ready || slash.error) {
         slash.reveal();
         if (slashTarget && !slash.ready && slash.name)
-          pendingSlashSend.current = { text, target: slashTarget.id };
-        if (slash.error) slash.retry();
+          pendingSlashSend.current = { text, botId: slashTarget.id, scope: actions.scope };
+        if (slash.error) slash.retry?.();
         return;
       }
       if (slash.exact) return chooseSlash(slash.exact, true);
@@ -522,7 +523,8 @@ export function Composer({
     if (!pending) return;
     if (
       text !== pending.text ||
-      slashTarget?.id !== pending.target ||
+      slashTarget?.id !== pending.botId ||
+      actions.scope !== pending.scope ||
       slash.error
     ) {
       pendingSlashSend.current = null;
@@ -530,7 +532,7 @@ export function Composer({
       pendingSlashSend.current = null;
       send();
     }
-  }, [text, slashTarget?.id, slash.ready, slash.error]);
+  }, [text, slashTarget?.id, actions.scope, slash.ready, slash.error]);
   function saveSettings(botId, patch) {
     if (!draft) return invoke("setComposerSettings", { chatId: chat.id, botId, ...patch });
     const accountId = members.find(member => member.id === botId)?.accountId;
@@ -933,6 +935,13 @@ export function Composer({
           />
           <div className="composer-tools">
             <ComposerTools
+              bot={inspectedBot}
+              actionCatalog={actions}
+              onInspect={id => {
+                setInspected({ recipients: recipientKey, id });
+                if (popup?.botId) setPopup({ ...popup, botId: id });
+                if (slash.match && slashTarget) setSlashMember(id);
+              }}
               filesDisabled={
                 !members.length || workingFiles || !filesReady || busy
               }
@@ -957,13 +966,10 @@ export function Composer({
               onNative={toggleExtension}
               onGoal={bot => setSlashDialog({ action: "goal", bot })}
               selectedExtensions={extensions}
-              commandMemberId={slash.match ? slashTarget?.id : undefined}
-              onCommandMemberChange={setSlashMember}
               chatId={chat?.id}
               state={state}
               members={members}
               isGroup={isGroup}
-              recipients={recipients}
               invoke={invoke}
               saveSettings={saveSettings}
               draftSettings={draft ? settingsByBot : null}

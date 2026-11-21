@@ -72,7 +72,7 @@ export class ComposerSettings {
     const planIsPermission = adapter.permissionModes?.includes('plan')
     if ((hasPlan && p.planMode && (!planIsPermission || adapter.composerActions)) ||
         p.permission === 'auto-review' || (p.permission === 'workspace-auto' && account.provider === 'antigravity')) {
-      const capabilities = await this.workspace.composerActions({ chatId, botId, draft })
+      const capabilities = await this.workspace.composerActions({ chatId, botId, draft, refresh: true })
       if (hasPlan && p.planMode && !capabilities.plan) throw new Error('当前原生工具未提供计划模式。')
       if (p.permission === 'auto-review' && !capabilities.autoReview) throw new Error('当前原生工具未提供自动审批。')
       if (p.permission === 'workspace-auto' && account.provider === 'antigravity' && !capabilities.workspaceAuto)

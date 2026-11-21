@@ -1,5 +1,4 @@
 import React, {
-  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -32,7 +31,6 @@ import {
 } from "lucide-react";
 import {
   accountLabel,
-  errorText,
   identityLabel,
   providerName,
   Spinner,
@@ -73,45 +71,16 @@ export function slashToken(text) {
   return /^\/([^\s/\\]*)(?:(\s)([\s\S]*))?$/u.exec(text.trimStart());
 }
 
-export function useComposerSlash({ text, target, chatId, draft, invoke }) {
-  const match = slashToken(text);
+export function useComposerSlash({ match, target, actions }) {
   const name = match?.[1] ?? "";
   const hasArguments = Boolean(match?.[2]);
   const args = match?.[3]?.trim() || "";
   const [hidden, setHidden] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  const [result, setResult] = useState(null);
   const [active, setActive] = useState(0);
-  const key = JSON.stringify([
-    chatId, draft?.id, draft?.projectId, draft?.folder,
-    target?.id,
-    target?.accountId,
-    target?.cwd,
-    attempt,
-  ]);
-  const enabled = Boolean(match && target);
   const listId = useId();
-  useEffect(() => {
-    if (!enabled) return;
-    let current = true;
-    invoke("composerActions", { botId: target.id, ...(chatId && { chatId }), ...(draft && { draft }) })
-      .then((data) => {
-        if (current)
-          setResult({
-            key,
-            commands: data.slashCommands || [],
-            note: data.note,
-          });
-      })
-      .catch((error) => {
-        if (current) setResult({ key, commands: [], error: errorText(error) });
-      });
-    return () => {
-      current = false;
-    };
-  }, [enabled, key, invoke]);
-  const ready = enabled && result?.key === key;
-  const commands = ready ? result.commands : [];
+  const ready = Boolean(match && target && (actions.data || actions.error));
+  const error = ready && !actions.data && actions.error;
+  const commands = ready ? actions.data?.slashCommands || [] : [];
   const exact = commands.find(
     (c) => c.name.toLowerCase() === name.toLowerCase(),
   );
@@ -137,11 +106,11 @@ export function useComposerSlash({ text, target, chatId, draft, invoke }) {
     rows,
     index,
     setActive,
-    error: ready && result.error,
-    note: ready && result.note,
-    retry: () => setAttempt((n) => n + 1),
+    error,
+    note: ready && (actions.error || actions.data?.note),
+    retry: actions.retry,
     open: Boolean(
-      match && !hidden && (!hasArguments || !target || !ready || result.error),
+      match && !hidden && (!hasArguments || !target || !ready || error),
     ),
     reveal() {
       setHidden(false);
@@ -168,34 +137,40 @@ export function ComposerSlashMenu({
   useLayoutEffect(() => {
     const wrap = root.current;
     const composer = wrap.querySelector(".composer");
+    const area = wrap.closest(".home, .conversation");
     function measure() {
       const anchor = composer.getBoundingClientRect();
       const bounds = wrap.getBoundingClientRect();
-      const below = innerHeight - anchor.bottom;
-      const flip = anchor.top < 155 && below > anchor.top;
+      const visible = area?.getBoundingClientRect();
+      const above = anchor.top - Math.max(0, visible?.top ?? 0);
+      const below = Math.min(innerHeight, visible?.bottom ?? innerHeight) - anchor.bottom;
+      const flip = above < 155 && below > above;
       setPlacement({
         ...(flip
           ? { top: anchor.bottom - bounds.top + 4 }
           : { bottom: bounds.bottom - anchor.top + 4 }),
         maxHeight: Math.min(
           320,
-          Math.max(40, (flip ? below : anchor.top) - 12),
+          Math.max(40, (flip ? below : above) - 12),
         ),
       });
     }
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(composer);
+    if (area) observer.observe(area);
+    area?.addEventListener("scroll", measure);
     window.addEventListener("resize", measure);
     return () => {
       observer.disconnect();
+      area?.removeEventListener("scroll", measure);
       window.removeEventListener("resize", measure);
     };
   }, [root]);
   useLayoutEffect(() => {
     box.current
       ?.querySelector('[aria-selected="true"]')
-      ?.scrollIntoView({ block: "nearest" });
+      ?.scrollIntoView({ block: "nearest", container: "nearest" });
   }, [slash.index, slash.name, target?.id]);
   const accountFor = (bot) => accounts.find((a) => a.id === bot.accountId);
   const memberLabel = (bot) => {
@@ -204,14 +179,12 @@ export function ComposerSlashMenu({
       .filter(Boolean)
       .join(" · ");
   };
-  const message =
-    slash.error ||
+  const message = slash.note ||
     (!slash.ready
       ? "正在读取原生命令…"
       : slash.rows.length
         ? ""
-        : slash.note ||
-          (slash.name ? "没有匹配的命令" : "当前原生工具未提供快捷命令"));
+        : slash.name ? "没有匹配的命令" : "当前原生工具未提供快捷命令");
   return (
     <div
       ref={box}
@@ -296,7 +269,7 @@ export function ComposerSlashMenu({
         <div className="slash-status" role="status">
           {!slash.ready && <Spinner size={13} />}
           {message}
-          {slash.error && (
+          {slash.note && slash.retry && (
             <button type="button" onClick={slash.retry}>
               重试
             </button>

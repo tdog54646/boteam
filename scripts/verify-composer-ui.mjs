@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
@@ -12,6 +12,9 @@ const first = 'implementation'
 const second = 'writing'
 const third = 'research'
 const project = '工作台设计评审'
+const commandProject = '原生命令验收项目'
+const commandDirectory = 'native-command-fixture'
+const commandError = '测试 CLI 暂时无法读取命令目录'
 const noteName = '评审清单.md'
 const folderName = '设计备注'
 const noteText = '# 评审清单\n检查输入框的键盘操作和窄窗口布局。'
@@ -45,6 +48,17 @@ async function launchFixtureMain() {
   const { codexCommands } = await import('../desktop/adapters/codex-slash.mjs')
   const { sessionSlashCommands } = await import('../desktop/adapters/antigravity-actions.mjs')
   const goals = new Map()
+  const commandReads = []
+  let failingChat = null, failingProject = false, failedReadGate
+  let teamworkAvailable = true
+  app.fixtureCommands = ({ errorChat, errorProject, teamwork, holdFailure }) => {
+    if (errorChat !== undefined) failingChat = errorChat
+    if (errorProject !== undefined) failingProject = errorProject
+    if (teamwork !== undefined) teamworkAvailable = teamwork
+    if (holdFailure === true) failedReadGate = Promise.withResolvers()
+    if (holdFailure === false) { failedReadGate?.resolve(); failedReadGate = null }
+    return commandReads
+  }
   const modelReads = {}
   let liveCodexCatalog = codexCatalog
   let catalogError, catalogGate
@@ -60,8 +74,14 @@ async function launchFixtureMain() {
     const codex = provider === 'codex'
     return {
       permissionModes: codex ? ['default','auto-review','read-only','full'] : ['default','plan'],
-      async composerActions() {
+      async composerActions({ chatId, bot, cwd }) {
+        const inProject = basename(cwd) === commandDirectory
+        commandReads.push({ chatId, botId: bot.id, inProject })
         if (codex) await new Promise(resolve => setTimeout(resolve, 220))
+        if ((chatId && chatId === failingChat) || (inProject && failingProject)) {
+          if (failedReadGate) await failedReadGate.promise
+          throw new Error(commandError)
+        }
         const slashCommands = codex ? codexCommands(new Set([
           'mcpServerStatus/list', 'account/rateLimits/read', 'thread/compact/start', 'review/start',
           'model/list', 'thread/start', 'thread/read', 'thread/fork', 'collaborationMode/list', 'thread/goal/set', 'skills/list',
@@ -70,7 +90,8 @@ async function launchFixtureMain() {
              {name:'context',description:'Inspect context usage',action:'context'}]
           : sessionSlashCommands([{name:'plan',description:'Plan carefully before executing a task.'},
               {name:'goal',description:'Run until the specified goal is completely finished.'},
-              {name:'teamwork',description:'Invoke a team of agents to tackle large projects.',input:{hint:'任务'}}], true)
+              ...(teamworkAvailable ? [{name:'teamwork',description:'Invoke a team of agents to tackle large projects.',input:{hint:'任务'}}] : [])], true)
+        if (codex && inProject) slashCommands.push({ name:'project-check', description:'检查此项目', action:'prompt' })
         return { slashCommands, plan: true, goal: codex, autoReview: codex, ...(codex ? {} : {note:'部分原生功能列表当前不可用。'}), extensions: codex ? [
           { id: 'app-mail', kind: 'app', label: 'Outlook Email', description: 'Triage Outlook inboxes' },
           { id: 'plugin-design', kind: 'plugin', label: 'Figma', description: 'Create designs, ship to code' },
@@ -194,6 +215,9 @@ async function seed(root) {
   const db = new Database(root)
   try {
     db.run("INSERT INTO settings VALUES('onboarded','yes')")
+    await mkdir(join(root, commandDirectory))
+    db.run('INSERT INTO projects(id,name) VALUES(?,?)', 'command-project', commandProject)
+    db.run('INSERT INTO project_folders VALUES(?,?,?)', 'command-project', await realpath(join(root, commandDirectory)), 0)
     const people = [
       [first, 'codex', '工程助手', '项目账号', codexCatalog.defaultModel, codexCatalog.defaultEffort],
       [second, 'claude', '文案助手', '编辑账号', 'sonnet', 'medium'],
@@ -510,7 +534,55 @@ async function verifyNativeQuestions(page, expect) {
   await expect(submit).toHaveCount(0)
 }
 
-async function verifySlash(page, expect, screenshots) {
+async function verifyCommandCache(page, expect, fixture) {
+  const engineering = page.getByTitle('工程助手', { exact: true })
+  const field = page.getByRole('textbox', { name: '消息内容' })
+  const menu = page.locator('.slash-menu')
+  const mcp = menu.getByRole('option', { name: /MCP/ })
+  const count = async () => (await fixture()).filter(read => read.chatId === 'engineering-chat' && read.botId === first).length
+  const chatCount = () => page.evaluate(async () => (await window.boteam.invoke('snapshot')).chats.length)
+
+  const chats = await chatCount()
+  const beforeEntry = await count()
+  await engineering.click()
+  await expect.poll(count).toBe(beforeEntry + 1)
+  await field.fill('/')
+  await expect(mcp).toBeVisible()
+  for (const value of ['/mc', '', '/', '', '/']) {
+    await field.fill(value)
+    if (value) await expect(mcp).toBeVisible()
+    else await expect(menu).toHaveCount(0)
+  }
+  await field.fill('')
+  const permission = page.getByRole('button', { name: '更改权限', exact: true })
+  await permission.click()
+  await expect(page.getByRole('menuitemradio', { name: '帮我批准' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: '添加文件或内容', exact: true }).click()
+  await expect(page.getByRole('menuitem', { name: /^Figma/ })).toBeVisible()
+  await page.keyboard.press('Escape')
+  assert.equal(await count(), beforeEntry + 1, 'Slash, permissions and extensions must share one native read')
+
+  await page.getByTitle('文案助手', { exact: true }).click()
+  await fixture({ errorChat: 'engineering-chat', holdFailure: true })
+  try {
+    await engineering.click()
+    await field.fill('/')
+    await expect(mcp).toBeEnabled()
+  } finally { await fixture({ holdFailure: false }) }
+  await expect(menu).toContainText(commandError)
+  await expect(mcp).toBeEnabled()
+  const failed = await count()
+  await fixture({ errorChat: null })
+  await menu.getByRole('button', { name: '重试', exact: true }).click()
+  await expect(menu).not.toContainText(commandError)
+  await expect(mcp).toBeVisible()
+  await expect.poll(count).toBe(failed + 1)
+  await field.fill('')
+  assert.equal(await chatCount(), chats)
+}
+
+async function verifySlash(page, expect, screenshots, commandFixture) {
   const field = page.getByRole('textbox', {name:'消息内容'})
   const menu = page.locator('.slash-menu')
   const list = menu.getByRole('listbox')
@@ -608,6 +680,14 @@ async function verifySlash(page, expect, screenshots) {
   await chooseMember.selectOption(third)
   await expect(list.getByRole('option',{name:/teamwork/})).toBeVisible()
   await expect(list.getByRole('option',{name:/summarize/})).toHaveCount(0)
+  const memberReads = async id => (await commandFixture()).filter(read => read.chatId === groupId && read.botId === id).length
+  const secondReads = await memberReads(second), thirdReads = await memberReads(third)
+  assert.ok(secondReads > 0 && thirdReads > 0)
+  await chooseMember.selectOption(second)
+  await expect(list.getByRole('option',{name:/summarize/})).toBeVisible()
+  await chooseMember.selectOption(third)
+  await expect(list.getByRole('option',{name:/teamwork/})).toBeVisible()
+  assert.deepEqual([await memberReads(second), await memberReads(third)], [secondReads, thirdReads])
   await page.emulateMedia({colorScheme:'dark'})
   await expect(page.getByRole('button',{name:'更换模型和思考强度'})).toContainText('研究助手')
   await capture('slash-antigravity-group.png')
@@ -615,6 +695,17 @@ async function verifySlash(page, expect, screenshots) {
   await page.locator('.window-title').click()
   await expect(menu).toHaveCount(0)
   await field.click()
+  await commandFixture({ teamwork: false })
+  const retired = '/teamwork 此命令已撤回'
+  const beforeRetired = await read()
+  await field.fill(retired)
+  await field.press('Enter')
+  await expect(page.getByRole('alert')).toContainText(/未提供可发送的此项命令/)
+  const rejected = await read()
+  assert.equal(rejected.messages.length, beforeRetired.messages.length)
+  assert.equal(rejected.tasks.length, beforeRetired.tasks.length)
+  assert.equal(await memberReads(third), thirdReads + 1, 'Sending must consult the current native command catalog')
+  await commandFixture({ teamwork: true })
   await field.fill('/tea')
   await expect(list.getByRole('option')).toHaveCount(1)
   await field.press('Tab')
@@ -638,6 +729,27 @@ async function verifySlash(page, expect, screenshots) {
   await expect(menu).toBeInViewport({ratio:1})
   await expect(list.getByRole('option',{name:/MCP/})).toBeVisible()
   assert.equal((await read()).chats.length,beforeHome)
+  const projectCommand = list.getByRole('option', { name: /project-check/ })
+  await expect(projectCommand).toHaveCount(0)
+  await home.fill('')
+  const projectSelector = page.getByRole('button', { name:'选择聊天项目', exact:true })
+  await commandFixture({ errorProject: true })
+  await projectSelector.click()
+  await page.getByRole('option', { name:commandProject, exact:true }).click()
+  await home.fill('/')
+  await expect(menu).toContainText(commandError)
+  await expect(list.getByRole('option')).toHaveCount(0)
+  await commandFixture({ errorProject: false })
+  await menu.getByRole('button', { name:'重试', exact:true }).click()
+  await expect(projectCommand).toBeVisible()
+  assert.ok((await commandFixture()).some(read => read.botId === first && read.inProject))
+  await home.fill('')
+  await projectSelector.click()
+  await page.getByRole('button', { name:'不在项目中工作', exact:true }).click()
+  await home.fill('/')
+  await expect(list.getByRole('option',{name:/MCP/})).toBeVisible()
+  await expect(projectCommand).toHaveCount(0)
+  assert.equal((await read()).chats.length, beforeHome)
   await home.fill('/fork')
   await home.press('Enter')
   await expect(page.getByText('请先在此聊天中完成一次原生对话，再创建分支。')).toBeVisible()
@@ -880,8 +992,10 @@ async function verify() {
     const button = name => page.getByRole('button', { name, exact: true })
     const panel = name => page.getByRole('dialog', { name, exact: true })
     const catalogFixture = (change = {}) => app.evaluate(({ app }, change) => app.fixtureModelCatalog(change), change)
+    const commandFixture = (change = {}) => app.evaluate(({ app }, change) => app.fixtureCommands(change), change)
     await expect.poll(async () => Object.keys(await catalogFixture()).sort())
       .toEqual([first, second, third].map(id => 'account-' + id).sort())
+    await verifyCommandCache(page, expect, commandFixture)
     await verifyGroupQuotes(page, expect)
     await verifyDirectPicker(page, expect, pickerScreenshots, catalogFixture)
     await verifyActionMenus(page, expect, menuScreenshots, resize)
@@ -1010,7 +1124,7 @@ async function verify() {
     await restored.members.selectOption(second)
     await expect(restored.model).toContainText('Sonnet')
     await expect(restored.slider).toHaveValue(await restored.slider.getAttribute('max'))
-    await verifySlash(page, expect, slashScreenshots)
+    await verifySlash(page, expect, slashScreenshots, commandFixture)
     assert.deepEqual(errors, [])
     console.log('Electron composer checks passed with isolated local fixtures.')
   } finally {

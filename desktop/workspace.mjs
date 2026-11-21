@@ -23,6 +23,21 @@ function catalogKey(account) {
     account.source, account.credentialSource, account.managed, account.plan,
     account.provider === 'antigravity' ? account.model : null])
 }
+function actionCatalogKey(scope) {
+  return JSON.stringify([catalogKey(scope.account), scope.cwd, scope.threadId,
+    scope.bot.model || scope.account.model, scope.bot.effort, scope.permission, scope.bot.planMode || false])
+}
+function draftActionSettings(input, bot, adapter) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('草稿会话设置无效。')
+  const model = input.model ?? bot.model, effort = input.effort ?? bot.effort
+  if (typeof model !== 'string' || model.length > 500 || typeof effort !== 'string' || effort.length > 120)
+    throw new Error('请选择原生工具列出的模型和思考强度。')
+  const permission = Object.hasOwn(input, 'permission') ? input.permission : 'default'
+  if (!(adapter.permissionModes || ['default']).includes(permission))
+    throw new Error('此原生工具不支持所选权限模式。')
+  if (input.planMode !== undefined && typeof input.planMode !== 'boolean') throw new Error('计划模式设置无效。')
+  return { model, effort, permission, planMode: permission === 'plan' || input.planMode === true }
+}
 function required(value, max = 120) {
   if (typeof value !== 'string' || !value.trim() || value.length > max)
     throw new Error('内容为空或超过长度限制。')
@@ -75,7 +90,8 @@ export class Workspace {
     this.lifetime = new AbortController()
     this.pendingAccounts = new Set()
     this.modelCatalogs = new Map()
-    this.nativeReads = new Map()
+    this.actionCatalogs = new Map()
+    this.bindingRevisions = new Map()
     this.threadEdits = new Map()
     this.lanes = new Map()
     this.running = new Map()
@@ -84,10 +100,14 @@ export class Workspace {
   snapshot() {
     const permissionModes = Object.fromEntries(Object.entries(this.adapters)
       .map(([name, adapter]) => [name, adapter.permissionModes || ['default']]))
-    return { ...this.db.snapshot(), permissionModes }
+    const state = this.db.snapshot()
+    for (const account of state.accounts) account.bindingRevision = this.bindingRevisions.get(account.id) || 0
+    return { ...state, permissionModes, nativeThreads: this.db.all('SELECT chatId,botId,threadId,cwd FROM threads') }
   }
   invalidateCatalogs(accountId) {
     this.modelCatalogs.delete(accountId)
+    this.actionCatalogs.delete(accountId)
+    this.bindingRevisions.set(accountId, (this.bindingRevisions.get(accountId) || 0) + 1)
   }
   busyAccount(id) {
     return (
@@ -141,7 +161,9 @@ export class Workspace {
     return [...directories.values()]
   }
   async ensureChatDirectory(chatId, bot, draft) {
-    const cwd = this.chatDirectory(chatId, bot, draft)
+    return this.ensureDirectory(this.chatDirectory(chatId, bot, draft), bot)
+  }
+  async ensureDirectory(cwd, bot) {
     const existing = await stat(cwd).catch(error => {
       if (error.code !== 'ENOENT') throw error
       return null
@@ -157,7 +179,7 @@ export class Workspace {
     }
     throw new Error('原生工作目录已不存在，请恢复目录或新建会话。')
   }
-  async nativeScope({ chatId, botId, draft }) {
+  nativeContext({ chatId, botId, draft, settings: draftSettings }) {
     const bot = chatId ? this.composer.member(chatId, botId) : this.bot(botId)
     const account = this.db.account(bot.accountId)
     if (this.accounts.updating.has(account.id) || account.status !== 'ready')
@@ -165,14 +187,23 @@ export class Workspace {
     const thread = chatId && this.db.get(
       'SELECT threadId,cwd,accountId FROM threads WHERE chatId=? AND botId=?', chatId, botId)
     if (thread && thread.accountId !== account.id) throw new Error('原生会话与绑定账号不符。')
-    const cwd = await this.ensureChatDirectory(chatId, bot, draft)
-    this.lifetime.signal.throwIfAborted()
-    const settings = chatId ? this.composer.read(chatId, bot) : {}
+    const cwd = this.chatDirectory(chatId, bot, draft)
+    const settings = chatId ? this.composer.read(chatId, bot) : draft && draftSettings !== undefined
+      ? draftActionSettings(draftSettings, bot, this.adapters[account.provider]) : {}
     return {
-      account, bot: { ...bot, ...settings }, chatId, cwd, threadId: thread?.threadId || null,
+      account, bot: { ...bot, ...settings }, chatId: chatId || draft?.id, cwd, threadId: thread?.threadId || null,
       permission: settings.permission || 'default', signal: this.lifetime.signal,
-      ...this.protections(account, settings.permission),
     }
+  }
+  async nativeScope(p) {
+    const scope = this.nativeContext(p)
+    await this.ensureDirectory(scope.cwd, scope.bot)
+    if (p.draft && p.settings && (Object.hasOwn(p.settings, 'model') || Object.hasOwn(p.settings, 'effort')) &&
+        (scope.bot.model || scope.bot.effort)) {
+      validateSelection(await this.botOptions(scope.account.id), scope.bot.model, scope.bot.effort)
+    }
+    this.lifetime.signal.throwIfAborted()
+    return { ...scope, ...this.protections(scope.account, scope.permission) }
   }
   protections(account, permission) {
     if (account.provider !== 'codex' || permission !== 'full') return {}
@@ -180,17 +211,48 @@ export class Workspace {
       this.db.all('SELECT id FROM accounts').map(row => this.db.account(row.id))) }
   }
   async composerActions(p) {
-    const scope = await this.nativeScope(p)
+    const scope = this.nativeContext(p)
     const adapter = this.adapters[scope.account.provider]
-    if (!adapter.composerActions)
+    if (!adapter.composerActions) {
+      await this.nativeScope(p)
       return { plan: Boolean(adapter.permissionModes?.includes('plan')), goal: false, autoReview: false, extensions: [], slashCommands: [] }
-    const key = JSON.stringify([scope.account.id, scope.account.bin, scope.account.source,
-      scope.account.credentialSource, scope.account.identity, scope.cwd, scope.permission,
-      scope.chatId, scope.bot.id, scope.threadId, scope.bot.model, scope.bot.effort])
-    if (this.nativeReads.has(key)) return this.nativeReads.get(key)
-    const pending = adapter.composerActions(scope)
-    this.nativeReads.set(key, pending)
-    try { return await pending } finally { this.nativeReads.delete(key) }
+    }
+    const accountId = scope.account.id
+    let catalogs = this.actionCatalogs.get(accountId)
+    if (!catalogs) {
+      catalogs = new Map()
+      this.actionCatalogs.set(accountId, catalogs)
+    }
+    const slot = JSON.stringify([p.chatId || null, p.draft?.id || null, p.botId])
+    const key = actionCatalogKey(scope)
+    let entry = catalogs.get(slot)
+    if (entry?.key !== key) entry = { key, result: null, pending: null }
+    catalogs.delete(slot)
+    catalogs.set(slot, entry)
+    if (p.refresh !== true && entry.result) return { ...entry.result, cached: true }
+    if (entry.pending) return entry.pending
+    const assertCurrent = () => {
+      this.lifetime.signal.throwIfAborted()
+      if (catalogs !== this.actionCatalogs.get(accountId) || catalogs.get(slot) !== entry ||
+          actionCatalogKey(this.nativeContext(p)) !== key)
+        throw new Error('账号或会话设置已变化，请重新读取原生命令。')
+    }
+    entry.pending = (async () => {
+      const verified = await this.nativeScope(p)
+      assertCurrent()
+      const result = await adapter.composerActions(verified)
+      assertCurrent()
+      entry.result = result
+      return result
+    })()
+    try { return await entry.pending } finally {
+      entry.pending = null
+      // Keep recent chats and drafts reusable without retaining every visited scope.
+      for (const [oldSlot, old] of catalogs) {
+        if (catalogs.size <= 64) break
+        if (!old.pending) catalogs.delete(oldSlot)
+      }
+    }
   }
   async slashInfo(p) {
     const name = slashName(p.name)
@@ -253,7 +315,8 @@ export class Workspace {
         (p.nativeActions && Object.keys(p.nativeActions).length))
       throw new Error('快捷命令参数无效，请单独发送所选命令。')
     const args = redact(slash.arguments.trim())
-    const catalog = await this.composerActions({ chatId, botId: slash.botId, draft })
+    const catalog = await this.composerActions({ chatId, botId: slash.botId, draft,
+      settings: draft && p.settings?.[slash.botId], refresh: true })
     this.lifetime.signal.throwIfAborted()
     const command = catalog.slashCommands?.find(item => item.name === name)
     if (!command || !['prompt', 'compact', 'review', 'extension'].includes(command.action))

@@ -293,10 +293,12 @@ function windowLabel(minutes) {
 
 export function ComposerTools({
   chatId,
+  bot,
+  actionCatalog,
+  onInspect,
   state,
   members,
   isGroup,
-  recipients,
   invoke,
   draftSettings,
   saveSettings,
@@ -313,17 +315,8 @@ export function ComposerTools({
   onNative,
   onGoal,
   selectedExtensions,
-  commandMemberId,
-  onCommandMemberChange,
   filesDisabled,
 }) {
-  const [choice, setChoice] = useState(null);
-  const recipientKey = recipients.join(",");
-  const activeId =
-    popup?.botId ||
-    commandMemberId ||
-    (choice?.recipients === recipientKey ? choice.id : recipients[0]);
-  const bot = members.find((m) => m.id === activeId) || members[0];
   const account = state.accounts.find((a) => a.id === bot?.accountId);
   const { catalog, loading, refresh } = useModelCatalog(account, invoke, { refreshOnEntry: true });
   const [pending, setPending] = useState(null);
@@ -358,47 +351,8 @@ export function ComposerTools({
   const providerModes = state.permissionModes?.[account?.provider] || [
     "default",
   ];
-  const [actionRequest, setActionRequest] = useState(null);
-  const lastActions = useRef(null);
-  const [attempt, setAttempt] = useState(0);
   const [detail, setDetail] = useState(null);
-  const actionKey = JSON.stringify([
-    chatId,
-    bot?.id,
-    bot?.cwd,
-    account?.id,
-    account?.status,
-    account?.identity,
-    account?.bin,
-    account?.source,
-    permission,
-    attempt,
-  ]);
-  const showActions = popup?.id === "add" || popup?.id === "permission";
-  useEffect(() => {
-    if (!showActions || !bot || account?.status !== "ready") return;
-    if (
-      lastActions.current?.key === actionKey &&
-      Date.now() - lastActions.current.time < 30_000
-    )
-      return;
-    let current = true;
-    invoke("composerActions", { botId: bot.id, ...(chatId && { chatId }) })
-      .then((data) => {
-        if (current) {
-          lastActions.current = { key: actionKey, time: Date.now() };
-          setActionRequest({ key: actionKey, data });
-        }
-      })
-      .catch((e) => {
-        if (current) setActionRequest({ key: actionKey, error: errorText(e) });
-      });
-    return () => {
-      current = false;
-    };
-  }, [showActions, actionKey, invoke]);
-  const actionResult = actionRequest?.key === actionKey ? actionRequest : null;
-  const actions = actionResult?.data;
+  const actions = actionCatalog.data;
   const codex = account?.provider === "codex";
   const modes = providerModes.filter((mode) => {
     if (permission === mode) return true;
@@ -493,11 +447,7 @@ export function ComposerTools({
         aria-label="查看群成员设置与用量"
         value={bot.id}
         disabled={busy}
-        onChange={(e) => {
-          setChoice({ recipients: recipientKey, id: e.target.value });
-          if (popup?.botId) setPopup({ ...popup, botId: e.target.value });
-          if (commandMemberId) onCommandMemberChange(e.target.value);
-        }}
+        onChange={e => onInspect(e.target.value)}
       >
         {members.map((m) => (
           <option value={m.id} key={m.id}>
@@ -546,9 +496,9 @@ export function ComposerTools({
           skillsOnly={popup?.skillsOnly}
           memberPicker={groupPicker}
           actions={actions}
-          loading={!actionResult && account?.status === "ready"}
-          loadError={actionResult?.error || actions?.note}
-          retry={() => setAttempt((n) => n + 1)}
+          loading={actionCatalog.pending && !actions}
+          loadError={actionCatalog.error || actions?.note}
+          retry={actionCatalog.retry}
           onFiles={onFiles}
           onSnippet={onSnippet}
           onSketch={onSketch}
@@ -588,8 +538,8 @@ export function ComposerTools({
           busy={busy}
           memberPicker={groupPicker}
           onChoose={(mode) => save({ permission: mode })}
-          catalogError={actionResult?.error || actions?.note}
-          retry={() => setAttempt((n) => n + 1)}
+          catalogError={actionCatalog.error || actions?.note}
+          retry={actionCatalog.retry}
           onLearn={() => {
             setPopup(null);
             setDetail("permissions");
