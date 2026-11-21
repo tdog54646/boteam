@@ -17,7 +17,6 @@ import {
   ApprovalDetails,
   permissionLabel,
 } from "./ComposerActionMenu";
-import { GoalDialog } from "./GoalDialog";
 
 export function ToolPopover({
   id,
@@ -299,7 +298,8 @@ export function ComposerTools({
   isGroup,
   recipients,
   invoke,
-  ensureChat,
+  draftSettings,
+  saveSettings,
   popup,
   setPopup,
   busy,
@@ -311,7 +311,7 @@ export function ComposerTools({
   onSketch,
   onEditor,
   onNative,
-  onGoalStarted,
+  onGoal,
   selectedExtensions,
   commandMemberId,
   onCommandMemberChange,
@@ -328,7 +328,7 @@ export function ComposerTools({
   const { catalog, loading, refresh } = useModelCatalog(account, invoke, { refreshOnEntry: true });
   const [pending, setPending] = useState(null);
   const saving = useRef(false);
-  const stored = state.composerSettings?.find(
+  const stored = draftSettings?.[bot?.id] || state.composerSettings?.find(
     (s) => s.chatId === chatId && s.botId === bot?.id,
   );
   useEffect(() => {
@@ -451,7 +451,8 @@ export function ComposerTools({
       loading: true,
       value: last?.key === requestKey ? last.value : null,
     }));
-    invoke("refreshQuota", { ...(chatId && { chatId }), botId: bot.id })
+    invoke("refreshQuota", { ...(chatId && { chatId }), botId: bot.id,
+      ...(draftSettings && { draftModel: storedModel || "" }) })
       .then((value) => {
         if (lastRequest.current === request)
           setQuotaRequest({ key: requestKey, value });
@@ -520,12 +521,7 @@ export function ComposerTools({
     setBusy(true);
     setError("");
     try {
-      const id = await ensureChat();
-      await invoke("setComposerSettings", {
-        chatId: id,
-        botId: bot.id,
-        ...values,
-      });
+      await saveSettings(bot.id, values);
       if (closeAfter) setPopup(null);
     } catch (e) {
       if (!closeAfter) setPending(previous);
@@ -559,7 +555,7 @@ export function ComposerTools({
           onEditor={onEditor}
           onGoal={() => {
             setPopup(null);
-            setDetail("goal");
+            onGoal(bot);
           }}
           planActive={Boolean(settings.planMode || permission === "plan")}
           onPlan={() =>
@@ -617,18 +613,6 @@ export function ComposerTools({
               }
             />
           </Modal>,
-          document.body,
-        )}
-      {detail === "goal" &&
-        createPortal(
-          <GoalDialog
-            bot={bot}
-            chatId={chatId}
-            ensureChat={ensureChat}
-            invoke={invoke}
-            onStarted={onGoalStarted}
-            onClose={() => setDetail(null)}
-          />,
           document.body,
         )}
       {children}

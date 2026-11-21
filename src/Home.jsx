@@ -1,45 +1,37 @@
 import React, { useState } from "react";
 import { Bot, ChevronDown, WalletCards, Plus, UsersRound } from "lucide-react";
-import { Button, accountLabel } from "./ui";
+import { Button, accountLabel, ProviderIcon } from "./ui";
 import { Composer } from "./Composer";
 
-export function Home({ state, invoke, open, onChat, bot, setSelection, firstProject, ensureChat, sourceControl, onDraftFiles }) {
+export function Home({ state, invoke, open, draft, members, setSelection, firstProject,
+  onSent, onNewDraft, sourceControl, onDraftFiles }) {
   const bots = state.bots.filter((b) => !b.archived);
   const [busy, setBusy] = useState(false);
-  const [pending, setPending] = useState({});
+  const bot = members[0];
+  const group = draft?.kind === "group";
   const account = state.accounts.find((a) => a.id === bot?.accountId);
-  const target = JSON.stringify([bot?.id, firstProject?.projectId || null]);
-  async function currentChat() {
-    if (pending[target]) return pending[target];
-    const id = await ensureChat();
-    setPending(all => ({ ...all, [target]: id }));
-    return id;
-  }
   return (
     <div className="home">
       <div className="home-stack">
         <h1>
-          {bot
-            ? "有什么需要帮忙？"
+          {draft
+            ? group ? draft.name || "新群聊" : bot ? "有什么需要帮忙？" : "此 Bot 已归档"
             : state.accounts.length
               ? "创建你的第一个 Bot"
               : "连接你的 AI 账号"}
         </h1>
-        {bot ? (
+        {draft ? (
           <Composer
-            key={bot.id}
+            key={draft.id}
             state={state}
-            members={[bot]}
-            homeBot={bot}
+            members={members}
+            draft={draft}
+            firstProject={firstProject}
             invoke={invoke}
-            chat={
-              pending[target] ? { id: pending[target], kind: "direct" } : null
-            }
+            onSent={onSent}
+            onNewDraft={onNewDraft}
             sourceControl={sourceControl}
             onDraftFiles={onDraftFiles}
-            firstProject={firstProject}
-            ensureHomeChat={currentChat}
-            onSent={onChat}
             onBusyChange={setBusy}
           />
         ) : (
@@ -60,9 +52,12 @@ export function Home({ state, invoke, open, onChat, bot, setSelection, firstProj
             </Button>
           </>
         )}
-        {bot && (
+        {group && <div className="empty-member-strip">{members.map(member =>
+          <span key={member.id}><ProviderIcon size="small"
+            provider={state.accounts.find(a => a.id === member.accountId)?.provider} />{member.name}</span>)}</div>}
+        {bot && !group && (
           <div className="home-context">
-            <label className="bot-picker" title="选择接收 Bot">
+            {setSelection ? <label className="bot-picker" title="选择接收 Bot">
               <Bot size={15} />
               <span>{bot.name}</span>
               <ChevronDown size={12} />
@@ -81,7 +76,7 @@ export function Home({ state, invoke, open, onChat, bot, setSelection, firstProj
                   </option>
                 ))}
               </select>
-            </label>
+            </label> : <span className="home-account"><Bot size={15} />{bot.name}</span>}
             <span className="home-account">
               <WalletCards size={14} />
               {accountLabel(account)}

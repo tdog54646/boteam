@@ -1,4 +1,5 @@
 import React, { useEffect, useId, useImperativeHandle, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowUp,
   AtSign,
@@ -41,8 +42,8 @@ export function Composer({
   members,
   state,
   invoke,
-  homeBot,
-  ensureHomeChat,
+  draft,
+  onNewDraft,
   onSent,
   onOpenChat = onSent,
   onBusyChange,
@@ -53,9 +54,11 @@ export function Composer({
   firstProject,
 }) {
   const { accounts } = state;
-  const scope = homeBot ? `home:${homeBot.id}` : chat.id;
-  const projectCwd = chat ? chat.initialProjectCwd ?? null : state.projects?.find(project => project.id === firstProject?.projectId)?.folders[0] ?? null;
-  const ensured = () => (homeBot ? ensureHomeChat() : Promise.resolve(chat.id));
+  const scope = draft ? (draft.legacyHome ? `home:${draft.members[0]}` : `draft:${draft.id}`) : chat.id;
+  const projectCwd = chat ? chat.initialProjectCwd ?? null : draft?.folder ??
+    state.projects?.find(project => project.id === draft?.projectId)?.folders[0] ?? null;
+  const [settingsByBot, setSettingsByBot] = useState(() => drafts.get(scope)?.settingsByBot || {});
+  const [pausedGoals, setPausedGoals] = useState(() => drafts.get(scope)?.pausedGoals || {});
   const [text, setText] = useState(() => drafts.get(scope)?.text || "");
   const [replyToMessageId, setReplyToMessageId] = useState(() => drafts.get(scope)?.replyToMessageId || null);
   const quotedMessage = publicMessages?.get(replyToMessageId);
@@ -79,7 +82,7 @@ export function Composer({
   const trigger = useRef(null);
   const menu = useRef(null);
   const menuId = useId();
-  const isGroup = chat?.kind === "group";
+  const isGroup = (chat || draft)?.kind === "group";
   const [popup, setPopup] = useState(null);
   const [files, setFiles] = useState([]);
   const [filesReady, setFilesReady] = useState(false);
@@ -95,8 +98,8 @@ export function Composer({
   useImperativeHandle(sourceControl, () => ({ pickFiles }));
   const canPick = filesReady && !busy && !workingFiles && members.length > 0;
   useEffect(() => {
-    onDraftFiles?.({ chatId: chat?.id, files, canPick });
-  }, [chat?.id, files, canPick, onDraftFiles]);
+    onDraftFiles?.({ chatId: chat?.id || draft?.id, files, canPick });
+  }, [chat?.id, draft?.id, files, canPick, onDraftFiles]);
   useImperativeHandle(quoteControl, () => ({
     select(messageId) {
       if (sendLock.current) return;
@@ -114,10 +117,11 @@ export function Composer({
     onBusyChange?.(busy || workingFiles);
   }, [busy, workingFiles, onBusyChange]);
   useEffect(() => {
-    if (text || selected.length || Object.keys(extensions).length || replyToMessageId)
-      drafts.set(scope, { text, selected, extensions, slashMember, replyToMessageId });
+    if (text || selected.length || Object.keys(extensions).length || replyToMessageId ||
+        Object.keys(settingsByBot).length || Object.keys(pausedGoals).length)
+      drafts.set(scope, { text, selected, extensions, slashMember, replyToMessageId, settingsByBot, pausedGoals });
     else drafts.delete(scope);
-  }, [scope, text, selected, extensions, slashMember, replyToMessageId]);
+  }, [scope, text, selected, extensions, slashMember, replyToMessageId, settingsByBot, pausedGoals]);
   useEffect(() => {
     let current = true;
     invoke("listAttachments", { scope })
@@ -162,6 +166,7 @@ export function Composer({
     text,
     target: slashTarget,
     chatId: chat?.id,
+    draft,
     invoke,
   });
   const slashOpen = slash.open && !popup && !open && !slashDialog && !busy;
@@ -450,17 +455,13 @@ export function Composer({
         } else if (action === "goal") {
           setSlashDialog({ action, bot: slashTarget, args });
         } else if (action === "plan") {
-          const settings = state.composerSettings?.find(
+          const settings = settingsByBot[botId] || state.composerSettings?.find(
             (s) => s.chatId === chat?.id && s.botId === botId,
           );
           const planMode = !(
             settings?.planMode || settings?.permission === "plan"
           );
-          await invoke("setComposerSettings", {
-            chatId: await ensured(),
-            botId,
-            planMode,
-          });
+          await saveSettings(botId, { planMode });
           setSlashDialog({
             action,
             bot: slashTarget,
@@ -477,15 +478,12 @@ export function Composer({
         } else if (action === "new" || action === "fork") {
           if (action === "fork" && !chat?.id)
             throw new Error("请先在此聊天中完成一次原生对话，再创建分支。");
-          const id =
-            action === "fork"
-              ? await invoke("forkChat", { chatId: chat.id, botId })
-              : await invoke("createChat", {
-                  kind: "direct",
-                  members: [botId],
-                });
-          await onOpenChat(id);
-          drafts.set(scope, { text: "", extensions, selected });
+          if (action === "fork") {
+            await onOpenChat(await invoke("forkChat", { chatId: chat.id, botId }));
+          } else {
+            onNewDraft({ kind: "direct", members: [botId], projectId: chat?.projectId || firstProject?.projectId });
+          }
+          drafts.set(scope, { ...drafts.get(scope), text: "" });
         } else {
           throw new Error("此快捷命令尚未接入。");
         }
@@ -533,13 +531,50 @@ export function Composer({
       send();
     }
   }, [text, slashTarget?.id, slash.ready, slash.error]);
+  function saveSettings(botId, patch) {
+    if (!draft) return invoke("setComposerSettings", { chatId: chat.id, botId, ...patch });
+    const accountId = members.find(member => member.id === botId)?.accountId;
+    const provider = accounts.find(account => account.id === accountId)?.provider;
+    setSettingsByBot(previous => {
+      const settings = { ...previous[botId], ...patch };
+      if (state.permissionModes?.[provider]?.includes("plan")) {
+        if (patch.planMode) settings.permission = "plan";
+        else if (patch.planMode === false && settings.permission === "plan") settings.permission = "default";
+        if (patch.permission !== undefined || patch.planMode !== undefined) settings.planMode = settings.permission === "plan";
+      }
+      return { ...previous, [botId]: settings };
+    });
+  }
+  function firstMessage(payload) {
+    const forMembers = values => Object.fromEntries(
+      Object.entries(values).filter(([botId]) => draft.members.includes(botId)),
+    );
+    return invoke("sendDraft", {
+      draft, settings: forMembers(settingsByBot), pausedGoals: forMembers(pausedGoals),
+      expectedProjectCwd: projectCwd, ...payload,
+    });
+  }
+  async function saveDraftGoal({ action, botId, objective, status }) {
+    if (action === "set" && status === "active") {
+      const result = await firstMessage({ recipients: [botId], goalObjective: objective });
+      if (text || selected.length || Object.keys(extensions).length)
+        drafts.set(result.chatId, { text, selected, extensions, slashMember });
+      drafts.delete(scope);
+      return result.chatId;
+    }
+    setPausedGoals(previous => {
+      const next = { ...previous };
+      if (action === "clear") delete next[botId];
+      else next[botId] = objective;
+      return next;
+    });
+  }
   async function sendMessage(command) {
     if (!canSend || sendLock.current || fileLock.current) return;
     sendLock.current = true;
     setBusy(true);
     setError("");
     try {
-      const chatId = await ensured();
       const nativeActions = Object.fromEntries(
         recipients
           .filter((id) => extensions[id]?.length)
@@ -551,9 +586,8 @@ export function Composer({
             },
           ]),
       );
-      await invoke("send", {
+      const message = {
         ...(command ? { slash: command } : { nativeActions }),
-        chatId,
         ...(firstProject && { expectedProjectCwd: projectCwd }),
         ...(!command && replyToMessageId && { replyToMessageId }),
         text: command
@@ -561,7 +595,10 @@ export function Composer({
           : text.trim(),
         recipients: command ? [command.botId] : recipients,
         attachmentIds: files.map((file) => file.id),
-      });
+      };
+      let chatId = chat?.id;
+      if (draft) ({ chatId } = await firstMessage(message));
+      else await invoke("send", { ...message, chatId });
       drafts.delete(scope);
       setReplyToMessageId(null);
       setFiles([]);
@@ -570,6 +607,8 @@ export function Composer({
       setSlashMember(null);
       setSelected([]);
       setExtensions({});
+      setSettingsByBot({});
+      setPausedGoals({});
       setOpen(false);
       setMention(null);
       ref.current?.focus();
@@ -582,7 +621,7 @@ export function Composer({
     }
   }
   return (
-    <div className={`composer-area${homeBot ? " home-composer" : ""}`}>
+    <div className={`composer-area${draft ? " home-composer" : ""}`}>
       <div className="composer-wrap" ref={root}>
         {firstProject && <div className="composer-project-row">
           <FirstChatProject projects={state.projects} {...firstProject} disabled={firstProject.disabled || busy} />
@@ -830,7 +869,7 @@ export function Composer({
             readOnly={busy}
             autoFocus
             maxLength={200000}
-            aria-label={homeBot ? "新对话消息" : "消息内容"}
+            aria-label={draft ? "新对话消息" : "消息内容"}
             aria-describedby={replyToMessageId ? quoteDescriptionId : undefined}
             aria-autocomplete="list"
             aria-controls={slashOpen ? slash.listId : undefined}
@@ -916,7 +955,7 @@ export function Composer({
                 setSketch(true);
               }}
               onNative={toggleExtension}
-              onGoalStarted={homeBot ? onSent : undefined}
+              onGoal={bot => setSlashDialog({ action: "goal", bot })}
               selectedExtensions={extensions}
               commandMemberId={slash.match ? slashTarget?.id : undefined}
               onCommandMemberChange={setSlashMember}
@@ -926,7 +965,8 @@ export function Composer({
               isGroup={isGroup}
               recipients={recipients}
               invoke={invoke}
-              ensureChat={ensured}
+              saveSettings={saveSettings}
+              draftSettings={draft ? settingsByBot : null}
               popup={popup}
               setPopup={(next) => {
                 if (open) closeMenu();
@@ -977,16 +1017,17 @@ export function Composer({
             </button>
           </div>
         </div>
-        {slashDialog?.action === "goal" && (
+        {slashDialog?.action === "goal" && createPortal(
           <GoalDialog
             bot={slashDialog.bot}
             initialObjective={slashDialog.args}
             chatId={chat?.id}
-            ensureChat={ensured}
+            draftGoal={pausedGoals[slashDialog.bot.id]}
+            onDraftSave={saveDraftGoal}
             invoke={invoke}
-            onStarted={homeBot ? onSent : undefined}
+            onStarted={draft ? onSent : undefined}
             onClose={() => setSlashDialog(null)}
-          />
+          />, document.body,
         )}
         {slashDialog && slashDialog.action !== "goal" && (
           <Modal

@@ -55,7 +55,7 @@ async function selectNativeSettings(page) {
   return {model:model.id, effort:target}
 }
 async function savedBot(page) {
-  await expect(page.getByRole('textbox', { name: '消息内容' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: /^(新对话消息|消息内容)$/ })).toBeVisible()
   return page.evaluate(async (name) => {
     const { bots } = await window.boteam.invoke('snapshot')
     const bot = bots.find((entry) => entry.name === name)
@@ -66,7 +66,7 @@ async function send(page, text, settings) {
   const previous = await page.evaluate(
     async () => (await window.boteam.invoke('snapshot')).tasks.length,
   )
-  const composer = page.getByRole('textbox', { name: '消息内容' })
+  const composer = page.getByRole('textbox', { name: /^(新对话消息|消息内容)$/ })
   await composer.fill(text)
   await page.getByRole('button', { name: '发送消息', exact: true }).click()
   await expect
@@ -131,6 +131,11 @@ try {
     console.log(`通过桌面导入、原生选项选择（${settings.model} · ${settings.effort}）、真实 Codex 私聊、运行身份、重启后设置保留及原生续聊。`)
   } else {
     await page.getByRole('button', { name: '暂时跳过' }).click()
+    await page.getByRole('button', { name: '账号管理', exact: true }).click()
+    await page.getByRole('button', { name: '新建对话', exact: true }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: '连接你的 AI 账号' })).toBeVisible()
+    expect(await page.evaluate(async () => (await window.boteam.invoke('snapshot')).chats.length)).toBe(0)
     await page.getByRole('button', { name: '账号管理', exact: true }).click()
     await expect(page.getByRole('heading', { name: '账号管理', exact: true })).toBeVisible()
     await app.close()

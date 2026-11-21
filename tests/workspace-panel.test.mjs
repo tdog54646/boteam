@@ -43,6 +43,21 @@ test('files, project search and markdown saves share the conversation directory'
   assert.equal((await call('panelFiles', { chatId: null })).root, cwd)
 })
 
+test('a draft can use its project workspace before the first message creates the chat', async t => {
+  const { temp, workspace, botId } = await fixture(t)
+  const folder = join(temp, 'draft-project')
+  await mkdir(folder)
+  const projectId = await workspace.handle('createProject', { name: '草稿项目', folders: [folder] })
+  const draft = { id: crypto.randomUUID(), kind: 'direct', members: [botId], projectId }
+  const panel = { draft, botId, expectedProjectCwd: folder }
+  await workspace.handle('panelSave', { ...panel, path: 'notes.md', content: '草稿内容' })
+  assert.equal(workspace.db.get('SELECT id FROM chats WHERE id=?', draft.id), undefined)
+  assert.equal(await readFile(join(folder, 'notes.md'), 'utf8'), '草稿内容')
+  const { chatId } = await workspace.handle('sendDraft', { draft, recipients: [botId], text: '读取笔记' })
+  const loaded = await workspace.handle('panelRead', { chatId, botId, path: 'notes.md' })
+  assert.equal(loaded.content, '草稿内容')
+})
+
 test('Git changes include staged, unstaged and new text and use literal subdirectory paths', async t => {
   const { call, cwd, temp } = await fixture(t)
   assert.equal((await call('panelChanges')).repo, null)

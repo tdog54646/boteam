@@ -14,7 +14,7 @@ import { commandName } from './adapters/native-slash.mjs'
 import { groupPrompt } from './group-context.mjs'
 import { forkConversation, directForkPrompt } from './chat-fork.mjs'
 import { manageChat } from './chat-management.mjs'
-import { chatProjectCwd, configureNewChatProject, inheritProject, manageProject } from './projects.mjs'
+import { draftProjectCwd, chatProjectCwd, configureNewChatProject, inheritProject, manageProject } from './projects.mjs'
 
 const active = "('queued','running','approval')"
 const stamp = () => new Date().toISOString()
@@ -27,6 +27,10 @@ function required(value, max = 120) {
   if (typeof value !== 'string' || !value.trim() || value.length > max)
     throw new Error('内容为空或超过长度限制。')
   return redact(value.trim())
+}
+const draftIdPattern = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/
+function requireDraftId(draft) {
+  if (typeof draft?.id !== 'string' || !draftIdPattern.test(draft.id)) throw new Error('无效的会话草稿。')
 }
 function slashName(name) {
   if (typeof name !== 'string' || name.length > 200 || !commandName.test(name))
@@ -109,12 +113,17 @@ export class Workspace {
       this.pendingAccounts.delete(operation)
     }
   }
-  chatDirectory(chatId, bot) {
+  chatDirectory(chatId, bot, draft) {
+    if (draft) {
+      requireDraftId(draft)
+      if (chatId || !Array.isArray(draft.members) || !draft.members.includes(bot.id))
+        throw new Error('该 Bot 不属于当前草稿。')
+    }
     const thread = chatId && this.db.get('SELECT cwd FROM threads WHERE chatId=? AND botId=?', chatId, bot.id)
     const fork = chatId && this.db.get('SELECT cwd FROM fork_member_context WHERE chatId=? AND botId=?', chatId, bot.id)
-    return thread?.cwd || fork?.cwd || chatProjectCwd(this.db,chatId) || bot.cwd ||
+    return thread?.cwd || fork?.cwd || (draft ? draftProjectCwd(this.db, draft) : chatProjectCwd(this.db,chatId)) || bot.cwd ||
       this.db.get("SELECT json_extract(info,'$.cwd') AS cwd FROM accounts WHERE id=?", bot.accountId)?.cwd ||
-      join(this.root, 'workspaces', chatId || '.catalog')
+      join(this.root, 'workspaces', chatId || draft?.id || '.catalog')
   }
   chatDirectories(chatId) {
     if (typeof chatId !== 'string' || !this.db.get('SELECT 1 FROM chats WHERE id=?', chatId))
@@ -131,8 +140,8 @@ export class Workspace {
     }
     return [...directories.values()]
   }
-  async ensureChatDirectory(chatId, bot) {
-    const cwd = this.chatDirectory(chatId, bot)
+  async ensureChatDirectory(chatId, bot, draft) {
+    const cwd = this.chatDirectory(chatId, bot, draft)
     const existing = await stat(cwd).catch(error => {
       if (error.code !== 'ENOENT') throw error
       return null
@@ -148,7 +157,7 @@ export class Workspace {
     }
     throw new Error('原生工作目录已不存在，请恢复目录或新建会话。')
   }
-  async nativeScope({ chatId, botId }) {
+  async nativeScope({ chatId, botId, draft }) {
     const bot = chatId ? this.composer.member(chatId, botId) : this.bot(botId)
     const account = this.db.account(bot.accountId)
     if (this.accounts.updating.has(account.id) || account.status !== 'ready')
@@ -156,7 +165,7 @@ export class Workspace {
     const thread = chatId && this.db.get(
       'SELECT threadId,cwd,accountId FROM threads WHERE chatId=? AND botId=?', chatId, botId)
     if (thread && thread.accountId !== account.id) throw new Error('原生会话与绑定账号不符。')
-    const cwd = await this.ensureChatDirectory(chatId, bot)
+    const cwd = await this.ensureChatDirectory(chatId, bot, draft)
     this.lifetime.signal.throwIfAborted()
     const settings = chatId ? this.composer.read(chatId, bot) : {}
     return {
@@ -231,20 +240,25 @@ export class Workspace {
     }
   }
   async sendSlash(p) {
+    const command = await this.prepareSlash(p)
+    return this.send({ ...p, text: command.text, nativeActions: command.nativeActions }, undefined, command.slash)
+  }
+  async prepareSlash(p, draft) {
     if (p.replyToMessageId != null) throw new Error('原生命令不能携带群消息引用。')
     const { slash, chatId, recipients } = p
     const name = slashName(slash?.name)
-    if (!chatId || !Array.isArray(recipients) || recipients.length !== 1 || recipients[0] !== slash.botId)
+    if ((!chatId && !draft) || !Array.isArray(recipients) || recipients.length !== 1 || recipients[0] !== slash.botId)
       throw new Error('快捷命令每次只能发送给所选成员。')
     if (typeof slash.arguments !== 'string' || slash.arguments.length > 200_000 ||
         (p.nativeActions && Object.keys(p.nativeActions).length))
       throw new Error('快捷命令参数无效，请单独发送所选命令。')
     const args = redact(slash.arguments.trim())
-    const catalog = await this.composerActions({ chatId, botId: slash.botId })
+    const catalog = await this.composerActions({ chatId, botId: slash.botId, draft })
     this.lifetime.signal.throwIfAborted()
     const command = catalog.slashCommands?.find(item => item.name === name)
     if (!command || !['prompt', 'compact', 'review', 'extension'].includes(command.action))
       throw new Error('当前成员的原生工具未提供可发送的此项命令，请重新选择。')
+    if (draft && command.action === 'compact') throw new Error('先在此会话中发送一条消息，再压缩上下文。')
     if (command.action === 'compact' && (args || p.attachmentIds?.length))
       throw new Error('此压缩命令不接受参数或附件。')
     if (command.action === 'review' && p.attachmentIds?.length)
@@ -252,8 +266,7 @@ export class Workspace {
     const nativeActions = command.action === 'extension'
       ? { [slash.botId]: { extensionIds: [command.extensionId], labels: [command.title || '/' + name] } }
       : {}
-    return this.send({ ...p, text: '/' + name + (args ? ' ' + args : ''), nativeActions },
-      undefined, { name, args, action: command.action })
+    return { text: '/' + name + (args ? ' ' + args : ''), nativeActions, slash: { name, args, action: command.action } }
   }
   async threadGoal({ chatId, botId, action, objective, status = 'active', replyToMessageId }) {
     if (replyToMessageId != null) throw new Error('原生目标不能携带群消息引用。')
@@ -266,6 +279,12 @@ export class Workspace {
     if (action === 'set') objective = required(objective, 12000)
     const key = chatId + '/' + botId
     const currentThread = this.db.get('SELECT threadId FROM threads WHERE chatId=? AND botId=?', chatId, botId)
+    const pending = this.db.get('SELECT objective FROM pending_chat_goals WHERE chatId=? AND botId=?', chatId, botId)
+    const forgetPending = () => {
+      if (pending) this.db.run('DELETE FROM pending_chat_goals WHERE chatId=? AND botId=?', chatId, botId)
+    }
+    if (pending && action === 'get')
+      return { threadId: currentThread?.threadId ?? null, goal: { ...pending, status: 'paused' } }
     if (action === 'get' && !currentThread) return { threadId: null, goal: null }
     const edit = { accountId: account.id, botId, chatId }
     if (action !== 'get') {
@@ -276,6 +295,11 @@ export class Workspace {
       if (action !== 'get') {
         const tasks = this.db.all(`SELECT id, json_extract(runSettings,'$.goalObjective') AS goal FROM tasks
           WHERE chatId=? AND botId=? AND status IN ${active}`, chatId, botId)
+        if (pending && action === 'clear' && !tasks.some(task => task.goal)) {
+          forgetPending()
+          this.notify()
+          return { threadId: currentThread?.threadId ?? null, goal: null }
+        }
         if (tasks.some(task => !task.goal)) throw new Error('请先停止此成员的聊天任务或等待任务结束再更改目标。')
         for (const task of tasks) this.cancel(task.id)
         // A stopped process may still be pausing its native goal. Serialize its
@@ -289,10 +313,14 @@ export class Workspace {
         return { messageId, queued: true, threadId: currentThread?.threadId ?? null, goal: { objective, status } }
       }
       const scope = await this.nativeScope({ chatId, botId })
-      if (action === 'clear' && !scope.threadId) return { threadId: null, goal: null }
+      if (action === 'clear' && !scope.threadId) {
+        forgetPending()
+        return { threadId: null, goal: null }
+      }
       const associate = id => this.associateThread(chatId, botId, account.id, id, scope.cwd)
       const result = await adapter.threadGoal({ ...scope, action, objective, status, onSession: associate })
       if (action !== 'get' && result.threadId) associate(result.threadId)
+      if (action !== 'get') forgetPending()
       this.notify()
       return result
     } finally {
@@ -502,6 +530,8 @@ export class Workspace {
         })
         break
       }
+      case 'sendDraft':
+        return this.accountOperation(this.sendDraft(p))
       case 'send':
         return p.slash == null ? this.send(p) : this.accountOperation(this.sendSlash(p))
       case 'approve':
@@ -519,59 +549,127 @@ export class Workspace {
     for (const bot of bots) this.db.run('INSERT INTO members VALUES(?,?)', chatId, bot.id)
   }
   createChat(p) {
+    const id = randomUUID()
+    this.db.transaction(() => this.insertChat(id, p))
+    this.notify()
+    return id
+  }
+  insertChat(id, p) {
     const bots = this.members(p.members)
     if (!['direct', 'group'].includes(p.kind) || (p.kind === 'direct' && bots.length !== 1))
       throw new Error('请选择有效的会话成员。')
     const explicitName = p.kind === 'group' && p.name != null && (typeof p.name !== 'string' || p.name.trim())
       ? required(p.name) : null
-    const id = randomUUID()
-    this.db.transaction(() => {
-      this.db.run(
-        'INSERT INTO chats VALUES(?,?,?,?)',
-        id,
-        p.kind,
-        explicitName || (p.kind === 'group' ? '新群聊' : bots[0].name),
-        stamp(),
-      )
-      this.addMembers(id, bots)
-      configureNewChatProject(this.db, id, p)
-      if (!explicitName) this.db.run('INSERT INTO chat_title_requests(chatId) VALUES(?)', id)
-    })
-    this.notify()
-    return id
+    this.db.run(
+      'INSERT INTO chats VALUES(?,?,?,?)',
+      id,
+      p.kind,
+      explicitName || (p.kind === 'group' ? '新群聊' : bots[0].name),
+      stamp(),
+    )
+    this.addMembers(id, bots)
+    configureNewChatProject(this.db, id, p)
+    if (!explicitName) this.db.run('INSERT INTO chat_title_requests(chatId) VALUES(?)', id)
   }
-  send({ chatId, recipients, text = '', attachmentIds = [], nativeActions = {}, replyToMessageId = null, expectedProjectCwd }, goalObjective, slash) {
-    if (this.db.get('SELECT archived FROM chat_organization WHERE chatId=?', chatId)?.archived)
-      throw new Error('请先恢复已归档的聊天，再发送消息。')
-    if (!Array.isArray(attachmentIds)) throw new Error('附件列表无效。')
-    const bots = this.members(recipients)
-    if (!nativeActions || typeof nativeActions !== 'object' || Array.isArray(nativeActions) ||
-        Object.keys(nativeActions).some(id => !bots.some(bot => bot.id === id)))
-      throw new Error('请将所选扩展发给对应的成员。')
-    const extensionIdsByBot = new Map()
+  async sendDraft(p) {
+    const { draft, settings = {}, pausedGoals = {} } = p
+    requireDraftId(draft)
+    if (p.chatId != null) throw new Error('请选择草稿或已有会话。')
+    const chatId = draft.id
+    // The first user message shares the draft UUID. Retrying after a lost IPC
+    // reply can recover the committed result without submitting another turn.
+    const committed = () => this.db.get("SELECT id FROM messages WHERE chatId=? AND id=? AND author='user'", chatId, chatId)
+    const result = { chatId, messageId: chatId }
+    if (committed()) return result
+    const bots = this.members(draft.members)
+    if (!['direct', 'group'].includes(draft.kind) || (draft.kind === 'direct' && bots.length !== 1))
+      throw new Error('请选择有效的会话成员。')
+    const bindings = bots.map(bot => catalogKey(this.db.account(bot.accountId)))
+    for (const values of [settings, pausedGoals]) {
+      if (!values || typeof values !== 'object' || Array.isArray(values) ||
+          Object.keys(values).some(id => !bots.some(bot => bot.id === id)))
+        throw new Error('草稿设置必须属于所选会话成员。')
+    }
+    const saves = []
+    const goals = []
     for (const bot of bots) {
-      if (!this.db.get('SELECT 1 FROM members WHERE chatId=? AND botId=?', chatId, bot.id))
-        throw new Error('接收人必须属于当前会话。')
-      if (this.accounts.updating?.has(bot.accountId))
-        throw new Error('账号正在更新，请在更新完成后重试。')
-      if (this.threadEdits.has(chatId + '/' + bot.id)) throw new Error('原生会话正在更新，请稍后发送。')
-      const selection = nativeActions[bot.id]
-      if (selection !== undefined) {
-        const ids = selection?.extensionIds
-        if (!Array.isArray(ids) || ids.length > 32 ||
-            ids.some(id => typeof id !== 'string' || !id || id.length > 8192 || id.includes('\0')))
-          throw new Error('原生扩展选择无效。')
-        if (ids.length && !this.adapters[this.db.account(bot.accountId).provider].composerActions)
-          throw new Error('此成员的原生工具未提供所选扩展。')
-        if (new Set(ids).size !== ids.length) throw new Error('原生扩展选择重复。')
-        extensionIdsByBot.set(bot.id, ids.slice())
+      if (Object.hasOwn(settings, bot.id)) {
+        const update = settings[bot.id]
+        if (!update || typeof update !== 'object' || Array.isArray(update))
+          throw new Error('草稿会话设置无效。')
+        if (Object.keys(update).length)
+          saves.push(await this.composer.prepare({ ...update, chatId: undefined }, bot, draft))
+      }
+      if (Object.hasOwn(pausedGoals, bot.id)) {
+        if (!this.accounts.adapter(this.db.account(bot.accountId).provider).threadGoal)
+          throw new Error('此原生工具未提供会话目标。')
+        goals.push([bot.id, required(pausedGoals[bot.id], 12000)])
       }
     }
-    const hasContent = attachmentIds.length || bots.every(bot => extensionIdsByBot.get(bot.id)?.length)
-    const message = hasContent && text === '' ? '' : required(text, 200_000)
-    const messageId = randomUUID(),
-      now = stamp()
+    let submission = { ...p, chatId }, slash, objective
+    if (p.goalObjective !== undefined) {
+      const target = Array.isArray(p.recipients) && p.recipients.length === 1 &&
+        bots.find(bot => bot.id === p.recipients[0])
+      if (!target || p.slash || p.replyToMessageId || p.attachmentIds?.length || Object.keys(p.nativeActions || {}).length)
+        throw new Error('请单独向一个成员发送目标。')
+      if (!this.accounts.adapter(this.db.account(target.accountId).provider).threadGoal)
+        throw new Error('此原生工具未提供会话目标。')
+      objective = required(p.goalObjective, 12000)
+      submission.text = '目标 · ' + objective
+    } else if (p.slash != null) {
+      const command = await this.prepareSlash(p, draft)
+      submission.text = command.text
+      submission.nativeActions = command.nativeActions
+      slash = command.slash
+    }
+    this.lifetime.signal.throwIfAborted()
+    if (committed()) return result
+    if (bots.some((bot, i) => catalogKey(this.db.account(bot.accountId)) !== bindings[i]))
+      throw new Error('账号配置已变化，请重新确认草稿设置。')
+    const scope = draft.legacyHome === true && draft.kind === 'direct' ? 'home:' + bots[0].id : 'draft:' + chatId
+    this.send(submission, objective, slash, { draft, scope, apply: () => {
+      for (const save of saves) save(chatId)
+      for (const [botId, goal] of goals)
+        this.db.run('INSERT INTO pending_chat_goals VALUES(?,?,?)', chatId, botId, goal)
+    } })
+    return result
+  }
+  send({ chatId, recipients, text = '', attachmentIds = [], nativeActions = {}, replyToMessageId = null, expectedProjectCwd }, goalObjective, slash, first) {
+    const messageId = first ? first.draft.id : randomUUID()
+    const now = stamp()
     const tasks = this.db.transaction(() => {
+      if (first) {
+        this.insertChat(chatId, first.draft)
+        first.apply()
+      }
+      if (this.db.get('SELECT archived FROM chat_organization WHERE chatId=?', chatId)?.archived)
+        throw new Error('请先恢复已归档的聊天，再发送消息。')
+      if (!Array.isArray(attachmentIds)) throw new Error('附件列表无效。')
+      const bots = this.members(recipients)
+      if (!nativeActions || typeof nativeActions !== 'object' || Array.isArray(nativeActions) ||
+          Object.keys(nativeActions).some(id => !bots.some(bot => bot.id === id)))
+        throw new Error('请将所选扩展发给对应的成员。')
+      const extensionIdsByBot = new Map()
+      for (const bot of bots) {
+        if (!this.db.get('SELECT 1 FROM members WHERE chatId=? AND botId=?', chatId, bot.id))
+          throw new Error('接收人必须属于当前会话。')
+        if (this.accounts.updating?.has(bot.accountId))
+          throw new Error('账号正在更新，请在更新完成后重试。')
+        if (this.threadEdits.has(chatId + '/' + bot.id)) throw new Error('原生会话正在更新，请稍后发送。')
+        const selection = nativeActions[bot.id]
+        if (selection !== undefined) {
+          const ids = selection?.extensionIds
+          if (!Array.isArray(ids) || ids.length > 32 ||
+              ids.some(id => typeof id !== 'string' || !id || id.length > 8192 || id.includes('\0')))
+            throw new Error('原生扩展选择无效。')
+          if (ids.length && !this.adapters[this.db.account(bot.accountId).provider].composerActions)
+            throw new Error('此成员的原生工具未提供所选扩展。')
+          if (new Set(ids).size !== ids.length) throw new Error('原生扩展选择重复。')
+          extensionIdsByBot.set(bot.id, ids.slice())
+        }
+      }
+      const hasContent = attachmentIds.length || bots.every(bot => extensionIdsByBot.get(bot.id)?.length)
+      const message = hasContent && text === '' ? '' : required(text, 200_000)
       if (expectedProjectCwd !== undefined && expectedProjectCwd !== chatProjectCwd(this.db,chatId))
         throw new Error('聊天工作目录已在其他窗口更改，请确认后重新发送。')
       const chat = this.db.get('SELECT kind FROM chats WHERE id=?', chatId)
@@ -595,8 +693,10 @@ export class Workspace {
         groupCutoff = message ? this.db.publishGroupMessage(chatId, messageId) : this.db.groupBoundary(chatId)
       }
       const attached = attachmentIds.length ? this.attachments.claim({
-        chatId, homeBotId: chat.kind === 'direct' ? bots[0].id : null, messageId, ids: attachmentIds,
+        chatId, draftScope: first?.scope, homeBotId: chat.kind === 'direct' ? bots[0].id : null, messageId, ids: attachmentIds,
       }) : null
+      if (first?.scope.startsWith('draft:'))
+        this.db.run('UPDATE attachments SET scope=? WHERE scope=? AND messageId IS NULL', chatId, first.scope)
       const titleDescription = !slash && !goalObjective && beginChatTitle(this.db, chatId, messageId, bots, message, attached?.attachments)
       const prompt = [slash ? slash.args : message, attached?.context].filter(Boolean).join('\n\n')
       this.db.run('UPDATE chats SET updatedAt=? WHERE id=?', now, chatId)
@@ -737,6 +837,8 @@ export class Workspace {
                 applyNativeTitle(this.db, chatId, messageId, bot.id, event.value)
                 break
               case 'goal':
+                if (goalObjective && event.value?.objective === goalObjective)
+                  this.db.run('DELETE FROM pending_chat_goals WHERE chatId=? AND botId=?', chatId, bot.id)
                 if (event.value?.status) this.event(id, '原生目标 · ' + event.value.status)
                 break
               case 'text':
@@ -768,6 +870,8 @@ export class Workspace {
         this.db.transaction(() => {
           this.db.run('UPDATE messages SET text=?,nativeThreadId=? WHERE id=?', text, publish ? nativeThreadId : null, replyId)
           this.db.run("UPDATE tasks SET status='done',approval=NULL WHERE id=?", id)
+          if (goalObjective)
+            this.db.run('DELETE FROM pending_chat_goals WHERE chatId=? AND botId=?', chatId, bot.id)
           if (seed && nativeThreadId)
             this.db.run('UPDATE fork_member_context SET seedMessageId=NULL WHERE chatId=? AND botId=?', chatId, bot.id)
           if (publish) this.db.publishGroupMessage(chatId, replyId)

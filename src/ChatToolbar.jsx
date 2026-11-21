@@ -172,7 +172,7 @@ function Overview({ id, chat, members, state, invoke, draft, pickSource, openWor
   );
 }
 
-export function ChatToolbar({ chat, members, state, invoke, draft, pickSource, onChatMenu, onChatAction, menuOpen, workspaceVisible, toggleWorkspace, openWorkspace }) {
+export function ChatToolbar({ chat, draftChat, members, state, invoke, draft, pickSource, onChatMenu, onChatAction, menuOpen, workspaceVisible, toggleWorkspace, openWorkspace }) {
   const [popup, setPopup] = useState(null);
   const group = useRef(null);
   const trigger = useRef(null);
@@ -216,11 +216,11 @@ export function ChatToolbar({ chat, members, state, invoke, draft, pickSource, o
           onChatAction("share", chat, { x: Math.round(left), y: Math.round(bottom) });
         }} />
       </>}
-      {chat && <IconButton icon={OverviewIcon} label="聊天概览" aria-haspopup="dialog" aria-expanded={popup === "overview"}
+      {(chat || draftChat) && <IconButton icon={OverviewIcon} label="聊天概览" aria-haspopup="dialog" aria-expanded={popup === "overview"}
         aria-controls={popup === "overview" ? id : undefined} onClick={e => toggle("overview", e)} />}
       {!workspaceVisible && <IconButton icon={PanelRight} label="打开右侧栏" aria-expanded={false}
         onClick={() => { dismiss(); toggleWorkspace(); }} />}
-      {popup === "overview" && chat && <Overview id={id} chat={chat} members={members} state={state} invoke={invoke}
+      {popup === "overview" && (chat || draftChat) && <Overview id={id} chat={chat || draftChat} members={members} state={state} invoke={invoke}
         draft={draft} pickSource={pickSource} openWorkspace={openWorkspace} dismiss={dismiss} />}
     </div>
   );

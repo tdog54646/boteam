@@ -219,6 +219,7 @@ export class AttachmentStore {
     this.db = db
     mkdirSync(this.dir, { mode: 0o700, recursive: true })
     this.dir = realpathSync(this.dir)
+    db.run("DELETE FROM attachments WHERE messageId IS NULL AND scope LIKE 'draft:%'")
     // Recover an interrupted copy or removal. A draft for a removed bot has no composer.
     db.run(`DELETE FROM attachments WHERE messageId IS NULL AND scope LIKE 'home:%'
             AND NOT EXISTS (SELECT 1 FROM bots WHERE id=substr(attachments.scope,6) AND archived=0)`)
@@ -229,6 +230,8 @@ export class AttachmentStore {
   }
   validateScope(scope) {
     if (typeof scope !== 'string' || scope.length > 180) throw new Error('附件草稿无效。')
+    if (scope.startsWith('draft:') && uuid.test(scope.slice(6)) &&
+        !this.db.get('SELECT 1 FROM chats WHERE id=?', scope.slice(6))) return
     const valid = scope.startsWith('home:')
       ? this.db.get('SELECT 1 FROM bots WHERE id=? AND archived=0', scope.slice(5))
       : this.db.get('SELECT 1 FROM chats WHERE id=?', scope)
@@ -327,7 +330,7 @@ export class AttachmentStore {
     }
   }
   // Called inside the send transaction after its user message has been inserted.
-  claim({ chatId, homeBotId, messageId, ids = [] }) {
+  claim({ chatId, homeBotId, draftScope, messageId, ids = [] }) {
     if (!Array.isArray(ids) || ids.length > maxFiles || new Set(ids).size !== ids.length)
       throw new Error('附件列表无效。')
     const budget = { text: 32 * 1024 }
@@ -335,7 +338,8 @@ export class AttachmentStore {
     for (const id of ids) {
       if (typeof id !== 'string' || !uuid.test(id)) throw new Error('附件无效。')
       const row = this.db.get('SELECT * FROM attachments WHERE id=? AND messageId IS NULL', id)
-      if (!row || (row.scope !== chatId && (!homeBotId || row.scope !== 'home:' + homeBotId)))
+      if (!row || (draftScope ? row.scope !== draftScope :
+          row.scope !== chatId && (!homeBotId || row.scope !== 'home:' + homeBotId)))
         throw new Error('附件不在当前草稿中。')
       const path = join(this.dir, id, row.name)
       if (row.kind === 'folder') {

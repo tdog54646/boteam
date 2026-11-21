@@ -35,6 +35,23 @@ const initialChat = window.boteam?.initialChatId;
 const navigationStorage = initialChat ? sessionStorage : localStorage;
 const builtInPages = new Set(["home", "accounts", "bots"]);
 const defaultBotKey = "boteam:quick-bot";
+const draftStorageKey = "boteam:chat-drafts";
+function invokeWithDraft(draft, method, payload = {}) {
+  if (draft && method === "attachmentPreview")
+    return invoke(method, { ...payload, chatId: draft.legacyHome ? "home:" + draft.members[0] : "draft:" + draft.id });
+  if (draft && (method.startsWith("panel") || ["composerActions", "slashInfo"].includes(method)))
+    return invoke(method, { ...payload, chatId: undefined, draft });
+  return invoke(method, payload);
+}
+function readDrafts() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(draftStorageKey));
+    return Object.fromEntries(Object.entries(saved || {}).filter(([key, draft]) =>
+      draft && typeof draft.id === "string" && ["direct", "group"].includes(draft.kind) &&
+      Array.isArray(draft.members) && draft.members.length && draft.members.every(id => typeof id === "string") &&
+      (key === "draft:" + draft.id || (draft.legacyHome && key === "home:" + draft.members[0]))));
+  } catch { return {}; }
+}
 export default function App() {
   const [state, setState] = useState(empty);
   const [ready, setReady] = useState(false);
@@ -51,8 +68,21 @@ export default function App() {
   const panelSequence = useRef(0);
   const sourceControl = useRef(null);
   const [sourceDraft, setSourceDraft] = useState(null);
-  const [homeProjects, setHomeProjects] = useState({});
-  const homeChats = useRef(new Map());
+  const [drafts, setDrafts] = useState(readDrafts);
+  const draftPages = useRef(drafts);
+  const updateDraft = useCallback((key, draft) => {
+    const next = { ...draftPages.current };
+    if (draft) next[key] = draft;
+    else delete next[key];
+    draftPages.current = next;
+    setDrafts(next);
+    try { sessionStorage.setItem(draftStorageKey, JSON.stringify(next)); } catch {}
+  }, []);
+  const homeKey = homeBot && "home:" + homeBot.id;
+  const draftKey = page === "home" ? homeKey : page;
+  const draft = drafts[draftKey];
+  const currentDraftId = useRef(null);
+  currentDraftId.current = draft?.id;
   const [projectBusy, setProjectBusy] = useState(false);
   const currentPage = useRef(page);
   currentPage.current = page;
@@ -67,6 +97,10 @@ export default function App() {
     localStorage.setItem(defaultBotKey, id);
     setHomeSelection(id);
   }
+  useEffect(() => {
+    if (page === "home" && homeKey && state.onboarded && !draftPages.current[homeKey])
+      updateDraft(homeKey, { id: crypto.randomUUID(), kind: "direct", members: [homeBot.id], legacyHome: true });
+  }, [page, homeKey, homeBot?.id, state.onboarded, draft, updateDraft]);
   useEffect(() => {
     function syncSelection(event) {
       if (event.storageArea === localStorage && (event.key === defaultBotKey || event.key === null))
@@ -84,6 +118,20 @@ export default function App() {
       if (!hasLaunched.current) {
         hasLaunched.current = true;
         const lastPage = navigationStorage.getItem("boteam:page");
+        // A reload can interrupt navigation after the first message has committed.
+        const savedIds = new Set(snapshot.chats.map(chat => chat.id));
+        const activeBots = snapshot.bots.filter(bot => !bot.archived);
+        const defaultBot = activeBots.find(bot => bot.id === localStorage.getItem(defaultBotKey)) || activeBots[0];
+        for (const [key, candidate] of Object.entries(draftPages.current)) {
+          if (!savedIds.has(candidate.id)) continue;
+          updateDraft(key, null);
+          if (currentPage.current === key || (currentPage.current === "home" && key === "home:" + defaultBot?.id)) {
+            trail.current = [candidate.id];
+            currentPage.current = candidate.id;
+            setPage(candidate.id);
+            navigationStorage.setItem("boteam:page", candidate.id);
+          }
+        }
         if (
           !initialChat && snapshot.onboarded &&
           ["accounts", "bots"].includes(lastPage) &&
@@ -103,7 +151,7 @@ export default function App() {
           invoke("setChatUnread", { chatId: opened.id, unread: false }).catch(e => setError(errorText(e)));
         }
       }
-      const accessible = new Set([...builtInPages, ...snapshot.chats.map(c => c.id)]);
+      const accessible = new Set([...builtInPages, ...Object.keys(draftPages.current), ...snapshot.chats.map(c => c.id)]);
       setDialog(current => (current?.type === "project" || current?.type === "projectAction") && current.id &&
         !snapshot.projects?.some(project => project.id === current.id) ? null : current);
       const retired = new Set(before.chats.filter(c => !accessible.has(c.id)).map(c => c.id));
@@ -132,7 +180,7 @@ export default function App() {
       setLoadError("");
     }
     return snapshot;
-  }, []);
+  }, [updateDraft]);
   useEffect(() => {
     if (!window.boteam) {
       setLoadError("请从 BoTeam 桌面应用打开工作台。");
@@ -182,13 +230,25 @@ export default function App() {
     }
     select(id);
   }
-  const startDirect = useCallback(async botId => {
-    try {
-      const id = await invoke("createChat", { kind: "direct", members: [botId] });
-      await refresh();
-      select(id);
-    } catch (e) { setError(errorText(e)); }
-  }, [refresh, select]);
+  async function finishDraft(chatId) {
+    try { await refresh(); } catch (e) { setError(errorText(e)); }
+    const here = currentPage.current === page && currentDraftId.current === chatId;
+    if (draftPages.current[draftKey]?.id === chatId) updateDraft(draftKey, null);
+    // Back/forward should open the saved conversation in place of its draft.
+    if (page !== "home") trail.current = trail.current.map(id => id === page ? chatId : id);
+    if (here) {
+      trail.current[historyPosition.current] = chatId;
+      visit(chatId);
+    }
+  }
+  const startDraft = useCallback(spec => {
+    const id = crypto.randomUUID();
+    const key = "draft:" + id;
+    updateDraft(key, { ...spec, id });
+    setError("");
+    select(key);
+  }, [select, updateDraft]);
+  const startDirect = useCallback(botId => startDraft({ kind: "direct", members: [botId] }), [startDraft]);
   const defaultBotId = homeBot?.id;
   const newChat = useCallback(projectId => {
     if (projectId) setDialog({ type: "chat", projectId });
@@ -198,12 +258,10 @@ export default function App() {
   async function finishWizard(botId) {
     setBusy(true);
     try {
-      let id = "home";
-      if (botId)
-        id = await invoke("createChat", { kind: "direct", members: [botId] });
       await invoke("finishOnboarding");
       await refresh();
-      select(id);
+      if (botId) startDirect(botId);
+      else select("home");
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -228,34 +286,26 @@ export default function App() {
   const wizard = ready && !state.onboarded;
   const chat = state.chats.find((c) => c.id === page);
   useEffect(() => { document.title = chat ? chat.name + " · BoTeam" : "BoTeam"; }, [chat?.name]);
-  const panelMembers = chat ? chat.members.map(id => state.bots.find(b => b.id === id)).filter(b => b && !b.archived)
-    : homeBot ? [homeBot] : [];
-  const workPage = ready && !wizard && Boolean(chat || page === "home");
-  const panelKey = chat?.id || "home:" + (homeBot?.id || "");
+  const panelMembers = (chat?.members || draft?.members || [])
+    .map(id => state.bots.find(b => b.id === id)).filter(b => b && !b.archived);
+  const workPage = ready && !wizard && Boolean(chat || draft || page === "home");
+  const panelKey = chat?.id || draft?.id || "home";
   const panelVisible = Boolean(workPage && panel?.key === panelKey && panel.visible);
-  const initialProjectId = chat ? chat.projectId : homeProjects[homeBot?.id];
+  const initialProjectId = chat ? chat.projectId : draft?.projectId;
   const project = state.projects.find(p => p.id === initialProjectId);
-  const panelCwd = chat ? chat.initialProjectCwd ?? null : project?.folders[0] || null;
+  const panelCwd = chat ? chat.initialProjectCwd ?? null : draft?.folder || project?.folders[0] || null;
   const panelScope = JSON.stringify([panelKey, panelCwd]);
-  const homeBotId = homeBot?.id;
-  const ensureHomeChat = useCallback(() => {
-    const key = JSON.stringify([homeBotId, initialProjectId || null]);
-    if (!homeChats.current.has(key)) {
-      const task = invoke("createChat", { kind: "direct", members: [homeBotId], projectId: initialProjectId })
-        .catch(error => { homeChats.current.delete(key); throw error; });
-      homeChats.current.set(key, task);
-    }
-    return homeChats.current.get(key);
-  }, [homeBotId, initialProjectId]);
-  const invokePanel = useCallback(async (method, payload) => {
-    if (!chat && initialProjectId)
-      return invoke(method, { ...payload, chatId: await ensureHomeChat() });
-    return invoke(method, payload);
-  }, [chat?.id, initialProjectId, ensureHomeChat]);
+  const invokeDraft = useCallback((method, payload) => invokeWithDraft(draft, method, payload), [draft]);
+  // Keep the terminal transport stable when a draft's UUID becomes the saved chat ID.
+  const invokePanel = useCallback((method, payload = {}) => {
+    const pending = draftPages.current["draft:" + payload.chatId] || draftPages.current["home:" + payload.botId];
+    return invokeWithDraft(pending?.id === payload.chatId ? pending : null, method, payload);
+  }, []);
   async function selectInitialProject(projectId) {
     setError("");
-    if (!chat) {
-      if (homeBot) setHomeProjects(current => ({ ...current, [homeBot.id]: projectId }));
+    if (draft) {
+      const previous = draftPages.current[draftKey];
+      if (previous?.id === draft.id) updateDraft(draftKey, { ...previous, projectId, folder: undefined });
       return;
     }
     setProjectBusy(true);
@@ -270,16 +320,16 @@ export default function App() {
     setProjectBusy(true);
     try {
       const folder = await invoke("pickDirectory");
-      if (folder && currentPage.current === page) {
+      if (folder && currentPage.current === page && (!draft || currentDraftId.current === draft.id)) {
         setDialog({ type: "project", initialFolder: folder,
           initialChat: chat && { chatId: chat.id, expectedProjectId: initialProjectId ?? null,
             expectedProjectCwd: chat.initialProjectCwd },
-          onCreated: !chat ? selectInitialProject : undefined });
+          onCreated: draft ? selectInitialProject : undefined });
       }
     } catch (e) { setError(errorText(e)); }
     finally { setProjectBusy(false); }
   }
-  const firstProject = (chat ? chat.canSelectInitialProject : homeBot) && {
+  const firstProject = (chat ? chat.canSelectInitialProject : draft) && {
     projectId: initialProjectId, onSelect: selectInitialProject, onCreate: createInitialProject, disabled: projectBusy,
   };
   function showPanel(request) {
@@ -293,13 +343,14 @@ export default function App() {
   const dialogAccount =
     dialog?.id && state.accounts.find((a) => a.id === dialog.id);
   const dialogProject = dialog?.id && state.projects.find(p => p.id === dialog.id);
+  const draftTitle = draft && !draft.legacyHome && (draft.name || (draft.kind === "group" ? "新群聊" : panelMembers[0]?.name));
   const pageTitle = wizard
     ? "初始设置"
     : page === "bots"
       ? "Bot 管理"
       : page === "accounts"
         ? "账号管理"
-        : chat?.name || "新对话";
+        : chat?.name || draftTitle || "新对话";
   return (
     <div className={`shell ${collapsed ? "sidebar-closed" : ""}`}>
       {!collapsed && (
@@ -337,19 +388,19 @@ export default function App() {
           )}
           <div className="window-title">{pageTitle}</div>
           <div className="header-actions">
-            {!wizard && chat?.kind === "group" && (
+            {!wizard && (chat || draft)?.kind === "group" && (
               <button
                 className="header-action"
-                onClick={() => setDialog({ type: "group", id: chat.id })}
+                onClick={() => setDialog({ type: chat ? "group" : "draftGroup", id: (chat || draft).id })}
                 aria-label="群聊设置"
                 title="群聊设置"
               >
                 <UsersRound size={15} />
-                {chat.members.length} 位成员
+                {(chat || draft).members.length} 位成员
               </button>
             )}
-            {workPage && <ChatToolbar key={panelKey} chat={chat} members={panelMembers} state={state}
-              invoke={invoke} draft={chat?.archived ? null : sourceDraft} pickSource={() => sourceControl.current?.pickFiles()} onChatMenu={actions.showMenu} onChatAction={actions.act}
+            {workPage && <ChatToolbar key={panelKey} chat={chat} draftChat={draft?.legacyHome ? null : draft} members={panelMembers} state={state}
+              invoke={draft ? invokeDraft : invoke} draft={chat?.archived ? null : sourceDraft} pickSource={() => sourceControl.current?.pickFiles()} onChatMenu={actions.showMenu} onChatAction={actions.act}
               menuOpen={actions.menu?.variant === "header"}
               workspaceVisible={panelVisible} toggleWorkspace={() => showPanel()} openWorkspace={showPanel} />}
           </div>
@@ -412,6 +463,7 @@ export default function App() {
             sourceControl={sourceControl}
             onDraftFiles={setSourceDraft}
             onOpenChat={finishChat}
+            onNewDraft={startDraft}
             key={chat.id}
             chat={chat}
             firstProject={firstProject}
@@ -420,13 +472,24 @@ export default function App() {
             open={setDialog}
           />
         ) : (
-          <Home state={state} invoke={invoke} open={setDialog} onChat={finishChat}
-            bot={homeBot} setSelection={chooseHomeBot} firstProject={firstProject} ensureChat={ensureHomeChat}
-            sourceControl={sourceControl} onDraftFiles={setSourceDraft}/>
+          <Home
+            key={panelKey}
+            draft={draft}
+            members={panelMembers}
+            firstProject={firstProject}
+            setSelection={page === "home" ? chooseHomeBot : undefined}
+            state={state}
+            invoke={invokeDraft}
+            open={setDialog}
+            onSent={finishDraft}
+            onNewDraft={startDraft}
+            sourceControl={sourceControl}
+            onDraftFiles={setSourceDraft}
+          />
         )}
       </main>
       {workPage && <WorkspacePanel key={panelScope} draftScope={panelScope} initialProjectCwd={panelCwd}
-        chatId={chat?.id} botId={panelMembers[0]?.id} bots={panelMembers}
+        chatId={chat?.id || draft?.id} botId={panelMembers[0]?.id} bots={panelMembers}
         visible={panelVisible} expanded={panelVisible && panel.expanded}
         request={panel?.key === panelKey ? panel.request : null} invoke={invokePanel}
         onClose={() => setPanel(previous => ({ ...previous, visible: false, expanded: false }))}
@@ -528,7 +591,7 @@ export default function App() {
       {dialog?.type === "removeBot" && dialogBot && (
         <RemoveBot bot={dialogBot} onClose={close} onDone={finishDialog} />
       )}
-      {(dialog?.type === "chat" || dialog?.type === "group") && (
+      {(dialog?.type === "chat" || dialog?.type === "group" || dialog?.type === "draftGroup") && (
         <ChatDialog
           kind={dialog.kind}
           initialProjectId={dialog.projectId}
@@ -536,11 +599,16 @@ export default function App() {
           chat={
             dialog.type === "group"
               ? state.chats.find((c) => c.id === dialog.id)
-              : undefined
+              : dialog.type === "draftGroup" && draft?.id === dialog.id ? { ...draft, name: draft.name || "新群聊" } : undefined
           }
           {...state}
           invoke={invoke}
           onDone={finishChat}
+          onNewDraft={startDraft}
+          onEditDraft={dialog.type === "draftGroup" ? changes => {
+            if (draftPages.current[draftKey]?.id === dialog.id) updateDraft(draftKey, { ...draft, ...changes });
+            close();
+          } : undefined}
           onClose={close}
           newBot={draft => setDialog({ type: "bot", returnTo: { ...dialog, ...draft } })}
         />

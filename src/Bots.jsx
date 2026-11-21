@@ -252,6 +252,8 @@ export function ChatDialog({
   initialProjectId,
   defaultBotId,
   invoke,
+  onNewDraft,
+  onEditDraft,
   onDone,
   onClose,
   newBot,
@@ -276,11 +278,16 @@ export function ChatDialog({
     setBusy(true);
     setError("");
     try {
-      const data = { members: selected, ...(chat && name.trim() !== originalName && { name: name.trim() }) };
-      const id = chat
-        ? await invoke("editGroup", { id: chat.id, ...data })
-        : await invoke("createChat", { kind: type, ...data, ...(project && { projectId }) });
-      await onDone(chat?.id || id);
+      if (chat) {
+        const changes = { members: selected, ...(name.trim() !== originalName && { name: name.trim() }) };
+        if (onEditDraft) onEditDraft(changes);
+        else {
+          await invoke("editGroup", { id: chat.id, ...changes });
+          await onDone(chat.id);
+        }
+      } else {
+        onNewDraft({ kind: type, members: selected, ...(project && { projectId }) });
+      }
     } catch (err) {
       setError(errorText(err));
     } finally {

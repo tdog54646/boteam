@@ -16,6 +16,7 @@ const noteName = '评审清单.md'
 const folderName = '设计备注'
 const noteText = '# 评审清单\n检查输入框的键盘操作和窄窗口布局。'
 const planPrompt = '请确认这次界面评审的计划。'
+const firstDraftMessage = '请在只读模式下检查日志。'
 const planQuestions = [
   { id: 'platform', question: '优先复核哪个平台？', options: [{label:'桌面端',description:'先检查桌面窗口'},{label:'移动端'}] },
   { id: 'scope', question: '希望怎样验收？', isOther:true, options:[{label:'使用默认清单'}] },
@@ -104,8 +105,13 @@ async function launchFixtureMain() {
         if (codex) windows.push({ minutes: 300, remainingPercent: 82, resetsAt: Date.now() + 2 * 3600_000 })
         return { scope: 'account', windows }
       },
-      async run({ account, bot, chatId, emit, attachments, extensionIds, planMode, goalObjective, ask, prompt, slashCommand, signal }) {
+      async run({ account, bot, chatId, emit, attachments, extensionIds, permission, planMode, goalObjective, ask, prompt, slashCommand, signal }) {
         emit({ type: 'identity', value: account.identity, key: account.identity })
+        if (prompt === firstDraftMessage) {
+          assert.equal(permission, 'read-only')
+          emit({ type: 'text', value: '首条任务已采用只读权限。' })
+          return
+        }
         if (prompt.endsWith('写出本周的验收阈值。') || prompt.endsWith('请检查这个阈值。')) {
           emit({ type: 'session', value: 'quote-' + chatId + '-' + bot.id })
           emit({ type: 'text', value: bot.id === first ? '连续五分钟超过 2% 时，请 @研究助手 复核。' : '阈值已复核。' })
@@ -639,10 +645,24 @@ async function verifySlash(page, expect, screenshots) {
   assert.equal((await read()).chats.length,beforeHome)
   await home.fill('/new')
   await home.press('Enter')
-  await expect(field).toBeVisible()
+  const newDraft = page.getByRole('textbox', { name: /^(新对话消息|消息内容)$/ })
+  await expect(newDraft).toHaveValue('')
+  const permission = page.getByRole('button', { name: '更改权限', exact: true })
+  await permission.click()
+  await page.getByRole('button', { name: '了解更多', exact: true }).click()
+  await page.getByRole('button', { name: '使用只读模式', exact: true }).click()
+  await expect(permission).toHaveText('只读')
+  assert.equal((await read()).chats.length, beforeHome)
+  await newDraft.fill(firstDraftMessage)
+  await newDraft.press('Enter')
+  await expect(page.getByRole('log')).toContainText('首条任务已采用只读权限。')
   const afterHome = await read()
   assert.equal(afterHome.chats.length, beforeHome + 1)
-  assert.ok(afterHome.chats.some(c => c.id !== 'engineering-chat' && c.kind === 'direct' && c.members.length === 1 && c.members[0] === first))
+  const newChat = afterHome.chats.find(c => !state.chats.some(previous => previous.id === c.id))
+  assert.deepEqual(newChat.members, [first])
+  assert.equal(newChat.kind, 'direct')
+  assert.deepEqual(afterHome.messages.filter(m => m.chatId === newChat.id && m.author === 'user').map(m => m.text), [firstDraftMessage])
+  assert.equal(afterHome.composerSettings.find(s => s.chatId === newChat.id && s.botId === first)?.permission, 'read-only')
   console.log('Slash palette passed for per-tool catalogs, stale responses, IME, outside click, native argument routing and ordinary paths.')
 }
 

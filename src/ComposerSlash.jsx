@@ -73,7 +73,7 @@ export function slashToken(text) {
   return /^\/([^\s/\\]*)(?:(\s)([\s\S]*))?$/u.exec(text.trimStart());
 }
 
-export function useComposerSlash({ text, target, chatId, invoke }) {
+export function useComposerSlash({ text, target, chatId, draft, invoke }) {
   const match = slashToken(text);
   const name = match?.[1] ?? "";
   const hasArguments = Boolean(match?.[2]);
@@ -83,7 +83,7 @@ export function useComposerSlash({ text, target, chatId, invoke }) {
   const [result, setResult] = useState(null);
   const [active, setActive] = useState(0);
   const key = JSON.stringify([
-    chatId,
+    chatId, draft?.id, draft?.projectId, draft?.folder,
     target?.id,
     target?.accountId,
     target?.cwd,
@@ -94,7 +94,7 @@ export function useComposerSlash({ text, target, chatId, invoke }) {
   useEffect(() => {
     if (!enabled) return;
     let current = true;
-    invoke("composerActions", { botId: target.id, ...(chatId && { chatId }) })
+    invoke("composerActions", { botId: target.id, ...(chatId && { chatId }), ...(draft && { draft }) })
       .then((data) => {
         if (current)
           setResult({

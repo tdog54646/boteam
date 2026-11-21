@@ -119,6 +119,10 @@ export class Database {
         chatId TEXT NOT NULL,botId TEXT NOT NULL,used INTEGER NOT NULL,
         "limit" INTEGER NOT NULL,model TEXT NOT NULL,updatedAt TEXT NOT NULL,PRIMARY KEY(chatId,botId)
       );
+      CREATE TABLE IF NOT EXISTS pending_chat_goals(
+        chatId TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,botId TEXT NOT NULL REFERENCES bots(id),
+        objective TEXT NOT NULL,PRIMARY KEY(chatId,botId)
+      );
       CREATE TABLE IF NOT EXISTS quota_usage(
         accountId TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,model TEXT NOT NULL,
         windows TEXT NOT NULL,updatedAt TEXT NOT NULL,PRIMARY KEY(accountId,model)
