@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url'
 const work = 'work@example.test'
 const personal = 'personal@example.test'
 const ghost = 'boteam-only@example.test'
-const threadId = '7adebc9f-a9a9-4aab-b5a3-c46d54c5472d'
 const fixtureState = email => JSON.stringify({ email, plan: 'Google AI Pro' })
 const paths = root => {
   const native = join(dirname(root), 'native')
@@ -100,10 +99,10 @@ async function addUnrelatedBinding(root) {
       JSON.stringify({email:ghost,source,origin:source,bin,status:'ready',plan:'pro',managed:true}),'')
     const account = db.get('SELECT * FROM accounts WHERE identity=?','google:' + work)
     const bot = db.get('SELECT * FROM bots WHERE accountId=?',account.id)
-    const chat = db.get('SELECT chatId FROM members WHERE botId=?',bot.id)
-    db.run('INSERT INTO threads VALUES(?,?,?,?,?)',chat.chatId,bot.id,account.id,threadId,root)
+    const thread = db.get('SELECT chatId,threadId FROM threads WHERE botId=? AND accountId=?', bot.id, account.id)
+    assert.ok(thread?.threadId, 'First message should have an associated native thread')
     await writeFile(join(JSON.parse(account.info).source,'session-canary'),'unchanged')
-    return { accountId:account.id, botId:bot.id, chatId:chat.chatId, source:JSON.parse(account.info).source }
+    return { accountId:account.id, botId:bot.id, ...thread, source:JSON.parse(account.info).source }
   } finally { db.db.close() }
 }
 
@@ -182,7 +181,13 @@ async function verify() {
     assert.equal(await readFile(join(desktop,'app_storage.json'),'utf8'),externalBefore)
     await page.getByPlaceholder('例如，代码助手').fill('项目助手')
     await page.getByRole('button',{name:'创建并开始聊天'}).click()
-    await expect(page.getByRole('textbox',{name:'消息内容'})).toBeVisible()
+    const draft = page.getByRole('textbox', { name: /^(新对话消息|消息内容)$/ })
+    await expect(draft).toBeVisible()
+    assert.equal(await dbRead(root, db => db.prepare('SELECT COUNT(*) AS n FROM chats').get().n), 0)
+    await draft.fill('验证首次订阅绑定。')
+    await draft.press('Enter')
+    await page.getByRole('button', { name: '拒绝', exact: true }).click()
+    await expect.poll(() => dbRead(root, db => db.prepare('SELECT status FROM tasks').get()?.status)).toBe('done')
     await app.close()
     const binding = await addUnrelatedBinding(root)
     await launch()
@@ -197,7 +202,7 @@ async function verify() {
     await dbRead(root,db => {
       assert.equal(db.prepare('SELECT id FROM accounts WHERE identity=?').get('google:' + work).id,binding.accountId)
       assert.equal(db.prepare('SELECT accountId FROM bots WHERE id=?').get(binding.botId).accountId,binding.accountId)
-      assert.equal(db.prepare('SELECT threadId FROM threads WHERE chatId=?').get(binding.chatId).threadId,threadId)
+      assert.equal(db.prepare('SELECT threadId FROM threads WHERE chatId=?').get(binding.chatId).threadId,binding.threadId)
     })
     // The real external desktop switched accounts. The previously bound accounts
     // only exist in BoTeam now and must disappear from the discovery list.

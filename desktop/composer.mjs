@@ -46,6 +46,13 @@ export class ComposerSettings {
   async set(p) {
     const { chatId, botId } = p
     const bot = this.member(chatId, botId)
+    const save = await this.prepare(p, bot)
+    this.db.transaction(() => save(chatId))
+    this.workspace.notify()
+    return this.read(chatId, bot)
+  }
+  async prepare(p, bot, draft) {
+    const chatId = p.chatId, botId = bot.id
     const account = this.db.account(bot.accountId)
     const hasModel = Object.hasOwn(p, 'model'),
       hasEffort = Object.hasOwn(p, 'effort')
@@ -61,11 +68,11 @@ export class ComposerSettings {
       )
     )
       throw new Error('此原生工具不支持所选权限模式。')
-    const previous = this.read(chatId, bot)
+    const previous = draft ? { ...bot, permission: 'default' } : this.read(chatId, bot)
     const planIsPermission = adapter.permissionModes?.includes('plan')
     if ((hasPlan && p.planMode && (!planIsPermission || adapter.composerActions)) ||
         p.permission === 'auto-review' || (p.permission === 'workspace-auto' && account.provider === 'antigravity')) {
-      const capabilities = await this.workspace.composerActions({ chatId, botId })
+      const capabilities = await this.workspace.composerActions({ chatId, botId, draft, refresh: true })
       if (hasPlan && p.planMode && !capabilities.plan) throw new Error('当前原生工具未提供计划模式。')
       if (p.permission === 'auto-review' && !capabilities.autoReview) throw new Error('当前原生工具未提供自动审批。')
       if (p.permission === 'workspace-auto' && account.provider === 'antigravity' && !capabilities.workspaceAuto)
@@ -74,11 +81,11 @@ export class ComposerSettings {
     const model = hasModel ? (p.model ?? bot.model) : previous.model
     const effort = hasEffort ? (p.effort ?? bot.effort) : previous.effort
     if (hasModel || hasEffort) {
-      const catalog = model || effort ? await this.workspace.botOptions(account.id, true) : {}
+      const catalog = model || effort ? await this.workspace.botOptions(account.id) : {}
       validateSelection(catalog, model, effort)
     }
-    this.member(chatId, botId)
-    this.db.transaction(() => {
+    return chatId => {
+      this.member(chatId, botId)
       this.db.run(
         'INSERT OR IGNORE INTO composer_settings(chatId,botId) VALUES(?,?)',
         chatId,
@@ -116,9 +123,7 @@ export class ComposerSettings {
             Number(p.planMode), chatId, botId)
         }
       }
-    })
-    this.workspace.notify()
-    return this.read(chatId, bot)
+    }
   }
   recordContext(chatId, botId, value) {
     if (
@@ -178,12 +183,17 @@ export class ComposerSettings {
     )
     return { accountId, model, scope: model ? 'model' : 'account', windows, updatedAt }
   }
-  async refresh({ chatId, botId }) {
+  async refresh({ chatId, botId, draftModel }) {
     const bot = chatId ? this.member(chatId, botId) : this.workspace.bot(botId)
     const account = this.db.account(bot.accountId)
     const adapter = this.workspace.adapters[account.provider]
     if (account.status !== 'ready' || !adapter.quota) return null
-    const model = (chatId ? this.read(chatId, bot).model : bot.model) || account.model || ''
+    let model = (chatId ? this.read(chatId, bot).model : bot.model) || account.model || ''
+    if (!chatId && draftModel !== undefined) {
+      const catalog = await this.workspace.botOptions(account.id)
+      validateSelection(catalog, draftModel, '')
+      model = draftModel || catalog.defaultModel || ''
+    }
     const key = JSON.stringify([account.id, account.identity, account.source, model])
     const inFlight = this.pendingQuota.get(key)
     if (inFlight) return inFlight

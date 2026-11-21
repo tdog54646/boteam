@@ -1,6 +1,13 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
+const argument = process.argv.find(value => value.startsWith('--boteam-chat='))
 contextBridge.exposeInMainWorld('boteam', {
+  initialChatId: argument?.slice('--boteam-chat='.length) || null,
+  onOpenChat(callback) {
+    const open = (_event, id) => callback(id)
+    ipcRenderer.on('workspace:openChat', open)
+    return () => ipcRenderer.removeListener('workspace:openChat', open)
+  },
   invoke(method, payload = {}) {
     return ipcRenderer.invoke('workspace:invoke', method, payload)
   },

@@ -142,7 +142,7 @@ async function selectedEntry(source, storeDir, protectedPaths) {
   return { name, kind: 'file', save: async destination => ({ size: await copyFileSnapshot(path, destination) }) }
 }
 
-function imageType(bytes) {
+export function imageType(bytes) {
   if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) return 'image/png'
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
   if (['GIF87a', 'GIF89a'].includes(bytes.toString('latin1', 0, 6))) return 'image/gif'
@@ -219,6 +219,7 @@ export class AttachmentStore {
     this.db = db
     mkdirSync(this.dir, { mode: 0o700, recursive: true })
     this.dir = realpathSync(this.dir)
+    db.run("DELETE FROM attachments WHERE messageId IS NULL AND scope LIKE 'draft:%'")
     // Recover an interrupted copy or removal. A draft for a removed bot has no composer.
     db.run(`DELETE FROM attachments WHERE messageId IS NULL AND scope LIKE 'home:%'
             AND NOT EXISTS (SELECT 1 FROM bots WHERE id=substr(attachments.scope,6) AND archived=0)`)
@@ -229,6 +230,8 @@ export class AttachmentStore {
   }
   validateScope(scope) {
     if (typeof scope !== 'string' || scope.length > 180) throw new Error('附件草稿无效。')
+    if (scope.startsWith('draft:') && uuid.test(scope.slice(6)) &&
+        !this.db.get('SELECT 1 FROM chats WHERE id=?', scope.slice(6))) return
     const valid = scope.startsWith('home:')
       ? this.db.get('SELECT 1 FROM bots WHERE id=? AND archived=0', scope.slice(5))
       : this.db.get('SELECT 1 FROM chats WHERE id=?', scope)
@@ -240,12 +243,18 @@ export class AttachmentStore {
       'SELECT a.id,name,size,kind,fileCount,skippedCount FROM attachments a LEFT JOIN attachment_folders USING(id) WHERE scope=? AND messageId IS NULL ORDER BY a.rowid', scope,
     ).map(({ fileCount, skippedCount, ...row }) => row.kind === 'folder' ? { ...row, fileCount, skippedCount } : row)
   }
+  visible(scope, id) {
+    if (typeof scope !== 'string' || !scope || typeof id !== 'string' || !uuid.test(id)) return null
+    return this.db.get(`SELECT a.* FROM attachments a
+      WHERE a.id=? AND
+      ((a.messageId IS NULL AND a.scope=?) OR EXISTS (
+        SELECT 1 FROM message_attachments ma JOIN messages m ON m.id=ma.messageId
+        WHERE ma.attachmentId=a.id AND m.chatId=?))`, id, scope, scope)
+  }
   async thumbnail(scope, id, makeThumbnail) {
-    if (!makeThumbnail || typeof scope !== 'string' || !uuid.test(id)) return null
-    const row = this.db.get(`SELECT a.* FROM attachments a LEFT JOIN messages m ON m.id=a.messageId
-      WHERE a.id=? AND a.kind='file' AND
-      ((a.messageId IS NULL AND a.scope=?) OR (a.messageId IS NOT NULL AND m.chatId=?))`, id, scope, scope)
-    if (!row) return null
+    if (!makeThumbnail) return null
+    const row = this.visible(scope, id)
+    if (row?.kind !== 'file') return null
     const path = join(this.dir, id, row.name)
     if (!inspectCopy(path, row, 0).mimeType.startsWith('image/')) return null
     return makeThumbnail(path)
@@ -311,10 +320,17 @@ export class AttachmentStore {
     if (typeof id !== 'string' || !uuid.test(id)) throw new Error('附件无效。')
     const result = this.db.run('DELETE FROM attachments WHERE scope=? AND id=? AND messageId IS NULL', scope, id)
     if (!result.changes) throw new Error('附件不在当前草稿中。')
-    await rm(join(this.dir, id), { recursive: true, force: true })
+    await this.discardSnapshots([id])
+  }
+  async discardSnapshots(ids) {
+    if (!ids.length) return
+    if (await realpath(this.dir) !== this.dir) throw new Error('附件目录已移动，无法清理本机快照。')
+    for (const id of ids) {
+      if (uuid.test(id)) await rm(join(this.dir, id), { recursive: true, force: true })
+    }
   }
   // Called inside the send transaction after its user message has been inserted.
-  claim({ chatId, homeBotId, messageId, ids = [] }) {
+  claim({ chatId, homeBotId, draftScope, messageId, ids = [] }) {
     if (!Array.isArray(ids) || ids.length > maxFiles || new Set(ids).size !== ids.length)
       throw new Error('附件列表无效。')
     const budget = { text: 32 * 1024 }
@@ -322,7 +338,8 @@ export class AttachmentStore {
     for (const id of ids) {
       if (typeof id !== 'string' || !uuid.test(id)) throw new Error('附件无效。')
       const row = this.db.get('SELECT * FROM attachments WHERE id=? AND messageId IS NULL', id)
-      if (!row || (row.scope !== chatId && (!homeBotId || row.scope !== 'home:' + homeBotId)))
+      if (!row || (draftScope ? row.scope !== draftScope :
+          row.scope !== chatId && (!homeBotId || row.scope !== 'home:' + homeBotId)))
         throw new Error('附件不在当前草稿中。')
       const path = join(this.dir, id, row.name)
       if (row.kind === 'folder') {

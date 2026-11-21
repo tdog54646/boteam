@@ -13,14 +13,15 @@ const statusLabels = {
 export function GoalDialog({
   bot,
   chatId,
-  ensureChat,
+  draftGoal,
+  onDraftSave,
   invoke,
   onClose,
   onStarted,
   initialObjective = "",
 }) {
-  const [existing, setExisting] = useState(null);
-  const [text, setText] = useState(initialObjective);
+  const [existing, setExisting] = useState(() => draftGoal ? { status: "paused", objective: draftGoal } : null);
+  const [text, setText] = useState(initialObjective || draftGoal || "");
   const [busy, setBusy] = useState(Boolean(chatId));
   const [error, setError] = useState("");
   const [ready, setReady] = useState(!chatId);
@@ -53,15 +54,16 @@ export function GoalDialog({
     setBusy(true);
     setError("");
     try {
-      const id = chatId || (await ensureChat());
-      await invoke("threadGoal", {
-        chatId: id,
+      const update = {
         botId: bot.id,
         action,
         ...(action === "set" ? { objective: text.trim(), status } : {}),
-      });
+      };
+      let id = chatId;
+      if (id) await invoke("threadGoal", { ...update, chatId: id });
+      else id = await onDraftSave(update);
       onClose();
-      if (status === "active") onStarted?.(id);
+      if (status === "active") await onStarted?.(id);
     } catch (e) {
       setError(errorText(e));
     } finally {

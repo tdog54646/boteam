@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { composerActions, detect, options, prepare, run } from '../desktop/adapters/claude.mjs'
+import { Workspace } from '../desktop/workspace.mjs'
 
 const session = 'ad455e90-d911-41a1-a9f2-7c276497c548'
 const email = 'member@example.com'
@@ -37,10 +38,10 @@ const models = [
     supportsEffort: true,
     supportedEffortLevels: ['low', 'high'],
   },
-  { value: 'b', resolvedModel: 'claude-b', displayName: 'B' },
+  { value: 'b[1m]', resolvedModel: 'claude-b', displayName: 'B' },
 ]
 
-async function fixture(t, status = oauth, account = live) {
+async function fixture(t, status = oauth, account = live, resultError = null) {
   const source = await mkdtemp(path.join(os.tmpdir(), 'boteam-claude-'))
   t.after(() => rm(source, { recursive: true, force: true }))
   const bin = path.join(source, 'fake-claude.mjs')
@@ -60,6 +61,12 @@ let model
 for await (const line of createInterface({input:process.stdin})) {
   const m = JSON.parse(line)
   if (m.type === 'control_request') {
+    if (m.request.subtype === 'generate_session_title') {
+      appendFileSync(process.env.CLAUDE_CONFIG_DIR + '/titles', JSON.stringify(m.request)+'\\n')
+      const unsupported = existsSync(process.env.CLAUDE_CONFIG_DIR + '/no-titles')
+      write({type:'control_response',response:{subtype:unsupported?'error':'success', request_id:m.request_id, response:{title:'Trace subscription usage'}}})
+      continue
+    }
     if (m.request.subtype === 'set_model') model = m.request.model
     const data = m.request.subtype === 'set_permission_mode' ? {mode:m.request.mode} : m.request.subtype === 'get_usage' ? {rate_limits_available:true,rate_limits:{five_hour:{utilization:10},seven_day:{utilization:49},seven_day_sonnet:{utilization:77}}} : m.request.subtype === 'get_context_usage' ? {totalTokens:901,maxTokens:100000,rawMaxTokens:120000,model:'claude-a'} : m.request.subtype === 'get_settings'
       ? {applied:{model:existsSync(process.env.CLAUDE_CONFIG_DIR + '/mismatch') ? 'different' : model || 'claude-a',effort:args.includes('--effort') ? args[args.indexOf('--effort')+1] : undefined}}
@@ -68,6 +75,10 @@ for await (const line of createInterface({input:process.stdin})) {
   } else if (m.type === 'user') {
     appendFileSync(process.env.CLAUDE_CONFIG_DIR + '/submitted', JSON.stringify({args,model,text:m.message.content,override:!!process.env.ANTHROPIC_API_KEY})+'\\n')
     write({type:'system',subtype:'init',session_id:session})
+    if (${JSON.stringify(resultError)} !== null) {
+      write({type:'result',subtype:'error_during_execution',is_error:true,errors:[${JSON.stringify(resultError)}],session_id:session})
+      continue
+    }
     write({type:'control_request',request_id:'ask1',request:{subtype:'can_use_tool',tool_name:'Bash',input:{command:'echo sk-ant-fake-private'}}})
   } else if (m.type === 'control_response') {
     const decision = m.response.response.behavior
@@ -82,6 +93,18 @@ for await (const line of createInterface({input:process.stdin})) {
   )
   return { source, bin, managed: true }
 }
+
+test('Claude diagnoses an oversized prompt without exposing its error text or misclassifying token auth', async t => {
+  for (const [reason, expected] of [
+    ['prompt is too long: 220000 tokens > 200000 maximum private-marker', /输入.*窗口/],
+    ['invalid token private-marker', /授权/],
+  ]) {
+    const f = await fixture(t, oauth, live, reason)
+    const account = { ...f, ...await detect(f) }
+    await assert.rejects(run({ account, bot: {}, cwd: f.source, prompt: 'request', emit() {} }),
+      error => expected.test(error.message) && !error.message.includes('private-marker'))
+  }
+})
 
 test('discovery returns verified subscription metadata only and preserves the native profile', async (t) => {
   const f = await fixture(t)
@@ -281,6 +304,14 @@ test('native account model choices and effort apply before submission for new an
   )
 })
 
+test('Claude rereads a changed profile model with a native context-window suffix', async (t) => {
+  const f = await fixture(t)
+  const account = { ...f, ...(await detect(f)) }
+  assert.equal((await options({ account })).defaultModel, 'claude-a')
+  await writeFile(path.join(f.source, 'settings.json'), JSON.stringify({ model: 'b[1m]' }))
+  assert.equal((await options({ account })).defaultModel, 'claude-b')
+})
+
 test('verified external profile retains stable identity but needs a private login before dispatch', async (t) => {
   const f = await fixture(t)
   const external = { ...f, managed: false }
@@ -404,4 +435,57 @@ test('native plan, scoped context and verified subscription usage use controls o
     [90, 23],
   )
   await assert.rejects(run({ ...task, permission: 'invalid' }), /权限/)
+})
+
+test('a group reply and an old quote reach the Claude CLI as one user message per request', async t => {
+  const f = await fixture(t)
+  const claude = { ...f, ...await detect(f) }
+  const options = { root: path.join(f.source, 'workspace'), adapters: {
+    claude: { run: scope => run({ ...scope, approve: async () => false }) },
+    codex: { async run({ emit }) {
+      emit({ type: 'identity', value: 'fixture' })
+      emit({ type: 'text', value: '定稿 K9-37：错误率超过 2% 持续五分钟。' })
+    } },
+  } }
+  let ws = new Workspace(options)
+  t.after(() => ws.close())
+  for (const [tool, metadata] of Object.entries({ claude, codex: { status: 'ready', identity: 'fixture' } })) {
+    ws.db.run('INSERT INTO accounts(id,provider,identity,info) VALUES(?,?,?,?)', tool, tool, metadata.identity, JSON.stringify(metadata))
+  }
+  const writer = await ws.handle('createBot', { accountId: 'codex', name: '作者' })
+  const reviewer = await ws.handle('createBot', { accountId: 'claude', name: '评审员' })
+  const chatId = await ws.handle('createChat', { kind: 'group', name: '验收群', members: [writer, reviewer] })
+  async function send(recipient, text, replyToMessageId) {
+    const id = await ws.handle('send', { chatId, recipients: [recipient], text, replyToMessageId })
+    await Promise.all(ws.lanes.values())
+    const task = ws.db.get('SELECT id,status,error FROM tasks WHERE messageId=?', id)
+    assert.equal(task.status, 'done', task.error)
+    return ws.db.get('SELECT * FROM messages WHERE taskId=?', task.id)
+  }
+  const original = await send(writer, '请制定一条规则')
+  await send(reviewer, '评审这条规则')
+  await ws.close()
+  ws = new Workspace(options)
+  await send(reviewer, '将引用的阈值降低一半', original.id)
+  const frames = (await readFile(path.join(f.source, 'submitted'), 'utf8')).trim().split('\n').map(JSON.parse)
+  assert.equal(frames.length, 2)
+  assert.ok(frames[0].text.includes(original.text) && frames[0].text.includes('作者'))
+  assert.ok(frames[1].text.includes(original.text) && frames[1].text.endsWith('将引用的阈值降低一半'))
+  assert.equal(frames[1].args[frames[1].args.indexOf('--resume') + 1], frames[0].args[frames[0].args.indexOf('--session-id') + 1])
+})
+
+test('Claude generates the first title through a native control and tolerates an older CLI', async t => {
+  const f = await fixture(t)
+  const account = { ...f, ...await detect(f) }
+  const description = 'Review subscription usage across two accounts and compare the reset times.'
+  for (const supported of [true, false]) {
+    if (!supported) await writeFile(path.join(f.source, 'no-titles'), '')
+    const events = []
+    await run({ account, cwd: f.source, prompt: 'request', titleRequest: () => description,
+      emit: event => events.push(event), approve: () => false })
+    assert.deepEqual(events.filter(e => e.type === 'title').map(e => e.value), supported ? ['Trace subscription usage'] : [])
+    assert.ok(events.some(e => e.type === 'text'))
+  }
+  const sent = (await readFile(path.join(f.source, 'titles'), 'utf8')).trim().split('\n').map(JSON.parse)
+  assert.deepEqual(sent, Array(2).fill({ subtype: 'generate_session_title', description, persist: false }))
 })

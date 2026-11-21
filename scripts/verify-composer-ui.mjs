@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
@@ -12,10 +12,14 @@ const first = 'implementation'
 const second = 'writing'
 const third = 'research'
 const project = '工作台设计评审'
+const commandProject = '原生命令验收项目'
+const commandDirectory = 'native-command-fixture'
+const commandError = '测试 CLI 暂时无法读取命令目录'
 const noteName = '评审清单.md'
 const folderName = '设计备注'
 const noteText = '# 评审清单\n检查输入框的键盘操作和窄窗口布局。'
 const planPrompt = '请确认这次界面评审的计划。'
+const firstDraftMessage = '请在只读模式下检查日志。'
 const planQuestions = [
   { id: 'platform', question: '优先复核哪个平台？', options: [{label:'桌面端',description:'先检查桌面窗口'},{label:'移动端'}] },
   { id: 'scope', question: '希望怎样验收？', isOther:true, options:[{label:'使用默认清单'}] },
@@ -44,13 +48,40 @@ async function launchFixtureMain() {
   const { codexCommands } = await import('../desktop/adapters/codex-slash.mjs')
   const { sessionSlashCommands } = await import('../desktop/adapters/antigravity-actions.mjs')
   const goals = new Map()
+  const commandReads = []
+  let failingChat = null, failingProject = false, failedReadGate
+  let teamworkAvailable = true
+  app.fixtureCommands = ({ errorChat, errorProject, teamwork, holdFailure }) => {
+    if (errorChat !== undefined) failingChat = errorChat
+    if (errorProject !== undefined) failingProject = errorProject
+    if (teamwork !== undefined) teamworkAvailable = teamwork
+    if (holdFailure === true) failedReadGate = Promise.withResolvers()
+    if (holdFailure === false) { failedReadGate?.resolve(); failedReadGate = null }
+    return commandReads
+  }
+  const modelReads = {}
+  let liveCodexCatalog = codexCatalog
+  let catalogError, catalogGate
+  app.fixtureModelCatalog = ({ catalog, error, paused }) => {
+    if (catalog) liveCodexCatalog = catalog
+    if (error !== undefined) catalogError = error
+    if (paused === true) catalogGate = Promise.withResolvers()
+    if (paused === false) { catalogGate?.resolve(); catalogGate = null }
+    return modelReads
+  }
   let cancelledQuestions = 0
   function adapter(provider) {
     const codex = provider === 'codex'
     return {
       permissionModes: codex ? ['default','auto-review','read-only','full'] : ['default','plan'],
-      async composerActions() {
+      async composerActions({ chatId, bot, cwd }) {
+        const inProject = basename(cwd) === commandDirectory
+        commandReads.push({ chatId, botId: bot.id, inProject })
         if (codex) await new Promise(resolve => setTimeout(resolve, 220))
+        if ((chatId && chatId === failingChat) || (inProject && failingProject)) {
+          if (failedReadGate) await failedReadGate.promise
+          throw new Error(commandError)
+        }
         const slashCommands = codex ? codexCommands(new Set([
           'mcpServerStatus/list', 'account/rateLimits/read', 'thread/compact/start', 'review/start',
           'model/list', 'thread/start', 'thread/read', 'thread/fork', 'collaborationMode/list', 'thread/goal/set', 'skills/list',
@@ -59,7 +90,8 @@ async function launchFixtureMain() {
              {name:'context',description:'Inspect context usage',action:'context'}]
           : sessionSlashCommands([{name:'plan',description:'Plan carefully before executing a task.'},
               {name:'goal',description:'Run until the specified goal is completely finished.'},
-              {name:'teamwork',description:'Invoke a team of agents to tackle large projects.',input:{hint:'任务'}}], true)
+              ...(teamworkAvailable ? [{name:'teamwork',description:'Invoke a team of agents to tackle large projects.',input:{hint:'任务'}}] : [])], true)
+        if (codex && inProject) slashCommands.push({ name:'project-check', description:'检查此项目', action:'prompt' })
         return { slashCommands, plan: true, goal: codex, autoReview: codex, ...(codex ? {} : {note:'部分原生功能列表当前不可用。'}), extensions: codex ? [
           { id: 'app-mail', kind: 'app', label: 'Outlook Email', description: 'Triage Outlook inboxes' },
           { id: 'plugin-design', kind: 'plugin', label: 'Figma', description: 'Create designs, ship to code' },
@@ -82,15 +114,31 @@ async function launchFixtureMain() {
         if (action === 'clear') goals.delete(threadId)
         return { threadId, goal: goals.get(threadId) || null }
       },
-      async options() { return codex ? codexCatalog : claudeCatalog },
+      async options({ account }) {
+        modelReads[account.id] = (modelReads[account.id] || 0) + 1
+        if (!codex) return claudeCatalog
+        if (catalogGate) await catalogGate.promise
+        if (catalogError) throw new Error(catalogError)
+        return liveCodexCatalog
+      },
       async quota() {
         const windows = [{ minutes: 10080, remainingPercent: 67, resetsAt: Date.now() + 4 * 86400_000 }]
         if (codex) windows.push({ minutes: 300, remainingPercent: 82, resetsAt: Date.now() + 2 * 3600_000 })
         return { scope: 'account', windows }
       },
-      async run({ account, bot, emit, attachments, extensionIds, planMode, goalObjective, ask, prompt, slashCommand, signal }) {
+      async run({ account, bot, chatId, emit, attachments, extensionIds, permission, planMode, goalObjective, ask, prompt, slashCommand, signal }) {
         emit({ type: 'identity', value: account.identity, key: account.identity })
-        if (prompt === '验证模型切换后的上下文') {
+        if (prompt === firstDraftMessage) {
+          assert.equal(permission, 'read-only')
+          emit({ type: 'text', value: '首条任务已采用只读权限。' })
+          return
+        }
+        if (prompt.endsWith('写出本周的验收阈值。') || prompt.endsWith('请检查这个阈值。')) {
+          emit({ type: 'session', value: 'quote-' + chatId + '-' + bot.id })
+          emit({ type: 'text', value: bot.id === first ? '连续五分钟超过 2% 时，请 @研究助手 复核。' : '阈值已复核。' })
+          return
+        }
+        if (prompt.endsWith('验证模型切换后的上下文')) {
           assert.equal(bot.model, 'basic')
           emit({ type: 'context', value: { model: bot.model, used: 1234, limit: 16000 } })
           emit({ type: 'text', value: '已更新用量。' })
@@ -102,6 +150,8 @@ async function launchFixtureMain() {
           return
         }
         if (prompt === '/tmp/notes.md' || prompt === '日志文件为 /tmp/notes.md') {
+          emit({ type:'tool', value:'子智能体 · 已完成', agent:{ id:'reader', name:'资料核对', status:'completed' } })
+          emit({ type:'tool', value:'搜索网页', source:{ title:'桌面端资料' } })
           emit({ type:'text', value:'普通文本已收到。' })
           return
         }
@@ -142,9 +192,15 @@ async function launchFixtureMain() {
       },
     }
   }
-  Workspace.prototype.handle = function(method, payload) {
-    Object.assign(this.adapters, { codex: adapter('codex'), claude: adapter('claude'), antigravity: adapter('antigravity') })
-    return original.call(this, method, payload)
+  const fixtures = Object.fromEntries(['codex', 'claude', 'antigravity'].map(provider => [provider, adapter(provider)]))
+  const warm = Workspace.prototype.warmModelCatalogs
+  Workspace.prototype.warmModelCatalogs = function() {
+    Object.assign(this.adapters, fixtures)
+    return warm.call(this)
+  }
+  Workspace.prototype.handle = function(...args) {
+    Object.assign(this.adapters, fixtures)
+    return original.apply(this, args)
   }
   dialog.showOpenDialog = async (_window, options) => {
     assert.ok(['openFile','openDirectory','multiSelections'].every(p => options.properties.includes(p)))
@@ -159,6 +215,9 @@ async function seed(root) {
   const db = new Database(root)
   try {
     db.run("INSERT INTO settings VALUES('onboarded','yes')")
+    await mkdir(join(root, commandDirectory))
+    db.run('INSERT INTO projects(id,name) VALUES(?,?)', 'command-project', commandProject)
+    db.run('INSERT INTO project_folders VALUES(?,?,?)', 'command-project', await realpath(join(root, commandDirectory)), 0)
     const people = [
       [first, 'codex', '工程助手', '项目账号', codexCatalog.defaultModel, codexCatalog.defaultEffort],
       [second, 'claude', '文案助手', '编辑账号', 'sonnet', 'medium'],
@@ -178,15 +237,17 @@ async function seed(root) {
     db.run('INSERT INTO chats VALUES(?,?,?,?)', 'engineering-chat', 'direct', '工程助手', stamp())
     db.run('INSERT INTO members VALUES(?,?)', 'engineering-chat', first)
     db.run('INSERT INTO threads VALUES(?,?,?,?,?)','engineering-chat',first,'account-'+first,'fixture-engineering',root)
-    db.run('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)', 'question', groupId, null, 'user', '我',
+    db.run('INSERT INTO chats VALUES(?,?,?,?)', 'writing-chat', 'direct', '文案助手', stamp())
+    db.run('INSERT INTO members VALUES(?,?)', 'writing-chat', second)
+    db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)', 'question', groupId, null, 'user', '我',
       '我们先看聊天输入框，窄窗口和键盘操作分别需要关注什么？', stamp(), JSON.stringify([first,second]), null)
-    db.run('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)', 'implementation-reply', groupId, first, 'bot', '工程助手',
+    db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)', 'implementation-reply', groupId, first, 'bot', '工程助手',
       '窄窗口下要把发送按钮留在视口内。模型名称可以缩短，附件仍需显示完整名称的悬停提示。', stamp(), '[]', null)
-    db.run('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)', 'writing-reply', groupId, second, 'bot', '文案助手',
+    db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)', 'writing-reply', groupId, second, 'bot', '文案助手',
       '我会检查键盘顺序，以及额度圆环在聚焦时能否读到剩余比例和重置时间。', stamp(), '[]', null)
-    db.run('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)', 'direct-question', 'engineering-chat', null, 'user', '我',
+    db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)', 'direct-question', 'engineering-chat', null, 'user', '我',
       '我们开始检查桌面输入框的权限、附件和键盘操作。', stamp(), JSON.stringify([first]), null)
-    db.run('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)', 'direct-answer', 'engineering-chat', first, 'bot', '工程助手',
+    db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)', 'direct-answer', 'engineering-chat', first, 'bot', '工程助手',
       '可以先选择批准方式，再用输入框左下角的加号添加文件和草图。', stamp(), '[]', null)
     await mkdir(join(root,folderName))
     await writeFile(join(root,folderName,'notes.md'), '快照中的文件夹')
@@ -225,8 +286,11 @@ async function capturePicker(page, ui, path) {
   await page.screenshot({ path, clip: { x, y, width: right - x, height: bottom - y }, animations: 'disabled' })
 }
 
-async function verifyDirectPicker(page, expect, screenshotDir) {
+async function verifyDirectPicker(page, expect, screenshotDir, catalogFixture) {
+  const readCount = async () => (await catalogFixture())['account-' + first]
+  const beforeEntry = await readCount()
   await page.getByTitle('工程助手', { exact: true }).click()
+  await expect.poll(readCount).toBe(beforeEntry + 1)
   const ui = picker(page)
   await ui.trigger.click()
   await expect(ui.card).toBeInViewport({ ratio: 1 })
@@ -279,6 +343,57 @@ async function verifyDirectPicker(page, expect, screenshotDir) {
   await page.keyboard.press('Escape')
   await expect(ui.card).toHaveCount(0)
   await expect(ui.trigger).toBeFocused()
+  const afterSelection = await readCount()
+  assert.equal(afterSelection, beforeEntry + 1, 'Model and effort selection must reuse the displayed catalog')
+  for (let repeat = 0; repeat < 2; repeat++) {
+    await ui.trigger.click()
+    await ui.model.click()
+    await expect(current).toBeEnabled()
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
+    await expect(ui.card).toHaveCount(0)
+  }
+  assert.equal(await readCount(), afterSelection, 'Opening either picker level must reuse the conversation catalog')
+
+  async function returnToChat(change) {
+    await page.getByTitle('文案助手', { exact: true }).click()
+    await expect(ui.trigger).toContainText('Sonnet')
+    const previousReads = await readCount()
+    await catalogFixture(change)
+    await page.getByTitle('工程助手', { exact: true }).click()
+    await expect.poll(readCount).toBe(previousReads + 1)
+  }
+  const next = { id: 'native-new', label: 'New native model', efforts: [] }
+  await returnToChat({ catalog: { defaultModel: next.id, models: [next] }, paused: true })
+  await ui.trigger.click()
+  await ui.model.click()
+  await expect(current).toBeEnabled()
+  await catalogFixture({ paused: false })
+  const latest = ui.menu.getByRole('menuitemradio', { name: next.label, exact: true })
+  await expect(latest).toBeEnabled()
+  await expect(ui.menu.getByText('已保存，当前未列出')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
+
+  const failure = '测试目录暂时不可用'
+  await returnToChat({ error: failure })
+  await ui.trigger.click()
+  await ui.model.click()
+  const retry = ui.menu.getByRole('button', { name: '重新读取' })
+  await expect(ui.menu).toContainText(failure)
+  await expect(latest).toBeEnabled()
+  const beforeRetry = await readCount()
+  await catalogFixture({ catalog: { models: [] }, error: null })
+  await retry.click()
+  await expect.poll(readCount).toBe(beforeRetry + 1)
+  await expect(ui.menu.getByText('原生工具未返回可选模型。')).toBeVisible()
+  await expect(latest).toHaveCount(0)
+  await catalogFixture({ catalog: codexCatalog })
+  await retry.click()
+  await expect(current).toBeEnabled()
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
+  await expect(ui.card).toHaveCount(0)
 }
 
 async function verifyActionMenus(page, expect, screenshotDir, resize) {
@@ -419,7 +534,55 @@ async function verifyNativeQuestions(page, expect) {
   await expect(submit).toHaveCount(0)
 }
 
-async function verifySlash(page, expect, screenshots) {
+async function verifyCommandCache(page, expect, fixture) {
+  const engineering = page.getByTitle('工程助手', { exact: true })
+  const field = page.getByRole('textbox', { name: '消息内容' })
+  const menu = page.locator('.slash-menu')
+  const mcp = menu.getByRole('option', { name: /MCP/ })
+  const count = async () => (await fixture()).filter(read => read.chatId === 'engineering-chat' && read.botId === first).length
+  const chatCount = () => page.evaluate(async () => (await window.boteam.invoke('snapshot')).chats.length)
+
+  const chats = await chatCount()
+  const beforeEntry = await count()
+  await engineering.click()
+  await expect.poll(count).toBe(beforeEntry + 1)
+  await field.fill('/')
+  await expect(mcp).toBeVisible()
+  for (const value of ['/mc', '', '/', '', '/']) {
+    await field.fill(value)
+    if (value) await expect(mcp).toBeVisible()
+    else await expect(menu).toHaveCount(0)
+  }
+  await field.fill('')
+  const permission = page.getByRole('button', { name: '更改权限', exact: true })
+  await permission.click()
+  await expect(page.getByRole('menuitemradio', { name: '帮我批准' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: '添加文件或内容', exact: true }).click()
+  await expect(page.getByRole('menuitem', { name: /^Figma/ })).toBeVisible()
+  await page.keyboard.press('Escape')
+  assert.equal(await count(), beforeEntry + 1, 'Slash, permissions and extensions must share one native read')
+
+  await page.getByTitle('文案助手', { exact: true }).click()
+  await fixture({ errorChat: 'engineering-chat', holdFailure: true })
+  try {
+    await engineering.click()
+    await field.fill('/')
+    await expect(mcp).toBeEnabled()
+  } finally { await fixture({ holdFailure: false }) }
+  await expect(menu).toContainText(commandError)
+  await expect(mcp).toBeEnabled()
+  const failed = await count()
+  await fixture({ errorChat: null })
+  await menu.getByRole('button', { name: '重试', exact: true }).click()
+  await expect(menu).not.toContainText(commandError)
+  await expect(mcp).toBeVisible()
+  await expect.poll(count).toBe(failed + 1)
+  await field.fill('')
+  assert.equal(await chatCount(), chats)
+}
+
+async function verifySlash(page, expect, screenshots, commandFixture) {
   const field = page.getByRole('textbox', {name:'消息内容'})
   const menu = page.locator('.slash-menu')
   const list = menu.getByRole('listbox')
@@ -472,6 +635,31 @@ async function verifySlash(page, expect, screenshots) {
   await expect(page.getByRole('log')).toContainText('普通文本已收到。')
   await expect(field).toHaveValue('')
 
+  const overview = page.getByRole('dialog', { name: '聊天概览' })
+  const overviewButton = page.getByRole('button', { name: '聊天概览', exact:true })
+  await overviewButton.click()
+  await overview.getByRole('button', { name: '1 个已完成' }).click()
+  await expect(overview.getByRole('button', { name: /资料核对/ })).toBeVisible()
+  await overview.getByRole('button', { name: '查看全部' }).click()
+  await overview.getByRole('searchbox').fill('桌面端')
+  await overview.getByRole('button', { name: '桌面端资料' }).click()
+  await expect(overview).toHaveCount(0)
+  await expect(page.locator('article:focus')).toContainText('/tmp/notes.md')
+  await overviewButton.click()
+  await expect(overview).toContainText('当前目录未使用 Git')
+  await overview.getByRole('button', { name: '当前目录未使用 Git' }).click()
+  const workspace = page.getByRole('complementary', { name:'右侧工作区' })
+  await expect(workspace.getByRole('tab', { name:'变更' })).toBeVisible()
+  await workspace.getByRole('button', { name:'关闭右侧工作区' }).click()
+  await page.getByRole('button', { name:'更多聊天操作' }).click()
+  await page.getByRole('menuitem', { name:'Fork chat' }).click()
+  await expect(origin).toBeVisible()
+  await expect(page.getByRole('log')).toContainText('普通文本已收到。')
+  await page.reload()
+  await expect(origin).toBeVisible()
+  await origin.click()
+  await expect(origin).toHaveCount(0)
+
   await page.getByTitle(project,{exact:true}).click()
   await page.getByRole('button',{name:'选择接收人',exact:true}).click()
   await page.getByRole('button',{name:/全体成员/}).click()
@@ -492,6 +680,14 @@ async function verifySlash(page, expect, screenshots) {
   await chooseMember.selectOption(third)
   await expect(list.getByRole('option',{name:/teamwork/})).toBeVisible()
   await expect(list.getByRole('option',{name:/summarize/})).toHaveCount(0)
+  const memberReads = async id => (await commandFixture()).filter(read => read.chatId === groupId && read.botId === id).length
+  const secondReads = await memberReads(second), thirdReads = await memberReads(third)
+  assert.ok(secondReads > 0 && thirdReads > 0)
+  await chooseMember.selectOption(second)
+  await expect(list.getByRole('option',{name:/summarize/})).toBeVisible()
+  await chooseMember.selectOption(third)
+  await expect(list.getByRole('option',{name:/teamwork/})).toBeVisible()
+  assert.deepEqual([await memberReads(second), await memberReads(third)], [secondReads, thirdReads])
   await page.emulateMedia({colorScheme:'dark'})
   await expect(page.getByRole('button',{name:'更换模型和思考强度'})).toContainText('研究助手')
   await capture('slash-antigravity-group.png')
@@ -499,6 +695,17 @@ async function verifySlash(page, expect, screenshots) {
   await page.locator('.window-title').click()
   await expect(menu).toHaveCount(0)
   await field.click()
+  await commandFixture({ teamwork: false })
+  const retired = '/teamwork 此命令已撤回'
+  const beforeRetired = await read()
+  await field.fill(retired)
+  await field.press('Enter')
+  await expect(page.getByRole('alert')).toContainText(/未提供可发送的此项命令/)
+  const rejected = await read()
+  assert.equal(rejected.messages.length, beforeRetired.messages.length)
+  assert.equal(rejected.tasks.length, beforeRetired.tasks.length)
+  assert.equal(await memberReads(third), thirdReads + 1, 'Sending must consult the current native command catalog')
+  await commandFixture({ teamwork: true })
   await field.fill('/tea')
   await expect(list.getByRole('option')).toHaveCount(1)
   await field.press('Tab')
@@ -513,7 +720,8 @@ async function verifySlash(page, expect, screenshots) {
   assert.deepEqual(sent.recipients,[third])
   assert.deepEqual(state.tasks.filter(t => t.messageId === sent.id).map(t => [t.botId,t.accountId,t.status]),[[third,'account-'+third,'done']])
   const beforeHome = (await read()).chats.length
-  await page.getByRole('button',{name:/新建对话/}).click()
+  await page.getByRole('button',{name:'切换工作台'}).click()
+  await page.getByRole('menuitemcheckbox',{name:'首页',exact:true}).click()
   const home = page.getByRole('textbox',{name:'新对话消息'})
   const homeMember = page.getByRole('combobox',{name:'选择接收 Bot'})
   await homeMember.selectOption(first)
@@ -521,6 +729,27 @@ async function verifySlash(page, expect, screenshots) {
   await expect(menu).toBeInViewport({ratio:1})
   await expect(list.getByRole('option',{name:/MCP/})).toBeVisible()
   assert.equal((await read()).chats.length,beforeHome)
+  const projectCommand = list.getByRole('option', { name: /project-check/ })
+  await expect(projectCommand).toHaveCount(0)
+  await home.fill('')
+  const projectSelector = page.getByRole('button', { name:'选择聊天项目', exact:true })
+  await commandFixture({ errorProject: true })
+  await projectSelector.click()
+  await page.getByRole('option', { name:commandProject, exact:true }).click()
+  await home.fill('/')
+  await expect(menu).toContainText(commandError)
+  await expect(list.getByRole('option')).toHaveCount(0)
+  await commandFixture({ errorProject: false })
+  await menu.getByRole('button', { name:'重试', exact:true }).click()
+  await expect(projectCommand).toBeVisible()
+  assert.ok((await commandFixture()).some(read => read.botId === first && read.inProject))
+  await home.fill('')
+  await projectSelector.click()
+  await page.getByRole('button', { name:'不在项目中工作', exact:true }).click()
+  await home.fill('/')
+  await expect(list.getByRole('option',{name:/MCP/})).toBeVisible()
+  await expect(projectCommand).toHaveCount(0)
+  assert.equal((await read()).chats.length, beforeHome)
   await home.fill('/fork')
   await home.press('Enter')
   await expect(page.getByText('请先在此聊天中完成一次原生对话，再创建分支。')).toBeVisible()
@@ -528,11 +757,119 @@ async function verifySlash(page, expect, screenshots) {
   assert.equal((await read()).chats.length,beforeHome)
   await home.fill('/new')
   await home.press('Enter')
-  await expect(field).toBeVisible()
+  const newDraft = page.getByRole('textbox', { name: /^(新对话消息|消息内容)$/ })
+  await expect(newDraft).toHaveValue('')
+  const permission = page.getByRole('button', { name: '更改权限', exact: true })
+  await permission.click()
+  await page.getByRole('button', { name: '了解更多', exact: true }).click()
+  await page.getByRole('button', { name: '使用只读模式', exact: true }).click()
+  await expect(permission).toHaveText('只读')
+  assert.equal((await read()).chats.length, beforeHome)
+  await newDraft.fill(firstDraftMessage)
+  await newDraft.press('Enter')
+  await expect(page.getByRole('log')).toContainText('首条任务已采用只读权限。')
   const afterHome = await read()
   assert.equal(afterHome.chats.length, beforeHome + 1)
-  assert.ok(afterHome.chats.some(c => c.id !== 'engineering-chat' && c.kind === 'direct' && c.members.length === 1 && c.members[0] === first))
+  const newChat = afterHome.chats.find(c => !state.chats.some(previous => previous.id === c.id))
+  assert.deepEqual(newChat.members, [first])
+  assert.equal(newChat.kind, 'direct')
+  assert.deepEqual(afterHome.messages.filter(m => m.chatId === newChat.id && m.author === 'user').map(m => m.text), [firstDraftMessage])
+  assert.equal(afterHome.composerSettings.find(s => s.chatId === newChat.id && s.botId === first)?.permission, 'read-only')
   console.log('Slash palette passed for per-tool catalogs, stale responses, IME, outside click, native argument routing and ordinary paths.')
+}
+
+async function verifyGroupQuotes(page, expect) {
+  const create = name => page.evaluate(payload => window.boteam.invoke('createChat', payload), {
+    kind: 'group', name, members: [first, second, third],
+  })
+  const chatId = await create('消息引用验收')
+  await create('另一讨论组')
+  const open = async title => {
+    await page.getByTitle(title, { exact: true }).click()
+    await expect(page.getByRole('region', { name: title, exact: true })).toBeVisible()
+  }
+  const button = name => page.getByRole('button', { name, exact: true })
+  const field = page.getByRole('textbox', { name: '消息内容' })
+  const log = page.getByRole('log')
+  const draft = page.getByRole('group', { name: '待发送引用' })
+  const read = () => page.evaluate(() => window.boteam.invoke('snapshot'))
+  await open('消息引用验收')
+  await button('选择接收人').click()
+  await page.getByRole('button', { name: /工程助手.*项目账号/ }).click()
+  await field.fill('写出本周的验收阈值。')
+  await field.press('Enter')
+  const original = log.getByRole('article').filter({ has: page.locator('.markdown').filter({ hasText: '连续五分钟超过 2%' }) })
+  const quote = original.getByRole('button', { name: '引用', exact: true })
+  await expect(original).toContainText('@研究助手')
+  await original.hover()
+  await expect(quote).toHaveCSS('opacity', '1')
+  await quote.click()
+  await expect(draft).toContainText('工程助手')
+  await expect(draft).toContainText('连续五分钟超过 2%')
+  await expect(button('发送消息')).toBeDisabled()
+  await open('另一讨论组')
+  await expect(draft).toHaveCount(0)
+  await open('消息引用验收')
+  await expect(draft).toContainText('连续五分钟超过 2%')
+  const user = log.getByRole('article').filter({ hasText: '写出本周的验收阈值。' })
+  await user.getByRole('button', { name: '引用', exact: true }).press('Enter')
+  await expect(draft).toContainText('写出本周的验收阈值。')
+  await button('移除引用').press('Enter')
+  await expect(draft).toHaveCount(0)
+  await quote.focus()
+  await expect(quote).toHaveCSS('opacity', '1')
+  await quote.press('Enter')
+  await expect(field).toBeFocused()
+  await expect(field).toHaveAccessibleDescription(/工程助手.*连续五分钟超过 2%/)
+  await button('添加文件或内容').click()
+  await page.getByRole('menuitem', { name: /^目标/ }).click()
+  const goal = page.getByRole('dialog', { name: '目标', exact: true })
+  await goal.getByRole('textbox').fill('单独验证原生目标')
+  await goal.getByRole('button', { name: '开始目标' }).click()
+  const goalReply = log.getByRole('article').filter({ hasText: '已收到持续目标。' })
+  await expect(goalReply).toBeVisible()
+  await expect(goalReply.getByRole('button', { name: '引用' })).toHaveCount(0)
+  await expect(draft).toContainText('连续五分钟超过 2%')
+  await button('选择接收人').click()
+  await page.getByRole('button', { name: /文案助手.*编辑账号/ }).click()
+  await field.fill('/summarize 复核')
+  await field.press('Enter')
+  await expect(page.getByText('请先移除引用，再执行快捷命令。')).toBeVisible()
+  await expect(draft).toContainText('工程助手')
+  await field.fill('请检查这个阈值。')
+  // Remove an attachment through IPC while its original composer is still open.
+  await button('添加文件或内容').click()
+  await page.getByRole('menuitem', { name: /^添加文本/ }).click()
+  await page.getByRole('textbox', { name: '文本内容' }).fill('用于验证失败后保留草稿')
+  await button('添加到消息').click()
+  await expect(button('移除附件 添加的文本.txt')).toBeVisible()
+  await page.evaluate(async scope => {
+    const [file] = await window.boteam.invoke('listAttachments', { scope })
+    await window.boteam.invoke('removeAttachment', { scope, id: file.id })
+  }, chatId)
+  await button('发送消息').click()
+  await expect(page.getByRole('alert')).toContainText('附件不在当前草稿中')
+  await expect(field).toHaveValue('请检查这个阈值。')
+  await expect(draft).toContainText('工程助手')
+  await open('另一讨论组')
+  await open('消息引用验收')
+  await expect(field).toHaveValue('请检查这个阈值。')
+  await expect(draft).toContainText('工程助手')
+  await button('发送消息').click()
+  await expect(draft).toHaveCount(0)
+  await expect(log).toContainText('阈值已复核。')
+  const state = await read()
+  const source = state.messages.find(m => m.chatId === chatId && m.text.startsWith('连续五分钟'))
+  const sent = state.messages.find(m => m.chatId === chatId && m.text === '请检查这个阈值。')
+  assert.equal(sent.replyToMessageId, source.id)
+  assert.deepEqual(sent.recipients, [second])
+  assert.deepEqual(state.tasks.filter(t => t.messageId === sent.id).map(t => t.botId), [second])
+  const link = page.getByRole('button', { name: /查看引用原文/ })
+  await expect(link).toContainText('工程助手')
+  await expect(link).toHaveAccessibleDescription(/工程助手.*连续五分钟超过 2%/)
+  await link.press('Enter')
+  await expect(original).toBeFocused()
+  console.log('Group quote checks passed for mouse and keyboard, drafts, slash controls, independent recipients and original-message navigation.')
 }
 
 async function verifyGroupPicker(page, expect, resize) {
@@ -654,7 +991,13 @@ async function verify() {
     await resize(1120, 760)
     const button = name => page.getByRole('button', { name, exact: true })
     const panel = name => page.getByRole('dialog', { name, exact: true })
-    await verifyDirectPicker(page, expect, pickerScreenshots)
+    const catalogFixture = (change = {}) => app.evaluate(({ app }, change) => app.fixtureModelCatalog(change), change)
+    const commandFixture = (change = {}) => app.evaluate(({ app }, change) => app.fixtureCommands(change), change)
+    await expect.poll(async () => Object.keys(await catalogFixture()).sort())
+      .toEqual([first, second, third].map(id => 'account-' + id).sort())
+    await verifyCommandCache(page, expect, commandFixture)
+    await verifyGroupQuotes(page, expect)
+    await verifyDirectPicker(page, expect, pickerScreenshots, catalogFixture)
     await verifyActionMenus(page, expect, menuScreenshots, resize)
     await verifyNativeQuestions(page, expect)
     await page.getByTitle(project, { exact: true }).click()
@@ -663,8 +1006,15 @@ async function verify() {
       await button('添加文件或内容').click()
       await panel('添加文件或内容').getByRole('menuitem', { name: menu }).click()
     }
-    await pick(/^文件和文件夹/)
+    await button('聊天概览').click()
+    await button('添加来源').click()
     await expect(button('移除附件 ' + noteName)).toBeVisible()
+    await button('聊天概览').click()
+    await panel('聊天概览').getByRole('button', { name: folderName, exact:true }).click()
+    const workspace = page.getByRole('complementary', { name:'右侧工作区' })
+    await workspace.getByRole('button', { name:'notes.md', exact:true }).click()
+    await expect(workspace).toContainText('快照中的文件夹')
+    await workspace.getByRole('button', { name:'关闭右侧工作区' }).click()
     await pick(/^添加文本/)
     await panel('添加文本').getByRole('textbox', { name: '文本内容' }).fill('请检查键盘的 Tab 顺序。')
     await button('添加到消息').click()
@@ -721,8 +1071,9 @@ async function verify() {
     await quota.click()
     await quotaPanel.getByRole('combobox').selectOption(first)
     await expect(quotaPanel).toContainText('82%')
-    await expect(quotaPanel).toContainText('内圈')
-    await expect(quotaPanel).toContainText('外圈')
+    await expect(quotaPanel).toContainText('5 小时')
+    await expect(quotaPanel).toContainText('每周')
+    await expect(quotaPanel).not.toContainText(/内圈|外圈/)
     await expect(quota.locator('svg g')).toHaveCount(2)
     await quotaPanel.getByRole('combobox').press('Escape')
     await button('上下文使用情况').focus()
@@ -773,7 +1124,7 @@ async function verify() {
     await restored.members.selectOption(second)
     await expect(restored.model).toContainText('Sonnet')
     await expect(restored.slider).toHaveValue(await restored.slider.getAttribute('max'))
-    await verifySlash(page, expect, slashScreenshots)
+    await verifySlash(page, expect, slashScreenshots, commandFixture)
     assert.deepEqual(errors, [])
     console.log('Electron composer checks passed with isolated local fixtures.')
   } finally {

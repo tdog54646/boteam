@@ -4,8 +4,13 @@ import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { invocation } from './antigravity-profile.mjs'
+import { inputWindowError } from './usage.mjs'
 
 function rpcError(error, method) {
+  if (method === 'session/prompt') {
+    const overflow = inputWindowError(error?.message)
+    if (overflow) return overflow
+  }
   if (error?.code === -32000 || /authenticat|unauthorized|sign in/i.test(error?.message))
     return Object.assign(new Error('Antigravity 原生登录已失效，请重新授权。'), {
       code: 'AGY_AUTH_REQUIRED',
@@ -117,7 +122,7 @@ export async function withAcp(profile, signal, handle, work) {
       waiter.resolve(msg.result)
     }
   })
-  const request = (method, params) => {
+  const request = (method, params, optionalTimeout) => {
     if (failure) return Promise.reject(failure)
     const id = ++seq
     return new Promise((resolve, reject) => {
@@ -125,7 +130,10 @@ export async function withAcp(profile, signal, handle, work) {
       const timer =
         method === 'session/prompt'
           ? null
-          : setTimeout(() => fail(new Error('Antigravity 原生请求超时。')), timeout)
+          : setTimeout(() => {
+            const error = new Error('Antigravity 原生请求超时。')
+            if (optionalTimeout) { pending.delete(id); reject(error) } else fail(error)
+          }, optionalTimeout || timeout)
       pending.set(id, { resolve, reject, timer, method })
       write({ id, method, params })
     })

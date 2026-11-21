@@ -13,6 +13,7 @@ import {
 import { stageFork, verifyFork } from './codex-fork.mjs'
 import { codexCommands, compactThread, installedMethods, mcpInfo } from './codex-slash.mjs'
 import { contextUsage, imageSnapshots, quotaWindow } from './usage.mjs'
+import { codexActivity } from './chat-activity.mjs'
 
 export const permissionModes = [
   'default',
@@ -406,7 +407,6 @@ const toolNames = {
   commandExecution: '执行命令',
   fileChange: '修改文件',
   mcpToolCall: '调用 MCP 工具',
-  webSearch: '搜索网页',
   imageView: '查看图片',
   dynamicToolCall: '调用原生工具',
 }
@@ -787,12 +787,12 @@ export async function slashInfo(scope, { name }) {
   })
 }
 
-export async function forkChat(scope, { destinationChatId }) {
+export async function forkChat(scope, { destinationChatId, destinationCwd = scope.cwd }) {
   if (!scope.threadId || !scope.bot?.id || !scope.chatId || !destinationChatId ||
       destinationChatId === scope.chatId)
     throw new Error('请选择已有原生历史的成员，并使用新的聊天创建分支。')
   const sourceScope = { ...scope, permission: 'read-only' }
-  const targetScope = { ...sourceScope, chatId: destinationChatId, threadId: null }
+  const targetScope = { ...sourceScope, chatId: destinationChatId, threadId: null, cwd: destinationCwd }
   const home = contextHome(scope.account.source, destinationChatId, scope.bot.id)
   await plainDir(scope.account.source)
   await plainDir(path.dirname(home), true)
@@ -821,7 +821,7 @@ export async function forkChat(scope, { destinationChatId }) {
       openThread(rpc, hints, targetScope, false, { parentId, path: staged }))
     const threadId = opened.thread.id
     // A separate process must resolve the child from its own durable store.
-    await withTaskSession(targetScope, rpc => verifyFork(rpc, { threadId, parentId, home }))
+    await withTaskSession(targetScope, rpc => verifyFork(rpc, { threadId, parentId, home, cwd: destinationCwd }))
     return { threadId, discard }
   } catch (error) {
     await discard()
@@ -937,6 +937,7 @@ export async function run(scope) {
         activeSession = active ? session : null
       }
       await scope.emit({ type: 'session', value: session })
+      if (scope.titleRequest?.() && opened.thread.name) await scope.emit({ type: 'title', value: opened.thread.name })
       await runTurns(rpc, scope, opened, {
         trackGoal,
         fields,
@@ -944,6 +945,12 @@ export async function run(scope) {
         collaboration,
         setGoalActive,
       })
+      // The server may persist the title at completion instead of notifying the running client.
+      if (scope.titleRequest?.()) {
+        const result = await rpc.request('thread/read', { threadId: session, includeTurns: false }, 1200).catch(() => null)
+        if (result?.thread?.id === session && result.thread.name)
+          await scope.emit({ type: 'title', value: result.thread.name })
+      }
     })
   } finally {
     // Aborting closes the child and its tool children immediately. Park an
@@ -972,6 +979,8 @@ async function runTurns(
     goalStatus,
     activationObserved = false
   const review = scope.slashCommand === 'review'
+  const publicReview = review && scope.publicReview
+  let finalReview
   if (review) {
     const instructions = prompt?.trim()
     const target = instructions ? { type: 'custom', instructions } : { type: 'uncommittedChanges' }
@@ -1009,7 +1018,8 @@ async function runTurns(
   const sent = new Map()
   const changedFiles = new Map()
   const append = (id, delta) => {
-    if (!delta) return
+    // A group review publishes the native findings after the turn succeeds.
+    if (!delta || publicReview) return
     sent.set(id, (sent.get(id) || '') + delta)
     emit({ type: 'text', value: delta })
   }
@@ -1047,6 +1057,10 @@ async function runTurns(
       continue
     }
     if (p.threadId !== session) continue
+    if (msg.method === 'thread/name/updated') {
+      if (scope.titleRequest?.() && p.threadName) await emit({ type: 'title', value: p.threadName })
+      continue
+    }
     if (msg.method === 'thread/goal/updated' || msg.method === 'thread/goal/cleared') {
       const goal = checkedGoal(p.goal, session)
       // Resume can queue the previous, parked snapshot ahead of the activation
@@ -1075,8 +1089,9 @@ async function runTurns(
       const items = msg.method === 'item/completed' ? [p.item] :
         msg.method === 'turn/completed' ? p.turn.items || [] : []
       for (const item of items) {
-        if (item?.type === 'exitedReviewMode' && typeof item.review === 'string' &&
-            ![...sent.values()].includes(item.review)) append(item.id, item.review)
+        if (item?.type !== 'exitedReviewMode' || typeof item.review !== 'string') continue
+        if (publicReview) finalReview = item.review
+        else if (![...sent.values()].includes(item.review)) append(item.id, item.review)
       }
     }
     if (msg.method === 'item/autoApprovalReview/completed') {
@@ -1105,6 +1120,9 @@ async function runTurns(
       if (typeof full === 'string' && full.startsWith(previous))
         append(p.item.id, full.slice(previous.length))
     }
+    if (msg.method === 'item/started' || msg.method === 'item/completed') {
+      for (const activity of codexActivity(p.item, msg.method === 'item/completed')) await emit(activity)
+    }
     if (msg.method === 'item/started' && Object.hasOwn(toolNames, p.item?.type)) {
       const item = p.item
       let summary = toolNames[item.type]
@@ -1118,7 +1136,11 @@ async function runTurns(
     }
     if (msg.method === 'turn/completed') {
       if (p.turn.status === 'interrupted') throw new Error('Codex 任务已中断。')
-      if (p.turn.status !== 'completed') throw nativeError(p.turn.error?.message)
+      if (p.turn.status !== 'completed') throw nativeError(p.turn.error?.message, p.turn.error?.codexErrorInfo)
+      if (publicReview) {
+        if (!finalReview?.trim()) throw new Error('Codex 未返回可在群中发布的最终审查结果。')
+        await emit({ type: 'text', value: finalReview })
+      }
       if (!trackGoal || goalStatus !== 'active') return
       turn = null
     }

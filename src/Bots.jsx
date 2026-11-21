@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { FolderOpen, MessageSquare, MoreHorizontal, Plus } from "lucide-react";
 import {
   accountLabel,
@@ -17,6 +17,7 @@ import {
   Status,
 } from "./ui";
 import { NativeModelPicker } from "./NativeModelPicker";
+import { useModelCatalog } from "./useModelCatalog";
 import "./settings.css";
 
 export function BotForm({
@@ -41,29 +42,11 @@ export function BotForm({
   const [cwd, setCwd] = useState(initial?.cwd || "");
   const [model, setModel] = useState(initial?.model || "");
   const [effort, setEffort] = useState(initial?.effort || "");
-  const [catalog, setCatalog] = useState(null);
-  const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const account = accounts.find((a) => a.id === accountId);
-  useEffect(() => {
-    if (!accountId) return;
-    let active = true;
-    invoke("botOptions", { accountId })
-      .then((result) => {
-        if (active) setCatalog(result);
-      })
-      .catch((err) => {
-        if (active) setCatalog({ reason: errorText(err) });
-      });
-    return () => {
-      active = false;
-    };
-  }, [invoke, accountId, attempt]);
-
-  const loading = Boolean(accountId && !catalog);
+  const { catalog, loading, refresh } = useModelCatalog(account, invoke);
   function changeAccount(id) {
-    setCatalog(null);
     setAccountId(id);
     setModel("");
     setEffort("");
@@ -134,7 +117,7 @@ export function BotForm({
           effort={effort}
           loading={loading}
           busy={busy || pending}
-          retry={() => { setCatalog(null); setAttempt((value) => value + 1); }}
+          refresh={refresh}
           onChange={(patch) => {
             if (patch.model !== undefined) setModel(patch.model);
             if (patch.effort !== undefined) setEffort(patch.effort);
@@ -265,17 +248,25 @@ export function ChatDialog({
   chat,
   bots,
   accounts,
+  projects = [],
+  initialProjectId,
+  defaultBotId,
   invoke,
+  onNewDraft,
+  onEditDraft,
   onDone,
   onClose,
   newBot,
 }) {
   const [type, setType] = useState(chat?.kind || kind || "direct");
   const [name, setName] = useState(chat?.name || "");
+  const [originalName] = useState(chat?.name);
+  const [projectId, setProjectId] = useState(initialProjectId || "");
+  const project = projects.find(p => p.id === projectId);
   const [selected, setSelected] = useState(
     chat?.members?.filter((id) =>
       bots.some((b) => b.id === id && !b.archived),
-    ) || [],
+    ) || (kind !== "group" && defaultBotId ? [defaultBotId] : []),
   );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -283,15 +274,20 @@ export function ChatDialog({
   const group = type === "group";
   async function save(e) {
     e.preventDefault();
-    if (!selected.length || (group && !name.trim())) return;
+    if (busy || !selected.length || (chat && !name.trim()) || (projectId && !project)) return;
     setBusy(true);
     setError("");
     try {
-      const data = { name: group ? name.trim() : undefined, members: selected };
-      const id = chat
-        ? await invoke("editGroup", { id: chat.id, ...data })
-        : await invoke("createChat", { kind: type, ...data });
-      await onDone(chat?.id || id);
+      if (chat) {
+        const changes = { members: selected, ...(name.trim() !== originalName && { name: name.trim() }) };
+        if (onEditDraft) onEditDraft(changes);
+        else {
+          await invoke("editGroup", { id: chat.id, ...changes });
+          await onDone(chat.id);
+        }
+      } else {
+        onNewDraft({ kind: type, members: selected, ...(project && { projectId }) });
+      }
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -299,7 +295,7 @@ export function ChatDialog({
     }
   }
   return (
-    <Modal title={chat ? "群聊设置" : "新建对话"} onClose={onClose}>
+    <Modal title={chat ? "群聊设置" : "新建对话"} onClose={() => { if (!busy) onClose(); }}>
       <form onSubmit={save}>
         {!chat && (
           <div className="segmented" role="group" aria-label="对话类型">
@@ -310,6 +306,7 @@ export function ChatDialog({
               <button
                 type="button"
                 key={v}
+                data-autofocus={type === v || undefined}
                 aria-pressed={type === v}
                 onClick={() => {
                   setType(v);
@@ -321,12 +318,18 @@ export function ChatDialog({
             ))}
           </div>
         )}
-        {group && (
+        {!chat && (projects.length > 0 || projectId) && <Field label="项目">
+          <Select value={projectId} onChange={e => setProjectId(e.target.value)}>
+            <option value="">不加入项目</option>
+            {projectId && !project && <option value={projectId} disabled>项目已移除</option>}
+            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </Select>
+        </Field>}
+        {chat && (
           <Field label="群聊名称">
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="为这个群聊命名"
               required
               maxLength={120}
             />
@@ -346,7 +349,7 @@ export function ChatDialog({
             <div className="settings-group">
               <div className="settings-row">
                 <p>先创建一个 Bot，即可开始对话。</p>
-                <Button icon={Plus} onClick={newBot}>
+                <Button icon={Plus} onClick={() => newBot({ kind: type, projectId })}>
                   创建 Bot
                 </Button>
               </div>
@@ -355,11 +358,11 @@ export function ChatDialog({
         </div>
         <Notice>{error}</Notice>
         <div className="form-actions">
-          <Button onClick={onClose}>取消</Button>
+          <Button disabled={busy} onClick={onClose}>取消</Button>
           <Button
             type="submit"
             variant="primary"
-            disabled={!selected.length || (group && !name.trim())}
+            disabled={!selected.length || (chat && !name.trim()) || (projectId && !project)}
             busy={busy}
           >
             {chat ? "保存修改" : group ? "创建群聊" : "开始私聊"}

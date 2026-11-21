@@ -59,7 +59,7 @@ if (args.includes('/usage')) {
         category: 'model',
         type: 'select',
         currentValue: s.model,
-        options: [
+        options: state.modelOptions || [
           { value: 'gemini-pro', name: 'Gemini Pro' },
           { value: 'gemini-flash', name: 'Gemini Flash' },
         ],
@@ -98,7 +98,7 @@ if (args.includes('/usage')) {
         agentCapabilities: {
           loadSession: true,
           promptCapabilities: { image: true },
-          sessionCapabilities: { ...(state.loadOnly ? {} : { resume: {} }), close: {} },
+          sessionCapabilities: { ...(state.loadOnly ? {} : { resume: {} }), ...(state.listTitle && { list: {} }), close: {} },
         },
         authMethods: [{ id: 'oauth-personal' }],
       }
@@ -145,7 +145,7 @@ if (args.includes('/usage')) {
       const current =
         method !== 'session/new'
           ? { model: 'gemini-flash', effort: 'low', mode: 'accept-edits' }
-          : { model: 'gemini-pro', effort: 'high' }
+          : (state.initialSession || { model: 'gemini-pro', effort: 'high' })
       sessions.set(sessionId, current)
       if (state.commands) setTimeout(() => send({
         method: 'session/update', params: { sessionId,
@@ -166,9 +166,19 @@ if (args.includes('/usage')) {
       else session.effort = params.value
       reply = { configOptions: config(session) }
     }
+    if (method === 'session/list') {
+      reply = { sessions: [{ sessionId: 'foreign', title: 'foreign' },
+        ...Array.from(sessions.keys(), sessionId => ({ sessionId, title: state.listTitle }))] }
+    }
     if (method === 'session/prompt') {
+      if (state.eventTitle) for (const [sessionId, title] of [['foreign', 'foreign'], [params.sessionId, state.eventTitle]])
+        send({ method: 'session/update', params: { sessionId, update: { sessionUpdate: 'session_info_update', title } } })
       promptId = id
       save({ method, params, ...session })
+      if (state.promptError || state.stopReason) {
+        send(state.promptError ? { id, error: state.promptError } : { id, result: { stopReason: state.stopReason } })
+        return
+      }
       send({
         method: 'session/update',
         params: {

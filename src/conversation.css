@@ -36,6 +36,70 @@
   overflow-wrap: anywhere;
 }
 
+.message:focus {
+  outline: 2px solid var(--line-strong);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+.quote-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  margin-top: 3px;
+  padding-inline: 5px;
+  color: var(--muted);
+  border-radius: 5px;
+  font-size: 12px;
+}
+.user-message > .quote-action {
+  margin-inline-start: auto;
+}
+@media (hover: hover) {
+  .message:not(:hover, :focus-within) .quote-action {
+    opacity: 0;
+  }
+}
+.quote-action:hover,
+.sent-quote:hover {
+  background: var(--hover);
+}
+.quote-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 9px;
+  border-inline-start: 2px solid var(--subtle);
+  border-radius: 3px;
+  color: var(--muted);
+  background: var(--hover);
+  text-align: start;
+  white-space: normal;
+}
+.draft-quote {
+  margin: 0 5px 10px;
+}
+.quote-summary {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.quote-summary > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sent-quote {
+  width: 100%;
+  margin-block: 3px 5px;
+  background: transparent;
+}
+
 .user-bubble {
   width: fit-content;
   max-width: 85%;
@@ -296,6 +360,13 @@
   position: relative;
   width: min(100%, var(--thread-width, 768px));
   margin-inline: auto;
+}
+.composer-project-row {
+  margin: 0 12px;
+  padding: 4px 6px 6px;
+  border-radius: 12px 12px 0 0;
+  background: var(--hover);
+  text-align: start;
 }
 .composer {
   display: flex;

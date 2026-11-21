@@ -14,7 +14,7 @@ async function fixture(t) {
   for (const chatId of ['first', 'second']) {
     db.run('INSERT INTO chats VALUES(?,?,?,?)', chatId, 'direct', '聊天', '')
     db.run('INSERT INTO members VALUES(?,?)', chatId, 'b')
-    db.run("INSERT INTO messages VALUES(?, ?,NULL,'user','我','','','[]',NULL)", chatId + '-msg', chatId)
+    db.run("INSERT INTO messages(id,chatId,author,name,text,createdAt,recipients) VALUES(?,?,'user','我','','','[]')", chatId + '-msg', chatId)
   }
   t.after(async () => {
     db.db.close()

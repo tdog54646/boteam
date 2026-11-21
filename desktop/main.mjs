@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell } from 'electron'
+import electron, { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell } from 'electron'
+import { writeFile } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import * as codex from './adapters/codex.mjs'
@@ -6,6 +7,10 @@ import * as claude from './adapters/claude.mjs'
 import * as antigravity from './adapters/antigravity.mjs'
 import { discoverySources, locate, redact } from './native.mjs'
 import { Workspace } from './workspace.mjs'
+import { configurePanelBrowser } from './panel-browser.mjs'
+import { PanelTerminals } from './panel-terminals.mjs'
+import { chatText, linkedChatId, requireChat } from './chat-transfer.mjs'
+import { chatOpenTargets, openChatDirectory } from './chat-open-targets.mjs'
 import { installAntigravityCli } from './antigravity-install.mjs'
 
 const dir = dirname(fileURLToPath(import.meta.url))
@@ -13,9 +18,19 @@ const page = pathToFileURL(join(dir, '../dist/index.html')).href
 app.setName('BoTeam')
 if (!app.requestSingleInstanceLock()) app.quit()
 else {
-  let window, workspace, refresh
-  function openWindow() {
-    window = new BrowserWindow({
+  let workspace, refresh
+  const windows = new Map()
+  const pendingLinks = []
+  const currentWindow = () => BrowserWindow.getFocusedWindow() || windows.values().next().value?.window
+
+  function focus(window) {
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+  }
+
+  function openWindow(initialChatId = null) {
+    const window = new BrowserWindow({
       width: 1260,
       height: 840,
       minWidth: 800,
@@ -26,19 +41,28 @@ else {
       trafficLightPosition: { x: 14, y: 15 },
       webPreferences: {
         preload: join(dir, 'preload.cjs'),
+        additionalArguments: initialChatId ? ['--boteam-chat=' + initialChatId] : [],
         sandbox: true,
         contextIsolation: true,
+        webviewTag: true,
         nodeIntegration: false,
       },
     })
+    const contents = window.webContents
+    const context = { window, initialChatId, terminals: new PanelTerminals() }
+    windows.set(contents, context)
+    configurePanelBrowser(contents)
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', (event, url) => {
       if (url !== page) event.preventDefault()
     })
-    // A reloaded or crashed renderer cannot dismiss its pending native login.
-    const cancelWindowLogins = () => workspace.accounts.cancelAllLogins()
-    window.webContents.on('did-navigate', cancelWindowLogins)
-    window.webContents.on('render-process-gone', cancelWindowLogins)
+    // Release native sessions owned by a closed, reloaded or crashed renderer.
+    const resetRenderer = () => {
+      workspace.accounts.cancelAllLogins(window)
+      context.terminals.close()
+    }
+    window.webContents.on('did-navigate', resetRenderer)
+    window.webContents.on('render-process-gone', resetRenderer)
     window.webContents.session.setPermissionRequestHandler((_wc, _permission, done) => done(false))
     window.webContents.session.webRequest.onBeforeSendHeaders(
       { urls: ['http://*/*', 'https://*/*'] },
@@ -46,21 +70,45 @@ else {
     )
     window.loadURL(page)
     window.on('closed', () => {
-      cancelWindowLogins()
-      window = null
+      resetRenderer()
+      windows.delete(contents)
     })
+    return window
   }
-  app.on('second-instance', () => {
-    if (!window && workspace) openWindow()
-    window?.restore()
-    window?.focus()
+
+  function openLink(url) {
+    const id = linkedChatId(url)
+    if (!id) throw new Error('这不是有效的 BoTeam 聊天链接。')
+    requireChat(workspace.db, id)
+    const target = [...windows.values()].find(entry => entry.initialChatId === id)
+    if (target) {
+      focus(target.window)
+      target.window.webContents.send('workspace:openChat', id)
+    } else openWindow(id)
+  }
+
+  function incomingLink(url) {
+    if (!workspace) { pendingLinks.push(url); return }
+    try { openLink(url) } catch (error) {
+      const owner = currentWindow() || openWindow()
+      void dialog.showMessageBox(owner, { type: 'info', message: error.message })
+    }
+  }
+  const linkArgument = args => args.find(arg => /^boteam:/i.test(arg))
+  const startupLink = linkArgument(process.argv)
+  if (startupLink) pendingLinks.push(startupLink)
+  app.on('open-url', (event, url) => { event.preventDefault(); incomingLink(url) })
+  app.on('second-instance', (_event, argv) => {
+    const url = linkArgument(argv)
+    if (url) incomingLink(url)
+    else if (workspace) focus(currentWindow() || openWindow())
   })
   app.whenReady().then(async () => {
     const notify = () => {
       if (!refresh)
         refresh = setTimeout(() => {
           refresh = null
-          if (window && !window.isDestroyed()) window.webContents.send('workspace:changed')
+          for (const contents of windows.keys()) if (!contents.isDestroyed()) contents.send('workspace:changed')
         }, 35)
     }
     workspace = new Workspace({
@@ -68,6 +116,8 @@ else {
       codexExecutable: (await locate('codex')).bin,
       adapters: { codex, claude, antigravity },
       notify,
+      onChatDeleted(id) { for (const context of windows.values()) context.terminals.closeChat(id) },
+      hasWindowChatTerminal: id => Array.from(windows.values()).some(context => context.terminals.hasLiveChat(id)),
       locate: (provider, source) => locate(provider, source, { userData: app.getPath('userData') }),
       discoverySources,
       installAntigravityCli: signal => installAntigravityCli({ signal }),
@@ -77,7 +127,9 @@ else {
         return image && !image.isEmpty() ? image.toDataURL() : null
       },
       openAntigravityInstall: () => shell.openExternal('https://antigravity.google/docs/getting-started/#download-and-install'),
-      async pickFiles() {
+      openProjectDirectory: directory => openChatDirectory('finder', directory, shell),
+      revealProjectDirectory: directory => shell.showItemInFolder(directory),
+      async pickFiles(window) {
         const result = await dialog.showOpenDialog(window, {
           properties: process.platform === 'darwin'
             ? ['openFile', 'openDirectory', 'multiSelections', 'noResolveAliases']
@@ -87,7 +139,7 @@ else {
         })
         return result.canceled ? [] : result.filePaths
       },
-      async pickDirectory() {
+      async pickDirectory(window) {
         const result = await dialog.showOpenDialog(window, {
           properties: ['openDirectory', 'showHiddenFiles'],
           buttonLabel: '选择文件夹',
@@ -113,23 +165,51 @@ else {
       },
     })
     const localHandler = (action) => async (event, ...args) => {
+      const context = windows.get(event.sender)
       if (
-        !window ||
-        event.sender !== window.webContents ||
-        event.senderFrame !== window.webContents.mainFrame ||
+        !context ||
+        event.senderFrame !== event.sender.mainFrame ||
         event.senderFrame.url !== page
       )
         throw new Error('只允许本地工作台发起请求。')
       try {
         if (workspace.closed) throw new Error('工作台正在关闭。')
-        return await action(...args)
+        return await action(context, ...args)
       } catch (error) {
         throw new Error(redact(error.message || '操作失败。').slice(0, 1400))
       }
     }
-    ipcMain.handle('workspace:invoke', localHandler((method, payload) => workspace.handle(method, payload)))
+    ipcMain.handle('workspace:invoke', localHandler(async (context, method, payload = {}) => {
+      if (method === 'chatOpenTargets') return chatOpenTargets()
+      if (method === 'openChatLink') return openLink(payload.url)
+      if (!['openChatWindow', 'showChatDirectory', 'openChatDirectory', 'copyChat', 'shareChat'].includes(method))
+        return workspace.handle(method, payload, context)
+      const chat = requireChat(workspace.db, payload.chatId)
+      if (method === 'openChatWindow') { openWindow(chat.id); return }
+      if (method === 'showChatDirectory' || method === 'openChatDirectory' || (method === 'copyChat' && payload.format === 'cwd')) {
+        const directory = await workspace.panel.directory(payload)
+        if (method === 'copyChat') clipboard.writeText(directory)
+        else await openChatDirectory(method === 'showChatDirectory' ? 'finder' : payload.target, directory, shell)
+        return
+      }
+      if (method === 'copyChat') { clipboard.writeText(chatText(workspace.db, chat, payload.format)); return }
+      const text = chatText(workspace.db, chat, 'text')
+      if (process.platform === 'darwin') {
+        const options = { window: context.window }
+        if (Number.isFinite(payload.x) && Number.isFinite(payload.y))
+          Object.assign(options, { x: Math.round(payload.x), y: Math.round(payload.y) })
+        new electron.ShareMenu({ texts: [text] }).popup(options)
+        return 'menu'
+      }
+      const filename = chat.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 100) || 'BoTeam'
+      const saved = await dialog.showSaveDialog(context.window, { title: '导出聊天', defaultPath: filename + '.md',
+        filters: [{ name: 'Markdown', extensions: ['md'] }] })
+      if (saved.canceled || !saved.filePath) return 'cancelled'
+      await writeFile(saved.filePath, text, { mode: 0o600 })
+      return 'saved'
+    }))
     // Only preload can send this channel. Its paths come from Chromium-backed File objects.
-    ipcMain.handle('workspace:dropAttachments', localHandler((scope, paths) =>
+    ipcMain.handle('workspace:dropAttachments', localHandler((_context, scope, paths) =>
       workspace.accountOperation(workspace.attachments.pick(scope, () => paths))))
     Menu.setApplicationMenu(
       Menu.buildFromTemplate([
@@ -159,9 +239,12 @@ else {
         },
       ]),
     )
-    openWindow()
+    if (app.isPackaged && process.platform !== 'darwin') app.setAsDefaultProtocolClient('boteam')
+    if (pendingLinks.length) for (const link of new Set(pendingLinks.splice(0))) incomingLink(link)
+    else openWindow()
+    void workspace.accountOperation(workspace.warmModelCatalogs())
     app.on('activate', () => {
-      if (!window) openWindow()
+      if (!windows.size) openWindow()
     })
     app.on('window-all-closed', () => app.quit())
     let readyToQuit = false
@@ -169,6 +252,7 @@ else {
       if (readyToQuit) return
       event.preventDefault()
       clearTimeout(refresh)
+      for (const context of windows.values()) context.terminals.close()
       if (!workspace.closed)
         workspace.close().finally(() => {
           readyToQuit = true

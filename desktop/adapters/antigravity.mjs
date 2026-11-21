@@ -345,24 +345,21 @@ export async function options({ account, signal }) {
       const picker = select(initial, 'model'),
         models = []
       const defaultModel = account.model || picker.current
-      const available = picker.items.some(model => model.id === defaultModel)
-      let configs = available ? await configure(request, id, initial, 'model', defaultModel) : initial
-      const defaultLevels = available ? select(configs, 'thought_level') : null
+      let configs = initial
       for (const model of picker.items) {
-        configs = await configure(request, id, configs, 'model', model.id)
-        models.push({
-          ...model,
-          efforts: select(configs, 'thought_level').items,
-          defaultEffort: select(configs, 'thought_level').current,
-        })
+        // Switching back to the initial model can reset its chosen thought level.
+        if (model.id !== picker.current) configs = await configure(request, id, configs, 'model', model.id)
+        const levels = select(model.id === picker.current ? initial : configs, 'thought_level')
+        models.push({ ...model, efforts: levels.items, defaultEffort: levels.current })
       }
+      const selected = models.find(model => model.id === defaultModel)
       return {
         models,
         defaultModel,
-        efforts: defaultLevels?.items || [],
-        defaultEffort: defaultLevels?.current,
+        efforts: selected?.efforts || [],
+        defaultEffort: selected?.defaultEffort,
         reason: !models.length ? '此版本未返回可选模型。'
-          : defaultModel && !available ? '原配置中的默认模型已不可用，请重新选择。' : '',
+          : defaultModel && !selected ? '原配置中的默认模型已不可用，请重新选择。' : '',
       }
     }),
   )
@@ -435,6 +432,7 @@ export async function run({
   threadId,
   prompt,
   attachments,
+  titleRequest,
   permission = 'default',
   planMode = false,
   extensionIds = [],
@@ -479,6 +477,8 @@ export async function run({
       }
     }
     if (msg.method !== 'session/update' || !authorized || p.sessionId !== id) return
+    if (p.update?.sessionUpdate === 'session_info_update' && p.update.title && titleRequest?.())
+      await emit({ type: 'title', value: p.update.title })
     if (p.update?.sessionUpdate === 'agent_message_chunk' && p.update.content?.type === 'text')
       await emit({ type: 'text', value: p.update.content.text })
     if (p.update?.sessionUpdate === 'usage_update') {
@@ -554,9 +554,16 @@ export async function run({
       sessionId: id,
       prompt: [{ type: 'text', text: prompt }, ...images],
     })
+    if (result?.stopReason === 'max_tokens')
+      throw new Error('Antigravity 本轮达到 token 上限，请缩短输入或将任务分步执行。')
     if (result?.stopReason !== 'end_turn')
       throw new Error('Antigravity 在完成本轮前停止，请检查额度或重试。')
     const quota = await readQuota(profile, model, selectedModel, signal)
     if (quota) await emit({ type: 'quota', value: quota })
+    if (titleRequest?.() && capabilities?.sessionCapabilities?.list) {
+      const page = await request('session/list', { cwd }, 1200).catch(() => null)
+      const title = page?.sessions?.find(session => session.sessionId === id)?.title
+      if (title) await emit({ type: 'title', value: title })
+    }
   })
 }

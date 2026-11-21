@@ -1,9 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
+import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promises'
 import { Workspace } from '../desktop/workspace.mjs'
 
 async function fixture(t, adapter) {
@@ -31,6 +32,95 @@ async function fixture(t, adapter) {
   })
   return { app, options, bot, other, dm, group }
 }
+
+test('the picker reuses the account catalog until refreshed and saves against the refreshed choices', async t => {
+  let current = 'first', reads = 0
+  const { app, bot, dm } = await fixture(t, {
+    options: async () => {
+      reads++
+      return { models: [{ id: current, efforts: [] }], defaultModel: current }
+    },
+  })
+  const read = (refresh = false) => app.handle('botOptions', { accountId: 'a', refresh })
+  const first = await read()
+  assert.equal(first.defaultModel, 'first')
+  assert.equal(Object.hasOwn(first, 'cached'), false)
+  current = 'second'
+  assert.deepEqual(await read(), { ...first, cached: true })
+  assert.equal(reads, 1)
+  const second = await read(true)
+  assert.equal(second.defaultModel, 'second')
+  assert.equal(Object.hasOwn(second, 'cached'), false)
+  assert.deepEqual(await read(), { ...second, cached: true })
+  await assert.rejects(
+    app.handle('setComposerSettings', { chatId: dm, botId: bot, model: 'first', effort: '' }),
+    /未提供所选模型/,
+  )
+  await app.handle('setComposerSettings', { chatId: dm, botId: bot, model: 'second', effort: '' })
+  await assert.rejects(app.handle('editBot', { id: bot, name: '一', model: 'first' }), /未提供所选模型/)
+  assert.equal(reads, 2)
+})
+
+test('background refreshes share a CLI query, leave the menu readable, and reject a changed binding', async t => {
+  const pending = []
+  const { app } = await fixture(t, {
+    options: () => {
+      const query = Promise.withResolvers()
+      pending.push(query)
+      return query.promise
+    },
+  })
+  const read = (refresh = false) => app.handle('botOptions', { accountId: 'a', refresh })
+  const previous = { models: [{ id: 'previous' }], defaultModel: 'previous' }
+  const warmup = read()
+  pending[0].resolve(previous)
+  await warmup
+  const first = read(true)
+  const same = read(true)
+  const cached = await Promise.race([read(), nextTurn('still waiting for the CLI')])
+  const started = pending.length
+  app.db.run("UPDATE accounts SET identity='another-owner' WHERE id='a'")
+  const next = read()
+  const result = { models: [{ id: 'current' }], defaultModel: 'current' }
+  for (const query of pending) query.resolve(result)
+  await Promise.all([assert.rejects(first, /账号配置已变化/), assert.rejects(same, /账号配置已变化/)])
+  assert.deepEqual(cached, { ...previous, cached: true })
+  assert.deepEqual(await next, result)
+  assert.equal(started, 2)
+  assert.equal(pending.length, 3)
+})
+
+test('a failed catalog query can be retried while another account keeps its own catalog', async t => {
+  const calls = []
+  let failNext = true
+  const { app } = await fixture(t, {
+    async options({ account }) {
+      calls.push(account.id)
+      if (failNext) {
+        failNext = false
+        throw new Error('CLI temporarily unavailable')
+      }
+      const id = account.identity
+      return { models: [{ id }], defaultModel: id }
+    },
+  })
+  app.db.run('INSERT INTO accounts(id,provider,identity,info) VALUES(?,?,?,?)',
+    'b', 'codex', 'another-owner', JSON.stringify({ status: 'ready' }))
+  const read = (accountId, refresh = false) => app.handle('botOptions', { accountId, refresh })
+  await assert.rejects(read('a'), /temporarily unavailable/)
+  assert.equal((await read('b')).defaultModel, 'another-owner')
+  assert.equal((await read('a')).defaultModel, 'owner')
+  assert.equal((await read('b')).defaultModel, 'another-owner')
+  assert.equal((await read('a')).defaultModel, 'owner')
+  assert.deepEqual(calls, ['a', 'b', 'a'])
+  failNext = true
+  await assert.rejects(read('a', true), /temporarily unavailable/)
+  const retained = await read('a')
+  assert.equal(retained.defaultModel, 'owner')
+  assert.equal(retained.cached, true)
+  assert.equal((await read('a', true)).defaultModel, 'owner')
+  assert.deepEqual(calls, ['a', 'b', 'a', 'a', 'a'])
+})
 
 test('composer settings follow each chat member and queue submission, native usage survives restart', async (t) => {
   let begin, proceed
@@ -308,6 +398,99 @@ test('slash commands use the selected member’s native catalog, transcript and 
   assert.equal(app.snapshot().tasks.find(task => task.messageId === id).runSettings.slashCommand, 'review')
   await assert.rejects(app.handle('slashInfo', { chatId: dm, botId: other, name: 'mcp' }), /不属于/)
   assert.deepEqual(await app.handle('slashInfo', { chatId: dm, botId: bot, name: 'mcp' }), { title: 'mcp', lines: ['一'] })
+})
+
+test('slash discovery shares native reads and discards outstanding results after a same-path reauthorization', async t => {
+  let gate, started
+  let reads = 0
+  const { app, dm, bot } = await fixture(t, {
+    prepare: async ({ candidate }) => candidate,
+    async composerActions() {
+      const name = 'command-' + ++reads
+      started?.resolve()
+      if (gate) await gate.promise
+      return { slashCommands: [{ name, action: 'prompt' }] }
+    },
+  })
+  const candidate = { provider: 'codex', identity: 'owner', status: 'ready', source: app.root }
+  app.db.run("UPDATE accounts SET info=json_set(info,'$.source',?) WHERE id='a'", candidate.source)
+  const read = (refresh = false) => app.handle('composerActions', { chatId: dm, botId: bot, refresh })
+  const [first, same] = await Promise.all([read(), read()])
+  assert.equal(reads, 1)
+  assert.deepEqual(same, first)
+  assert.deepEqual(await read(), { ...first, cached: true })
+  gate = Promise.withResolvers()
+  started = Promise.withResolvers()
+  const old = read(true)
+  const shared = read(true)
+  await started.promise
+  try {
+    assert.deepEqual(await Promise.race([read(), nextTurn('waiting')]), { ...first, cached: true })
+    await app.accounts.adopt(candidate, 'a')
+  } finally { gate.resolve() }
+  await Promise.all([assert.rejects(old, /已变化/), assert.rejects(shared, /已变化/)])
+  assert.equal(app.snapshot().accounts[0].bindingRevision, 1)
+  const next = await read()
+  assert.equal(next.slashCommands[0].name, 'command-3')
+  assert.equal(next.cached, undefined)
+  assert.equal(reads, 3)
+})
+
+test('cached command listings cannot submit removed commands or authorize a disabled permission', async t => {
+  let enabled = true, reads = 0
+  const { app, dm, bot } = await fixture(t, {
+    permissionModes: ['default', 'auto-review'],
+    async composerActions() {
+      reads++
+      return { autoReview: enabled, slashCommands: enabled ? [{ name: 'sketch', action: 'prompt' }] : [] }
+    },
+  })
+  const scope = { chatId: dm, botId: bot }
+  await app.handle('composerActions', scope)
+  enabled = false
+  await assert.rejects(app.handle('send', { chatId: dm, recipients: [bot], slash: { botId: bot, name: 'sketch', arguments: '' } }), /未提供/)
+  enabled = true
+  await app.handle('composerActions', { ...scope, refresh: true })
+  enabled = false
+  await assert.rejects(app.handle('setComposerSettings', { ...scope, permission: 'auto-review' }), /自动审批/)
+  assert.equal(reads, 4)
+  assert.equal(app.snapshot().tasks.length, 0)
+})
+
+test('draft command discovery uses validated member settings and separates draft, project and native thread scopes', async t => {
+  const seen = []
+  const { app, dm, bot } = await fixture(t, {
+    permissionModes: ['default', 'read-only', ...(process.platform === 'darwin' ? ['full'] : [])],
+    options: async () => ({ models: [{ id: 'fast', efforts: [{ id: 'low' }] }] }),
+    async composerActions(scope) {
+      seen.push(scope)
+      return { slashCommands: [] }
+    },
+  })
+  const draft = { id: randomUUID(), kind: 'direct', members: [bot] }
+  const settings = { model: 'fast', effort: 'low', permission: 'read-only' }
+  const read = p => app.handle('composerActions', { botId: bot, ...p })
+  await read({ draft, settings })
+  assert.equal((await read({ draft, settings })).cached, true)
+  await assert.rejects(read({ draft, settings: { model: 'removed' } }), /模型/)
+  await assert.rejects(read({ draft, settings: { permission: 'unsupported' } }), /权限/)
+  const projectId = await app.handle('createProject', { name: 'folder', folders: [app.root] })
+  await read({ draft: { ...draft, projectId }, settings })
+  await read({ draft: { ...draft, projectId }, settings: {} })
+  await read({ chatId: dm })
+  app.associateThread(dm, bot, 'a', 'native-session', app.root)
+  await read({ chatId: dm })
+  assert.deepEqual(seen.map(s => [s.bot.model, s.bot.effort, s.permission, s.threadId]), [
+    ['fast', 'low', 'read-only', null], ['fast', 'low', 'read-only', null], ['', '', 'default', null],
+    ['', '', 'default', null], ['', '', 'default', 'native-session'],
+  ])
+  assert.notEqual(seen[0].cwd, seen[1].cwd)
+  assert.deepEqual(app.snapshot().nativeThreads.map(row => row.threadId), ['native-session'])
+  if (process.platform === 'darwin') {
+    await read({ draft, settings: { permission: 'full' } })
+    assert.equal(seen.at(-1).chatId, draft.id)
+    assert.ok(seen.at(-1).protectedPaths.length)
+  }
 })
 
 test('fork binds an independent direct thread to its source member and keeps both after restart', async t => {

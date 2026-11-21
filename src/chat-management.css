@@ -1,0 +1,25 @@
+.chat-action-status {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: calc(100vw - 32px);
+  padding: 7px 14px;
+  border-radius: 10px;
+  background: var(--solid);
+  color: var(--on-solid);
+  pointer-events: none;
+  font-size: 13px;
+  box-shadow: var(--popover-shadow);
+}
+.chat-delete-description { overflow-wrap: anywhere; line-height: 1.65; }
+.archived-composer {
+  margin: 10px auto 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+}
+.chat-deeplink { color: inherit; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 2px; }
+.markdown .chat-deeplink { color: var(--accent); }

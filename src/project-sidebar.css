@@ -1,0 +1,131 @@
+.project-sidebar {
+  --rail-muted: color-mix(in srgb, var(--fg) 61%, var(--surface));
+  background: #f5fafa;
+  color: #19232a;
+  border-right-color: rgb(39 57 65 / 6%);
+}
+.project-sidebar .sidebar-titlebar .icon-btn:first-child { margin-right: auto; }
+.project-sidebar .sidebar-titlebar { padding-right: 12px; }
+.project-sidebar .rail-primary, .project-sidebar .rail-history, .project-sidebar .rail-settings { padding-left: 10px; padding-right: 10px; }
+.project-sidebar .rail-primary { padding-top: 5px; }
+.workbench-heading { display: flex; align-items: center; min-width: 0; }
+.workbench-heading { margin-bottom: 6px; gap: 4px; }
+.workbench-heading .icon-btn, .project-sidebar .section-tools { color: var(--rail-muted); }
+.workbench-switch { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 35px; padding: 0 8px; margin-right: auto; font-size: 17px; font-weight: 620; letter-spacing: -.035em; border-radius: 8px; }
+.workbench-switch svg { color: var(--rail-muted); }
+.workbench-switch:hover:not(:disabled), .workbench-switch[aria-expanded=true] { background: var(--hover); }
+.project-sidebar .rail-row { font-size: 14px; height: 31px; border-radius: 8px; gap: 8px; text-align: start; }
+.project-sidebar .rail-primary .rail-row, .project-sidebar .rail-settings .rail-row { color: color-mix(in srgb, currentColor 87%, transparent); }
+.project-sidebar .sidebar-quick-bot[aria-expanded=true] { background: var(--selected); }
+.project-sidebar .sidebar-quick-bot .sidebar-bot-chevron { flex: none; width: 13px; height: 13px; margin-left: auto; color: var(--rail-muted); }
+.project-sidebar .quick-bot-icon { color: #42815c; }
+.project-sidebar .rail-history { padding-top: 13px; padding-bottom: 14px; scrollbar-width: thin; scrollbar-gutter: auto; }
+.project-sidebar .rail-section + .rail-section { margin-top: 15px; }
+.project-sidebar .rail-section-heading { height: 25px; margin: 0 5px 3px 8px; color: var(--rail-muted); }
+.project-sidebar .rail-section-heading > button:first-child { font-size: 13px; font-weight: 510; }
+.project-sidebar .section-tools { display: flex; align-items: center; gap: 5px; }
+.project-sidebar .section-tools .icon-btn { width: 24px; height: 24px; color: inherit; }
+.project-sidebar .rail-empty { font-size: 12px; padding: 4px 8px; }
+.project-sidebar .thread-row { color: color-mix(in srgb, currentColor 86%, transparent); }
+.project-sidebar .chat-row-wrap { border-radius: 8px; }
+.project-sidebar .thread-row[aria-current=page] { color: var(--fg); }
+.project-sidebar .thread-row .chat-unread-dot { margin-left: auto; }
+.project-sidebar .thread-row .chat-unread-dot + .running-dot { margin-left: 0; }
+.project-sidebar .option-active, .project-sidebar .icon-btn[aria-expanded=true] { background: var(--selected); color: var(--fg); }
+.project-sidebar .rail-settings { padding-top: 5px; padding-bottom: 9px; }
+.project-sidebar .rail-settings .rail-row { height: 29px; font-size: 13px; }
+.project-sidebar .project-import { opacity: 0; }
+.project-sidebar .rail-section:hover .project-import, .project-sidebar .rail-section:focus-within .project-import,
+.project-sidebar .rail-section:not(:has(.sidebar-project)) .project-import { opacity: 1; }
+.project-sidebar > .notice { flex-shrink: 0; margin: 6px 10px; }
+.sidebar-project-row { position: relative; border-radius: 8px; }
+.sidebar-project-row:is(:hover,:focus-within,.showing) { background: var(--hover); }
+.sidebar-project-row:is(:hover,:focus-within,.showing) .project-toggle { padding-right: 56px; }
+.sidebar-project-row .project-toggle:hover { background: transparent; }
+.project-row-tools { display: flex; position: absolute; align-items: center; top: 3px; right: 4px; gap: 1px; opacity: 0; pointer-events: none; }
+.sidebar-project-row:is(:hover,:focus-within,.showing) .project-row-tools { opacity: 1; pointer-events: auto; }
+.project-row-tools .icon-btn { width: 24px; height: 25px; color: var(--rail-muted); }
+.project-row-tools .icon-btn svg { width: 15px; height: 15px; }
+.project-chats .thread-row { padding-left: 32px; }
+.project-sidebar .thread-row:focus-visible, .project-sidebar .project-toggle:focus-visible { outline-offset: -2px; }
+.sidebar-options-menu, .project-detail-card {
+  position: fixed; z-index: 65; -webkit-app-region: no-drag;
+  border: 1px solid var(--line); border-radius: 13px; background: var(--surface);
+  color: var(--fg); box-shadow: var(--popover-shadow); overflow: auto;
+  max-height: calc(100dvh - 12px); user-select: none; overscroll-behavior: contain;
+}
+.sidebar-options-menu { width: min(200px, calc(100vw - 12px)); padding: 5px; }
+.sidebar-options-menu:has(.sidebar-bot-detail) { width: min(290px, calc(100vw - 12px)); }
+.sidebar-bot-detail { display: block; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-options-menu button, .project-card-folders button, .project-detail-card .project-edit {
+  display: flex; align-items: center; gap: 9px; text-align: left; width: 100%; padding: 6px 9px;
+  border-radius: 7px; font-size: 13px; line-height: 18px;
+}
+.sidebar-options-menu button span, .project-card-folders button span { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sidebar-options-menu button svg, .project-detail-card svg, .project-folder-list svg { flex: none; stroke-width: 1.65; }
+.sidebar-options-menu button:is(:hover,:focus-visible), .project-card-folders button:is(:hover,:focus-visible),
+.project-detail-card .project-edit:is(:hover,:focus-visible) { background: var(--hover); }
+.sidebar-options-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+.sidebar-menu-caption { padding: 5px 9px 2px; font-size: 11px; line-height: 16px; color: var(--subtle); }
+.project-detail-card { width: min(334px, calc(100vw - 12px)); padding: 6px; border-radius: 14px; }
+.project-detail-card header, .project-chat-count { display: flex; align-items: center; gap: 9px; min-height: 30px; padding: 1px 9px; font-size: 13px; }
+.project-detail-card header strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 560; }
+.project-detail-card header .icon-btn { width: 25px; height: 25px; margin-right: -5px; }
+.project-detail-card header .icon-btn svg { width: 15px; transform: rotate(32deg); }
+.project-chat-count { color: var(--muted); }
+.project-card-folders { margin: 3px 0; padding: 4px 0; border-block: 1px solid var(--line); }
+.project-card-folders button { color: var(--muted); }
+.project-detail-card .project-edit { min-height: 31px; }
+.project-dialog-shell .modal { width: min(520px,100%); border-radius: 19px; padding: 22px 24px 18px; }
+.project-dialog-shell .modal-header { margin: 0 0 19px; }
+.project-dialog-shell .modal-header h2 { font-size: 20px; line-height: 26px; letter-spacing: -.035em; }
+.project-name-field { display: flex; align-items: stretch; min-height: 41px; border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden; }
+.project-name-field > span { width: 43px; display: grid; place-items: center; flex: none; color: var(--muted); border-right: 1px solid var(--line); }
+.project-name-field input { padding: 8px 12px; background: transparent; color: var(--fg); width: 100%; min-width: 0; border: 0; border-radius: 0; }
+.project-name-field:focus-within { border-color: color-mix(in srgb,var(--fg) 42%,var(--surface)); }
+.project-name-field input:focus { outline: none; }
+.project-folder-heading { margin: 20px 0 9px; font-size: 14px; font-weight: 580; }
+.project-folder-list { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.project-folder-item, .project-folder-add { display: flex; width: 100%; align-items: center; gap: 10px; min-height: 46px; padding: 4px 12px; }
+.project-folder-item { border-bottom: 1px solid var(--line); }
+.project-folder-item > span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-folder-item .icon-btn { width: 24px; height: 24px; }
+.project-folder-item .icon-btn svg { width: 14px; }
+.project-folder-add { color: var(--muted); font-size: 13px; }
+.project-folder-add:hover:not(:disabled) { background: var(--hover); }
+.project-primary-label { color: var(--subtle); font-size: 11px; font-weight: 400; }
+.project-primary-button { color: var(--muted); font-size: 12px; padding: 2px 6px; border-radius: 5px; }
+.project-primary-button:hover { background: var(--hover); }
+.project-dialog-footer { margin-top: 22px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.project-dialog-footer .btn { border-radius: 8px; }
+.project-dialog-footer .project-remove { color: var(--danger); background: color-mix(in srgb,var(--danger) 8%,var(--surface)); border-color: transparent; margin-right: auto; }
+.project-dialog-footer .project-remove:hover { background: color-mix(in srgb,var(--danger) 13%,var(--surface)); }
+.project-remove-message { color: var(--muted); font-size: 14px; line-height: 1.6; }
+@media (prefers-color-scheme: dark) {
+  .project-sidebar { color: var(--fg); background: #1c2225; border-right-color: var(--line); }
+  .project-sidebar .quick-bot-icon { color: #96bf9e; }
+}
+@media (max-width: 620px) {
+  .project-sidebar .rail-primary, .project-sidebar .rail-history, .project-sidebar .rail-settings { padding-left: 6px; padding-right: 6px; }
+  .workbench-heading { gap: 1px; }
+  .project-dialog-shell .modal { padding: 18px; }
+}
+.project-sidebar .rail-section-heading > button[aria-expanded=false] svg { opacity: 1; }
+.project-card-folders button span { text-align: left; }
+.project-dialog-shell .modal-veil { background: rgb(0 0 0 / 14%); }
+.project-dialog-shell .modal { box-shadow: 0 2px 8px rgb(0 0 0 / 9%), 0 12px 32px rgb(0 0 0 / 8%); }
+.project-dialog-shell .project-name-field:focus-within { border-color: var(--muted); box-shadow: inset 0 0 0 .3px var(--muted); }
+.project-dialog-footer .btn { height: 32px; padding: 0 15px; }
+.project-dialog-footer .btn.project-cancel, .project-dialog-footer .btn.project-remove { box-shadow: none; }
+.project-dialog-footer .btn.project-cancel { color: var(--muted); background: transparent; }
+.project-dialog-footer .btn.project-cancel:hover { background: var(--hover); }
+.search-result-project { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--subtle); }
+@media (prefers-color-scheme: dark) {
+  .project-dialog-shell .modal-veil { background: rgb(0 0 0 / 34%); }
+  .project-dialog-shell .modal { box-shadow: var(--popover-shadow); }
+}
+.chat-action-menu.cam-project { width: min(174px, calc(100vw - 10px)); padding: 4px; border-radius: 12px; background: var(--surface); }
+.cam-project button { min-height: 28px; padding: 3px 8px; }
+.cam-project button:disabled { opacity: .43; }
+.cam-project [role=separator] { margin: 4px 3px; background: var(--line); }
+.cam-project.cam-child { width: max-content; min-width: 150px; }

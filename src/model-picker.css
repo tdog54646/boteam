@@ -223,13 +223,17 @@
   background: var(--hover);
   font-size: 12px;
 }
-.native-model-card .native-model-status {
+.native-model-picker .native-model-status {
   margin-top: 8px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+.native-model-menu .native-model-status {
+  margin: 6px 8px;
+}
 .native-model-status .text-btn {
+  margin-inline-start: 4px;
   font-size: inherit;
 }

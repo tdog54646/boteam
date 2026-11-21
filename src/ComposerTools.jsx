@@ -9,6 +9,7 @@ import { Plus } from "lucide-react";
 import { createPortal } from "react-dom";
 import { accountLabel, errorText, Modal, Select } from "./ui";
 import { NativeModelPicker, describeModel, modelLabelFor } from "./NativeModelPicker";
+import { useModelCatalog } from "./useModelCatalog";
 
 import {
   AddMenu,
@@ -16,7 +17,6 @@ import {
   ApprovalDetails,
   permissionLabel,
 } from "./ComposerActionMenu";
-import { GoalDialog } from "./GoalDialog";
 
 export function ToolPopover({
   id,
@@ -244,40 +244,6 @@ function Ring({ values }) {
   );
 }
 
-function useCatalog(account, invoke) {
-  const [attempt, setAttempt] = useState(0);
-  const [result, setResult] = useState(null);
-  const key = JSON.stringify([
-    account?.id,
-    account?.status,
-    account?.identity,
-    account?.source,
-    account?.bin,
-    account?.model,
-    attempt,
-  ]);
-  useEffect(() => {
-    if (!account || account.status !== "ready") return;
-    let current = true;
-    invoke("botOptions", { accountId: account.id })
-      .then((data) => {
-        if (current) setResult({ key, data });
-      })
-      .catch((e) => {
-        if (current) setResult({ key, data: { reason: errorText(e) } });
-      });
-    return () => {
-      current = false;
-    };
-  }, [key, invoke]);
-  const catalog = result?.key === key ? result.data : null;
-  return {
-    catalog,
-    loading: !catalog && account?.status === "ready",
-    retry: () => setAttempt((v) => v + 1),
-  };
-}
-
 const number = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 });
 const displayTime = (date) => {
   const time = new Date(date);
@@ -327,12 +293,15 @@ function windowLabel(minutes) {
 
 export function ComposerTools({
   chatId,
+  bot,
+  actionCatalog,
+  onInspect,
   state,
   members,
   isGroup,
-  recipients,
   invoke,
-  ensureChat,
+  draftSettings,
+  saveSettings,
   popup,
   setPopup,
   busy,
@@ -344,24 +313,15 @@ export function ComposerTools({
   onSketch,
   onEditor,
   onNative,
-  onGoalStarted,
+  onGoal,
   selectedExtensions,
-  commandMemberId,
-  onCommandMemberChange,
   filesDisabled,
 }) {
-  const [choice, setChoice] = useState(null);
-  const recipientKey = recipients.join(",");
-  const activeId =
-    popup?.botId ||
-    commandMemberId ||
-    (choice?.recipients === recipientKey ? choice.id : recipients[0]);
-  const bot = members.find((m) => m.id === activeId) || members[0];
   const account = state.accounts.find((a) => a.id === bot?.accountId);
-  const { catalog, loading, retry } = useCatalog(account, invoke);
+  const { catalog, loading, refresh } = useModelCatalog(account, invoke, { refreshOnEntry: true });
   const [pending, setPending] = useState(null);
   const saving = useRef(false);
-  const stored = state.composerSettings?.find(
+  const stored = draftSettings?.[bot?.id] || state.composerSettings?.find(
     (s) => s.chatId === chatId && s.botId === bot?.id,
   );
   useEffect(() => {
@@ -391,47 +351,8 @@ export function ComposerTools({
   const providerModes = state.permissionModes?.[account?.provider] || [
     "default",
   ];
-  const [actionRequest, setActionRequest] = useState(null);
-  const lastActions = useRef(null);
-  const [attempt, setAttempt] = useState(0);
   const [detail, setDetail] = useState(null);
-  const actionKey = JSON.stringify([
-    chatId,
-    bot?.id,
-    bot?.cwd,
-    account?.id,
-    account?.status,
-    account?.identity,
-    account?.bin,
-    account?.source,
-    permission,
-    attempt,
-  ]);
-  const showActions = popup?.id === "add" || popup?.id === "permission";
-  useEffect(() => {
-    if (!showActions || !bot || account?.status !== "ready") return;
-    if (
-      lastActions.current?.key === actionKey &&
-      Date.now() - lastActions.current.time < 30_000
-    )
-      return;
-    let current = true;
-    invoke("composerActions", { botId: bot.id, ...(chatId && { chatId }) })
-      .then((data) => {
-        if (current) {
-          lastActions.current = { key: actionKey, time: Date.now() };
-          setActionRequest({ key: actionKey, data });
-        }
-      })
-      .catch((e) => {
-        if (current) setActionRequest({ key: actionKey, error: errorText(e) });
-      });
-    return () => {
-      current = false;
-    };
-  }, [showActions, actionKey, invoke]);
-  const actionResult = actionRequest?.key === actionKey ? actionRequest : null;
-  const actions = actionResult?.data;
+  const actions = actionCatalog.data;
   const codex = account?.provider === "codex";
   const modes = providerModes.filter((mode) => {
     if (permission === mode) return true;
@@ -484,7 +405,8 @@ export function ComposerTools({
       loading: true,
       value: last?.key === requestKey ? last.value : null,
     }));
-    invoke("refreshQuota", { ...(chatId && { chatId }), botId: bot.id })
+    invoke("refreshQuota", { ...(chatId && { chatId }), botId: bot.id,
+      ...(draftSettings && { draftModel: storedModel || "" }) })
       .then((value) => {
         if (lastRequest.current === request)
           setQuotaRequest({ key: requestKey, value });
@@ -525,11 +447,7 @@ export function ComposerTools({
         aria-label="查看群成员设置与用量"
         value={bot.id}
         disabled={busy}
-        onChange={(e) => {
-          setChoice({ recipients: recipientKey, id: e.target.value });
-          if (popup?.botId) setPopup({ ...popup, botId: e.target.value });
-          if (commandMemberId) onCommandMemberChange(e.target.value);
-        }}
+        onChange={e => onInspect(e.target.value)}
       >
         {members.map((m) => (
           <option value={m.id} key={m.id}>
@@ -553,12 +471,7 @@ export function ComposerTools({
     setBusy(true);
     setError("");
     try {
-      const id = await ensureChat();
-      await invoke("setComposerSettings", {
-        chatId: id,
-        botId: bot.id,
-        ...values,
-      });
+      await saveSettings(bot.id, values);
       if (closeAfter) setPopup(null);
     } catch (e) {
       if (!closeAfter) setPending(previous);
@@ -583,16 +496,16 @@ export function ComposerTools({
           skillsOnly={popup?.skillsOnly}
           memberPicker={groupPicker}
           actions={actions}
-          loading={!actionResult && account?.status === "ready"}
-          loadError={actionResult?.error || actions?.note}
-          retry={() => setAttempt((n) => n + 1)}
+          loading={actionCatalog.pending && !actions}
+          loadError={actionCatalog.error || actions?.note}
+          retry={actionCatalog.retry}
           onFiles={onFiles}
           onSnippet={onSnippet}
           onSketch={onSketch}
           onEditor={onEditor}
           onGoal={() => {
             setPopup(null);
-            setDetail("goal");
+            onGoal(bot);
           }}
           planActive={Boolean(settings.planMode || permission === "plan")}
           onPlan={() =>
@@ -625,8 +538,8 @@ export function ComposerTools({
           busy={busy}
           memberPicker={groupPicker}
           onChoose={(mode) => save({ permission: mode })}
-          catalogError={actionResult?.error || actions?.note}
-          retry={() => setAttempt((n) => n + 1)}
+          catalogError={actionCatalog.error || actions?.note}
+          retry={actionCatalog.retry}
           onLearn={() => {
             setPopup(null);
             setDetail("permissions");
@@ -650,18 +563,6 @@ export function ComposerTools({
               }
             />
           </Modal>,
-          document.body,
-        )}
-      {detail === "goal" &&
-        createPortal(
-          <GoalDialog
-            bot={bot}
-            chatId={chatId}
-            ensureChat={ensureChat}
-            invoke={invoke}
-            onStarted={onGoalStarted}
-            onClose={() => setDetail(null)}
-          />,
           document.body,
         )}
       {children}
@@ -711,12 +612,7 @@ export function ComposerTools({
             return (
               <div className="quota-window" key={`${w.minutes}-${index}`}>
                 <div className="usage-line">
-                  <span>
-                    {windowLabel(w.minutes)}
-                    {week &&
-                      short &&
-                      (w === week ? " · 外圈" : w === short ? " · 内圈" : "")}
-                  </span>
+                  <span>{windowLabel(w.minutes)}</span>
                   <strong>
                     {value == null
                       ? "剩余未知"
@@ -764,15 +660,10 @@ export function ComposerTools({
             provider={account?.provider}
             model={model}
             effort={effort}
-            catalog={
-              catalog ||
-              (account?.status !== "ready"
-                ? { reason: account?.reason || "请先核实此账号的原生登录。" }
-                : null)
-            }
+            catalog={catalog}
             loading={loading}
             busy={busy}
-            retry={account?.status === "ready" ? retry : undefined}
+            refresh={refresh}
             onChange={(patch) => save(patch, false)}
             onReset={() => save({ model: null, effort: null }, false)}
             resetDisabled={settings.model == null && settings.effort == null}

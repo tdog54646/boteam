@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -8,12 +8,15 @@ import {
   KeyRound,
   Paperclip,
   Plug,
+  Quote,
   ShieldCheck,
   Square,
   SquareTerminal,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import { linkedChatId } from "../desktop/chat-transfer.mjs";
 import { Composer } from "./Composer";
+import { MessageQuote } from "./MessageQuote";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { Button, errorText, Notice, ProviderIcon, Spinner } from "./ui";
 import "./conversation.css";
@@ -215,14 +218,29 @@ function TaskView({ task, bot, account, invoke, onLogin, compact = false }) {
     </div>
   );
 }
-export function Conversation({ chat, state, invoke, open, onOpenChat }) {
+export function Conversation({ chat, state, invoke, open, onOpenChat, onNewDraft, sourceControl, onDraftFiles, restoreChat, onError, firstProject }) {
   const { accounts, bots, messages, tasks } = state;
-  const log = messages.filter((m) => m.chatId === chat.id);
+  function chatLink(url, children, key) {
+    return <a className="chat-deeplink" key={key} href={url} onClick={event => {
+      event.preventDefault();
+      invoke("openChatLink", { url }).catch(error => onError(errorText(error)));
+    }}>{children}</a>;
+  }
+  function linkChatText(text) {
+    if (typeof text !== "string" || !text.toLowerCase().includes("boteam://chat/")) return text;
+    return text.split(/(boteam:\/\/chat\/[a-f\d-]{36})/gi).map((part, index) =>
+      linkedChatId(part) ? chatLink(part, part, index) : part);
+  }
+  const log = useMemo(() => messages.filter(m => m.chatId === chat.id), [messages, chat.id]);
   const jobs = tasks.filter((t) => t.chatId === chat.id);
   const members = chat.members
     .map((id) => bots.find((b) => b.id === id))
     .filter((b) => b && !b.archived);
   const group = chat.kind === "group";
+  const quoteControl = useRef(null);
+  const publicMessages = useMemo(() => new Map(group
+    ? log.filter(m => m.publishSeq > 0).map(m => [m.id, m])
+    : []), [log, group]);
   const bottom = useRef(null);
   const scroll = useRef(null);
   const follow = useRef(true);
@@ -275,7 +293,7 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
           >
             {chat.sourceChatId && (
               <p className="fork-origin">
-                已继承 {members[0]?.name || "Bot"} 的原生上下文。
+                分支自「{state.chats.find(c => c.id === chat.sourceChatId)?.name || "原会话"}」
                 <button className="text-btn" onClick={() => onOpenChat(chat.sourceChatId)}>查看原会话</button>
               </p>
             )}
@@ -286,9 +304,12 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
                 (a) => a.id === (task?.accountId || bot?.accountId),
               );
               const user = m.author === "user";
+              const quoted = publicMessages.get(m.replyToMessageId);
               return (
                 <article
                   key={m.id}
+                  id={`message-${m.id}`}
+                  tabIndex={-1}
                   className={`message ${user ? "user-message" : "bot-message"}`}
                 >
                   {!user && (
@@ -314,6 +335,21 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
                             .join(" ")}
                         </div>
                       )}
+                      {quoted && (
+                        <button
+                          type="button"
+                          className="quote-card sent-quote"
+                          aria-label="查看引用原文"
+                          aria-describedby={`quote-preview-${m.id}`}
+                          onClick={() => {
+                            const original = document.getElementById(`message-${quoted.id}`);
+                            original?.focus({ preventScroll: true });
+                            original?.scrollIntoView({ block: "center" });
+                          }}
+                        >
+                          <MessageQuote message={quoted} descriptionId={`quote-preview-${m.id}`} />
+                        </button>
+                      )}
                       {m.attachments?.length > 0 && (
                         <div className="sent-attachments">
                           {m.attachments.map((file) => (
@@ -330,13 +366,14 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
                           {sentExtensions.get(m.id).map((label, index) => <span key={index}><Plug size={13} />{label}</span>)}
                         </div>
                       )}
-                      {m.text}
+                      {linkChatText(m.text)}
                     </div>
                   ) : (
                     <div className="markdown">
-                      <ReactMarkdown
+                      <ReactMarkdown urlTransform={url => linkedChatId(url) ? url : defaultUrlTransform(url)}
                         components={{
-                          a: ({ children, href }) => (
+                          p: ({ children }) => <p>{React.Children.map(children, linkChatText)}</p>,
+                          a: ({ children, href }) => linkedChatId(href) ? chatLink(href, children) : (
                             <span className="link-text" title={href}>
                               {children}
                               {href && <small>（{href}）</small>}
@@ -348,6 +385,12 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
                         {m.text || ""}
                       </ReactMarkdown>
                     </div>
+                  )}
+                  {!chat.archived && publicMessages.has(m.id) && (
+                    <button type="button" className="quote-action" aria-description={`${m.name}的消息`}
+                      onClick={() => quoteControl.current?.select(m.id)}>
+                      <Quote size={13} aria-hidden="true" />引用
+                    </button>
                   )}
                   {task && taskRow(task, true)}
                   {jobs
@@ -389,7 +432,10 @@ export function Conversation({ chat, state, invoke, open, onOpenChat }) {
           </div>
         )}
       </div>
-      <Composer onOpenChat={onOpenChat} chat={chat} members={members} state={state} invoke={invoke} />
+      {chat.archived ? (
+        <div className="archived-composer"><span>此聊天已归档</span><Button onClick={restoreChat}>恢复聊天</Button></div>
+      ) : <Composer onOpenChat={onOpenChat} onNewDraft={onNewDraft} chat={chat} members={members} state={state} invoke={invoke}
+        firstProject={firstProject} quoteControl={quoteControl} publicMessages={publicMessages} sourceControl={sourceControl} onDraftFiles={onDraftFiles} />}
     </section>
   );
 }

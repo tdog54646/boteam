@@ -133,7 +133,7 @@ export async function compactThread(rpc, scope, opened) {
     }
     if (message.method !== 'turn/completed') continue
     if (p.turn.status === 'interrupted') throw new Error('Codex 上下文压缩已停止。')
-    if (p.turn.status !== 'completed') throw nativeError(p.turn.error?.message)
+    if (p.turn.status !== 'completed') throw nativeError(p.turn.error?.message, p.turn.error?.codexErrorInfo)
     if (!compacted && !p.turn.items?.some((item) => item.type === 'contextCompaction'))
       throw new Error('Codex 未确认原生上下文压缩。')
     await scope.emit({ type: 'text', value: 'Codex 已压缩此会话的上下文。' })

@@ -6,6 +6,7 @@ import path from 'node:path'
 import * as codex from '../desktop/adapters/codex.mjs'
 import { detect, login, options, prepare, run } from '../desktop/adapters/codex.mjs'
 import { locate } from '../desktop/native.mjs'
+import { nativeError } from '../desktop/adapters/codex-rpc.mjs'
 
 test('Codex discovery uses the installed desktop client ahead of an older standalone CLI', async (t) => {
   const desktop = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex'
@@ -103,6 +104,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
    if(scenario.staleGoal && method==='thread/resume' && goal()) notify('thread/goal/updated',{threadId,goal:goal()});
    return reply({thread:{id:threadId},approvalsReviewer:scenario.wrongReviewer?'user':p.approvalsReviewer,collaborationMode:scenario.priorPlan?{mode:'plan'}:null,model:scenario.wrongModel?'different':p.model,reasoningEffort:p.config?.model_reasoning_effort,modelProvider:'openai',approvalPolicy:p.approvalPolicy,sandbox:{type:p.sandbox==='read-only'?'readOnly':'workspaceWrite',networkAccess:false}});
  }
+ if(method==='thread/read' && scenario.metadataTitle) return reply({thread:{id:p.threadId,name:scenario.metadataTitle}});
  if(method==='thread/read' || method==='thread/fork'){
    const path=require('node:path');
    const dir=path.join(process.env.CODEX_HOME,'sessions','2026','11','20');
@@ -139,8 +141,14 @@ readline.createInterface({input:process.stdin}).on('line', line => {
    const id='review-turn', item={type:'exitedReviewMode',id:'review-output',review:'Native review findings'};
    reply({turn:{id},reviewThreadId:scenario.foreignReview?'other':threadId});
    notify('item/completed',{threadId:'other',turnId:id,item:{...item,review:'WRONG'}});
-   notify('item/completed',{threadId,turnId:id,item});
-   notify('turn/completed',{threadId,turn:{id,status:'completed',items:[item]}});
+   if(scenario.reviewProgress) {
+     const progress={type:'agentMessage',id:'progress',phase:'commentary',text:'Review progress'};
+     notify('item/agentMessage/delta',{threadId,turnId:id,itemId:progress.id,delta:'Review'});
+     notify('item/completed',{threadId,turnId:id,item:progress});
+     notify('item/completed',{threadId,turnId:id,item:{type:'plan',id:'plan',text:'Review plan'}});
+   }
+   if(!scenario.missingReview)notify('item/completed',{threadId,turnId:id,item});
+   notify('turn/completed',{threadId,turn:{id,status:'completed',items:scenario.missingReview?[]:[item]}});
    return;
  }
  if(method==='turn/start') {
@@ -149,6 +157,14 @@ readline.createInterface({input:process.stdin}).on('line', line => {
      out({id:'external-refresh',method:'account/chatgptAuthTokens/refresh',params:{}});return reply({turn:{id:turnId}});
    }
    reply({turn:{id:turnId}});
+   if(scenario.eventTitle){
+     notify('thread/name/updated',{threadId:'other',threadName:'foreign'});
+     notify('thread/name/updated',{threadId,threadName:scenario.eventTitle});
+   }
+   if(scenario.turnError) {
+     notify('turn/completed',{threadId,turn:{id:turnId,status:'failed',error:scenario.turnError,items:[]}});
+     return;
+   }
    if(scenario.questions) {
      const questions=[{id:'color',header:'Color',question:'Which color?',isOther:true,isSecret:false,options:[{label:'Blue',description:'Use blue'}]}];
      out({method:'item/tool/requestUserInput',id:'ask-foreign',params:{threadId:'foreign',turnId,questions}});
@@ -720,6 +736,32 @@ test('Codex /review starts native inline reviews of local changes or supplied in
   await assert.rejects(run({ ...task, threadId, slashCommand: 'review' }), /会话/)
 })
 
+test('public group reviews expose only confirmed native findings, including when progress was streamed', async t => {
+  const { task, f, events } = await composerFixture(t)
+  const review = { ...task, prompt: '', slashCommand: 'review' }
+  await f.scenario({ reviewProgress: true })
+  await run({ ...review, publicReview: true })
+  const text = () => events.filter(e => e.type === 'text').map(e => e.value).join('')
+  assert.equal(text(), 'Native review findings')
+  events.length = 0
+  await f.scenario({ reviewProgress: true, missingReview: true })
+  await assert.rejects(run({ ...review, publicReview: true }), /审查/)
+  assert.equal(text(), '')
+  await run(review)
+  assert.match(text(), /Review progress/)
+})
+
+test('Codex diagnoses a native context window rejection even without a prior window estimate', async t => {
+  const { task, f } = await composerFixture(t)
+  await f.scenario({ turnError: { codexErrorInfo: 'contextWindowExceeded', message: 'backend rejected private-marker' } })
+  await assert.rejects(run(task), error => /输入.*窗口/.test(error.message) && !error.message.includes('private-marker'))
+  assert.match(nativeError('Your input exceeds the context window of this model.').message, /输入.*窗口/)
+  assert.match(nativeError('input token limit exceeded').message, /输入.*窗口/)
+  assert.match(nativeError('prompt exceeds the model’s context window').message, /输入.*窗口/)
+  assert.match(nativeError('rate limit exceeded for input tokens per minute').message, /额度|速率/)
+  assert.match(nativeError('Rate limit: input token limit exceeded for tokens per minute').message, /额度|速率/)
+})
+
 test('Codex /fork stages only its source lineage in a new home and verifies the durable child', async (t) => {
   const { task, f, audit } = await composerFixture(t)
   const { createHash, randomUUID } = await import('node:crypto')
@@ -741,6 +783,15 @@ test('Codex /fork stages only its source lineage in a new home and verifies the 
   const second = await codex.forkChat({ ...task, chatId:'branch', threadId:fork.threadId }, { destinationChatId:'next' })
   assert.deepEqual((await fs.readdir(path.join(storage('next'), ...dirs))).sort(),
     [threadId, fork.threadId, second.threadId].map(filename).sort())
+  const destinationCwd = path.join(task.cwd, 'new-checkout')
+  await fs.mkdir(destinationCwd)
+  const relocated = await codex.forkChat({ ...task, threadId }, { destinationChatId:'relocated', destinationCwd })
+  const rollout = JSON.parse(await fs.readFile(path.join(storage('relocated'), ...dirs, filename(relocated.threadId))))
+  assert.equal(rollout.cwd, destinationCwd)
+  const nested = await codex.forkChat({ ...task, cwd:destinationCwd, chatId:'relocated', threadId:relocated.threadId },
+    { destinationChatId:'relocated-child' })
+  await nested.discard()
+  await relocated.discard()
   await assert.rejects(codex.forkChat({ ...task, threadId }, { destinationChatId:'branch' }), /目录|存在/)
   await f.scenario({ wrongForkPath: true })
   await assert.rejects(codex.forkChat({ ...task, threadId }, { destinationChatId:'bad-path' }), /路径|目录|历史/)
@@ -754,4 +805,14 @@ test('Codex /fork stages only its source lineage in a new home and verifies the 
   assert.ok((await fs.stat(storage('next'))).isDirectory())
   assert.ok((await fs.stat(storage('branch'))).isDirectory())
   assert.equal((await audit()).some(c => c.method === 'turn/start'), false)
+})
+
+test('Codex consumes only the bound thread title event and falls back to scoped metadata', async t => {
+  const { f, task, events } = await composerFixture(t)
+  for (const field of ['eventTitle', 'metadataTitle']) {
+    events.length = 0
+    await f.scenario({ [field]: '修复任务重试' })
+    await run({ ...task, titleRequest: () => !events.some(e => e.type === 'title') && '修复任务重试' })
+    assert.deepEqual(events.filter(e => e.type === 'title').map(e => e.value), ['修复任务重试'])
+  }
 })

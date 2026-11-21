@@ -66,6 +66,20 @@ test('a completed native turn has time to finish its background save after EOF',
   assert.equal(await readFile(join(account.source, 'saved'), 'utf8'), 'persisted')
 })
 
+test('ACP distinguishes input-size errors, subscription limits and a max_tokens stop', mac, async t => {
+  const { account, cwd, state } = await setup(t)
+  Object.assign(account, await adapter.detect(account))
+  for (const [outcome, expected] of [
+    [{ promptError: { code: -32000, message: 'The input token count (40970) exceeds the maximum number of tokens allowed (32768). private-marker' } }, /输入.*窗口/],
+    [{ promptError: { code: -32603, message: 'rate limit exceeded for input tokens per minute: private-marker' } }, /额度|速率/],
+    [{ stopReason: 'max_tokens' }, /token 上限/i],
+  ]) {
+    await state(outcome)
+    await assert.rejects(adapter.run({ account, cwd, prompt: 'request', emit() {} }),
+      error => expected.test(error.message) && !error.message.includes('private-marker'))
+  }
+})
+
 test(
   'managed native profile binds paid statusline identity, reads per-model effort, and runs ACP',
   mac,
@@ -106,6 +120,28 @@ test(
     assert.doesNotMatch(JSON.stringify([events, account]), /SHOULD_NOT_LEAK/)
   },
 )
+test('fresh ACP catalogs reflect changed models and preserve the initial native effort', mac, async t => {
+  const { account, state } = await setup(t)
+  await state({ initialSession: { model: 'gemini-flash', effort: 'low' } })
+  Object.assign(account, await adapter.detect(account))
+  const previous = await adapter.options({ account })
+  assert.deepEqual(previous.models.map(model => model.id), ['gemini-pro', 'gemini-flash'])
+  assert.equal(previous.defaultModel, 'gemini-flash')
+  assert.equal(previous.defaultEffort, 'low')
+
+  await state({ modelOptions: [
+    { value: 'new-native-id', name: 'New native model' },
+    { value: 'gemini-pro', name: 'Renamed Pro' },
+  ] })
+  const catalog = await adapter.options({ account })
+  assert.deepEqual(catalog.models.map(({ id, label }) => [id, label]), [
+    ['new-native-id', 'New native model'], ['gemini-pro', 'Renamed Pro'],
+  ])
+  assert.equal(catalog.defaultModel, 'gemini-pro')
+  assert.equal(catalog.defaultEffort, 'high')
+  assert.equal(catalog.models[1].defaultEffort, catalog.defaultEffort)
+})
+
 test(
   'stale binding, unpaid native identity, tier mismatch and unsupported effort never send a prompt',
   mac,
@@ -411,3 +447,15 @@ test(
     await assert.rejects(adapter.run({ account, cwd, permission: 'invalid' }), /权限/)
   },
 )
+
+test('ACP titles use scoped session info notifications or negotiated session metadata', mac, async t => {
+  const { account, cwd, state } = await setup(t)
+  Object.assign(account, await adapter.detect(account))
+  for (const field of ['eventTitle', 'listTitle']) {
+    await state({ [field]: '核对子目录' })
+    const titles = []
+    await adapter.run({ account, cwd, bot: {}, prompt: 'request', titleRequest: () => !titles.length && 'request',
+      emit: e => { if (e.type === 'title') titles.push(e.value) }, approve: () => false })
+    assert.deepEqual(titles, ['核对子目录'])
+  }
+})

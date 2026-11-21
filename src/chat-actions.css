@@ -1,0 +1,52 @@
+.chat-action-menu {
+  position: fixed;
+  z-index: 70;
+  width: min(206px, calc(100vw - 10px));
+  max-height: calc(100dvh - 10px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 4px 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(22px);
+  box-shadow: 0 7px 22px rgb(0 0 0 / 13%);
+  -webkit-app-region: no-drag;
+  font-size: 13px;
+  line-height: 18px;
+  user-select: none;
+}
+.chat-action-menu.cam-header { width: min(220px, calc(100vw - 10px)); padding: 4px; border-radius: 14px; }
+.chat-action-menu.cam-child { width: max-content; min-width: 160px; max-width: min(260px, calc(100vw - 10px)); }
+.chat-action-menu button {
+  width: 100%; min-height: 24px; display: flex; align-items: center; gap: 8px;
+  border-radius: 6px; padding: 2px 9px; font-size: inherit; color: var(--fg);
+}
+.cam-header button { min-height: 28.5px; }
+.chat-action-menu button i { width: 15px; flex: none; }
+.chat-action-menu button span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-action-menu button kbd { font: 12px var(--sans); color: var(--subtle); }
+.chat-action-menu button:focus-visible, .chat-action-menu button:hover, .chat-action-menu button.active {
+  outline: none; background: var(--selected);
+}
+.chat-action-menu .danger { color: var(--danger); }
+.cam-chevron { margin-left: auto; color: var(--muted); }
+.chat-action-menu [role=separator] { margin: 5px 8px; height: 1px; background: var(--line-strong); }
+.chat-row-wrap { position: relative; border-radius: 10px; }
+.chat-row-wrap:hover, .chat-row-wrap:focus-within, .chat-row-wrap.context-active { background: var(--hover); }
+.chat-row-wrap .thread-row:focus-visible { outline-offset: -2px; }
+.chat-row-quick { position: absolute; right: 4px; top: 3px; display: flex; gap: 1px; }
+.chat-row-quick .icon-btn { width: 23px; height: 24px; border-radius: 5px; }
+.chat-row-quick .icon-btn svg { width: 14px; height: 14px; }
+.chat-row-wrap:not(:hover):not(:focus-within):not(.context-active) .chat-row-quick { visibility: hidden; }
+.chat-row-wrap:is(:hover,:focus-within,.context-active) .thread-row { padding-right: 54px; }
+.chat-row-wrap:is(:hover,:focus-within,.context-active) .thread-row time,
+.chat-row-wrap:is(:hover,:focus-within,.context-active) .running-dot { display: none; }
+.chat-row-wrap .thread-row[aria-current=page]:hover { background: var(--selected); }
+.chat-unread .thread-row > span { font-weight: 650; }
+.chat-unread-dot { width: 6px; height: 6px; flex: none; background: var(--accent); border-radius: 50%; }
+.cam-context { background: color-mix(in srgb, var(--under) 88%, transparent); }
+.chat-action-menu .lucide-pin, .chat-action-menu .lucide-pin-off,
+.chat-row-quick .lucide-pin, .chat-row-quick .lucide-pin-off { transform: rotate(35deg); }
+.chat-action-menu .lucide-split { transform: rotate(90deg); }

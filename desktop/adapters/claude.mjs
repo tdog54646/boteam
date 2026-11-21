@@ -1,3 +1,4 @@
+import { agentActivity, webActivity } from './chat-activity.mjs'
 import { execFile, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -17,7 +18,7 @@ import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { nativeEnv, redact } from '../native.mjs'
 
-import { contextUsage, inlineImages, quotaWindow } from './usage.mjs'
+import { contextUsage, inlineImages, inputWindowError, quotaWindow } from './usage.mjs'
 import { nativeSlashCatalog, slashPrompt } from './native-slash.mjs'
 
 const permissions = { default: 'default', plan: 'plan', edits: 'acceptEdits' }
@@ -165,8 +166,9 @@ export async function detect({ source = defaultSource, bin, signal, managed = fa
       '已确认本机 Claude 订阅。请重新授权到 BoTeam 独立目录，避免原生客户端在任务中途切换账号。'
   if (typeof info.orgName === 'string' && info.orgName.length <= 250)
     result.organization = info.orgName
-  if (typeof settings?.model === 'string' && /^[a-z0-9][\w.-]{0,99}$/i.test(settings.model))
-    result.model = settings.model
+  const model = settings?.model
+  if (typeof model === 'string' && model.length <= 100 && /^[a-z0-9][\w.-]*(?:\[[a-z0-9]+\])?$/i.test(model))
+    result.model = model
   return result
 }
 
@@ -281,6 +283,8 @@ function stopChild(child, how) {
 
 function failResult(result) {
   const details = [result.result, ...(Array.isArray(result.errors) ? result.errors : [])].join(' ')
+  const overflow = inputWindowError(details)
+  if (overflow) return overflow
   if (/rate.?limit|usage.?limit|quota|exhausted|overload|429/i.test(details))
     return new Error('Claude 订阅额度已用尽或服务繁忙，请稍后重试。')
   if (/auth|login|log in|sign.?in|token|401|403/i.test(details))
@@ -460,6 +464,7 @@ async function nativeSession(
     threadId,
     prompt,
     attachments,
+    titleRequest,
     extensionIds = [],
     slashCommand,
     cwd,
@@ -640,6 +645,7 @@ async function nativeSession(
       parent_tool_use_id: null,
       session_id: id,
     })
+    const agentCalls = new Map()
     for await (const message of messages) {
       if (message.session_id && message.session_id !== id)
         throw new Error('Claude 返回了不匹配的原生会话。')
@@ -678,7 +684,16 @@ async function nativeSession(
         }
       } else if (message.type === 'assistant' && !message.error) {
         for (const block of message.message?.content || []) {
-          if (block.type === 'tool_use') await emit({ type: 'tool', value: toolName(block.name) })
+          if (block.type === 'tool_use') {
+            let activity
+            if (['Agent', 'Task'].includes(block.name)) {
+              activity = agentActivity(block.id, 'running', block.input?.description)
+              if (activity) agentCalls.set(block.id, block.input?.run_in_background === true)
+            } else if (['WebFetch', 'WebSearch'].includes(block.name)) {
+              activity = webActivity(block.input?.url, block.input?.query)
+            }
+            await emit(activity || { type: 'tool', value: toolName(block.name) })
+          }
           if (
             block.type === 'text' &&
             !streamed &&
@@ -690,6 +705,17 @@ async function nativeSession(
           }
         }
         streamed = false
+      } else if (message.type === 'user' && Array.isArray(message.message?.content)) {
+        for (const block of message.message.content) {
+          if (block.type === 'tool_result' && agentCalls.get(block.tool_use_id) === false) {
+            agentCalls.delete(block.tool_use_id)
+            await emit(agentActivity(block.tool_use_id, block.is_error ? 'errored' : 'completed'))
+          }
+        }
+      } else if (message.type === 'system' && message.subtype === 'task_notification') {
+        const status = { completed: 'completed', failed: 'errored', stopped: 'interrupted' }[message.status]
+        if (status && agentCalls.delete(message.tool_use_id))
+          await emit(agentActivity(message.tool_use_id, status))
       } else if (message.type === 'result') {
         if (message.is_error || message.subtype !== 'success') throw failResult(message)
         if (!seenSession) throw new Error('Claude 未返回可恢复的原生会话。')
@@ -712,6 +738,15 @@ async function nativeSession(
           if (quota) await emit({ type: 'quota', value: quota })
         } finally {
           clearTimeout(deadline)
+        }
+        const description = titleRequest?.()
+        if (description && child.exitCode === null && !child.signalCode && !signal?.aborted) {
+          let deadline
+          try {
+            const title = control({ subtype: 'generate_session_title', description, persist: false }, '').catch(() => null)
+            const result = await Promise.race([title, new Promise(resolve => { deadline = setTimeout(() => resolve(null), 6000) })])
+            if (result?.title) await emit({ type: 'title', value: result.title })
+          } finally { clearTimeout(deadline) }
         }
         return
       }

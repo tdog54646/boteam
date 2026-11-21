@@ -172,9 +172,9 @@ export function ApprovalMenu({
       {catalogError && (
         <p className="catalog-state">
           {catalogError}{" "}
-          <button className="text-btn" type="button" onClick={retry}>
+          {retry && <button className="text-btn" type="button" onClick={retry}>
             重试
-          </button>
+          </button>}
         </p>
       )}
     </div>
@@ -355,9 +355,9 @@ export function AddMenu({
       {loadError && (
         <p className="catalog-state">
           {loadError}{" "}
-          <button type="button" className="text-btn" onClick={retry}>
+          {retry && <button type="button" className="text-btn" onClick={retry}>
             重试
-          </button>
+          </button>}
         </p>
       )}
     </div>
