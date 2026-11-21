@@ -107,6 +107,8 @@ async function launchFixtureMain() {
           return
         }
         if (prompt === '/tmp/notes.md' || prompt === '日志文件为 /tmp/notes.md') {
+          emit({ type:'tool', value:'子智能体 · 已完成', agent:{ id:'reader', name:'资料核对', status:'completed' } })
+          emit({ type:'tool', value:'搜索网页', source:{ title:'桌面端资料' } })
           emit({ type:'text', value:'普通文本已收到。' })
           return
         }

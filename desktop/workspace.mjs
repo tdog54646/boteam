@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { Database } from './database.mjs'
+import { beginChatTitle, applyNativeTitle, suggestChatTitle } from './chat-titles.mjs'
 import { Accounts } from './accounts.mjs'
 import { redact } from './native.mjs'
 import { ComposerSettings, validateSelection } from './composer.mjs'
@@ -311,6 +312,8 @@ export class Workspace {
     switch (method) {
       case 'snapshot':
         return this.snapshot()
+      case 'suggestChatTitle':
+        return suggestChatTitle(this.db, p.chatId)
       case 'pickDirectory':
         return this.pickDirectory()
       case 'pickAttachments':
@@ -383,9 +386,13 @@ export class Workspace {
             this.db.get(`SELECT 1 FROM tasks WHERE chatId=? AND status IN ${active}`, p.id))
           throw new Error('请在任务结束后修改成员。')
         this.db.transaction(() => {
+          const previous = this.db.get('SELECT name FROM chats WHERE id=?', p.id).name
+          const name = p.name == null ? previous : required(p.name)
+          if (previous !== name)
+            this.db.run('DELETE FROM chat_title_requests WHERE chatId=?', p.id)
           this.db.run(
             'UPDATE chats SET name=?,updatedAt=? WHERE id=?',
-            required(p.name),
+            name,
             stamp(),
             p.id,
           )
@@ -414,16 +421,19 @@ export class Workspace {
     const bots = this.members(p.members)
     if (!['direct', 'group'].includes(p.kind) || (p.kind === 'direct' && bots.length !== 1))
       throw new Error('请选择有效的会话成员。')
+    const explicitName = p.kind === 'group' && p.name != null && (typeof p.name !== 'string' || p.name.trim())
+      ? required(p.name) : null
     const id = randomUUID()
     this.db.transaction(() => {
       this.db.run(
         'INSERT INTO chats VALUES(?,?,?,?)',
         id,
         p.kind,
-        p.kind === 'group' ? required(p.name) : bots[0].name,
+        explicitName || (p.kind === 'group' ? '新群聊' : bots[0].name),
         stamp(),
       )
       this.addMembers(id, bots)
+      if (!explicitName) this.db.run('INSERT INTO chat_title_requests(chatId) VALUES(?)', id)
     })
     this.notify()
     return id
@@ -481,6 +491,7 @@ export class Workspace {
       const attached = attachmentIds.length ? this.attachments.claim({
         chatId, homeBotId: chat.kind === 'direct' ? bots[0].id : null, messageId, ids: attachmentIds,
       }) : null
+      const titleDescription = !slash && !goalObjective && beginChatTitle(this.db, chatId, messageId, bots, message, attached?.attachments)
       const prompt = [slash ? slash.args : message, attached?.context].filter(Boolean).join('\n\n')
       this.db.run('UPDATE chats SET updatedAt=? WHERE id=?', now, chatId)
       return bots.map((bot) => {
@@ -522,6 +533,7 @@ export class Workspace {
           groupCutoff,
         )
         return {
+          titleDescription: bot.id === bots[0].id ? titleDescription : null,
           id, chatId, bot: { ...bot, model: settings.model, effort: settings.effort },
           account, prompt, replyId, messageId, groupCutoff,
           publishReview: chat.kind === 'group' && account.provider === 'codex' && slash?.action === 'review',
@@ -542,7 +554,7 @@ export class Workspace {
     this.notify()
     return messageId
   }
-  async execute({ id, chatId, bot, account, prompt, replyId, messageId, groupCutoff, publishReview, permission, planMode, extensionIds, goalObjective, slashCommand, attachments }) {
+  async execute({ id, chatId, titleDescription, bot, account, prompt, replyId, messageId, groupCutoff, publishReview, permission, planMode, extensionIds, goalObjective, slashCommand, attachments }) {
     if (this.closed || this.db.get('SELECT status FROM tasks WHERE id=?', id)?.status !== 'queued')
       return
     const controller = new AbortController()
@@ -590,6 +602,9 @@ export class Workspace {
         extensionIds,
         goalObjective,
         attachments,
+        titleRequest: titleDescription ? () => !this.closed && !controller.signal.aborted &&
+          this.db.get('SELECT 1 FROM chat_title_requests WHERE chatId=? AND messageId=? AND botId=?',
+            chatId, messageId, bot.id) && titleDescription : undefined,
         ...this.protections(account, permission),
         signal: controller.signal,
         emit: (event) => {
@@ -611,6 +626,9 @@ export class Workspace {
               case 'session':
                 this.associateThread(chatId, bot.id, account.id, val, cwd)
                 nativeThreadId = val
+                break
+              case 'title':
+                applyNativeTitle(this.db, chatId, messageId, bot.id, event.value)
                 break
               case 'goal':
                 if (event.value?.status) this.event(id, '原生目标 · ' + event.value.status)

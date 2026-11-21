@@ -30,7 +30,6 @@ function ChatList({
   kind,
   chats,
   tasks,
-  messages,
   selected,
   disabled,
   select,
@@ -54,15 +53,7 @@ function ChatList({
       {expanded &&
         (chats.length ? (
           chats.map((chat) => {
-            const duplicate = chats.some(
-              (other) => other.id !== chat.id && other.name === chat.name,
-            );
-            const excerpt = duplicate
-              ? messages.find(
-                  (m) => m.chatId === chat.id && m.author === "user",
-                )?.text
-              : "";
-            const display = excerpt ? `${chat.name} · ${excerpt}` : chat.name;
+            const display = chat.name;
             const running = tasks.some(
               (t) =>
                 t.chatId === chat.id &&
@@ -165,7 +156,6 @@ export function Sidebar({
             open={open}
             chats={disabled ? [] : state.chats.filter((c) => c.kind === kind)}
             tasks={state.tasks}
-            messages={state.messages}
           />
         ))}
       </nav>

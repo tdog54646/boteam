@@ -112,6 +112,13 @@ export class Database {
         id TEXT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE,
         fileCount INTEGER NOT NULL,skippedCount INTEGER NOT NULL,entries TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS fork_attachments(
+        messageId TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        attachmentId TEXT NOT NULL REFERENCES attachments(id),PRIMARY KEY(messageId,attachmentId)
+      );
+      CREATE VIEW IF NOT EXISTS message_attachments AS
+        SELECT messageId,id AS attachmentId FROM attachments WHERE messageId IS NOT NULL
+        UNION ALL SELECT messageId,attachmentId FROM fork_attachments;
       UPDATE tasks SET status='interrupted',approval=NULL,error='上次运行因应用关闭而中断，可继续发送消息。'
         WHERE status IN ('running','queued','approval');
     `)
@@ -125,6 +132,15 @@ export class Database {
       this.db.exec('ALTER TABLE composer_settings ADD COLUMN planMode INTEGER NOT NULL DEFAULT 0')
     const columns = this.all('PRAGMA table_info(bots)').map((column) => column.name)
     this.transaction(() => {
+      if (!this.get("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='chat_title_requests'")) {
+        this.db.exec(`CREATE TABLE chat_title_requests(chatId TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+          messageId TEXT,botId TEXT);
+          INSERT INTO chat_title_requests(chatId)
+          SELECT c.id FROM chats c JOIN members m ON c.id=m.chatId JOIN bots b ON b.id=m.botId
+          WHERE c.kind='direct' AND c.name=b.name
+            AND NOT EXISTS (SELECT 1 FROM messages WHERE chatId=c.id)
+            AND NOT EXISTS (SELECT 1 FROM chat_forks WHERE chatId=c.id);`)
+      }
       if (!columns.includes('model')) this.db.exec("ALTER TABLE bots ADD COLUMN model TEXT NOT NULL DEFAULT ''")
       if (!columns.includes('effort')) this.db.exec("ALTER TABLE bots ADD COLUMN effort TEXT NOT NULL DEFAULT ''")
       if (!taskColumns.includes('groupCutoff')) this.db.exec('ALTER TABLE tasks ADD COLUMN groupCutoff INTEGER')
