@@ -2,6 +2,47 @@ import { DatabaseSync } from 'node:sqlite'
 import { chmodSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
+function publishLegacyGroupHistory(db) {
+  // Old replies have a slot in the transcript, but no completion timestamp.
+  // Reconstruct the baseline in display order. Only classify rows whose
+  // originating task survives, regardless of current group membership.
+  const candidates = db.prepare(`
+    WITH classified AS MATERIALIZED (
+      SELECT t.id,t.chatId,t.botId,t.messageId,t.status,
+        CASE
+          WHEN t.runSettings IS NULL OR NOT json_valid(t.runSettings) THEN 'unknown'
+          WHEN json_type(t.runSettings) != 'object' THEN 'unknown'
+          -- Pre-composer archives default to {}. A slash command (first token)
+          -- or the native goal display cannot be distinguished from typed text.
+          WHEN json(t.runSettings)='{}' AND (u.text GLOB '目标 · *' OR (u.text GLOB '/*' AND
+            substr(u.text,1,instr(u.text || ' ',' ')-1) NOT GLOB '/*/*')) THEN 'unknown'
+          WHEN json_type(t.runSettings,'$.goalObjective') IS NOT NULL THEN 'control'
+          WHEN json_type(t.runSettings,'$.slashCommand') IS NULL THEN 'ordinary'
+          -- Old /review bubbles did not store the native final findings separately from progress.
+          ELSE 'control'
+        END AS kind
+      FROM tasks t JOIN chats c ON c.id=t.chatId AND c.kind='group'
+      JOIN messages u ON u.id=t.messageId AND u.chatId=t.chatId AND u.author='user'
+    ), ordinaryRequests AS (
+      SELECT messageId,count(*) AS taskCount FROM classified GROUP BY messageId
+      HAVING min(kind='ordinary')
+    )
+    SELECT m.id,m.chatId,m.text FROM messages m
+    LEFT JOIN ordinaryRequests u ON m.id=u.messageId
+    LEFT JOIN classified r ON r.id=m.taskId AND r.chatId=m.chatId AND r.botId=m.botId
+    WHERE (m.author='user' AND u.taskCount=json_array_length(m.recipients))
+       OR (m.author='bot' AND r.status='done' AND r.kind='ordinary')
+    ORDER BY m.rowid`)
+  const publish = db.prepare('UPDATE messages SET publishSeq=? WHERE id=?')
+  const boundaries = new Map()
+  for (const { id, chatId, text } of candidates.iterate()) {
+    if (!text.trim()) continue
+    const next = (boundaries.get(chatId) ?? 0) + 1
+    publish.run(next, id)
+    boundaries.set(chatId, next)
+  }
+}
+
 export class Database {
   constructor(root) {
     mkdirSync(root, { recursive: true, mode: 0o700 })
@@ -31,7 +72,8 @@ export class Database {
       );
       CREATE TABLE IF NOT EXISTS messages(
         id TEXT PRIMARY KEY,chatId TEXT NOT NULL REFERENCES chats(id),botId TEXT,author TEXT NOT NULL,
-        name TEXT NOT NULL,text TEXT NOT NULL,createdAt TEXT NOT NULL,recipients TEXT NOT NULL,taskId TEXT
+        name TEXT NOT NULL,text TEXT NOT NULL,createdAt TEXT NOT NULL,recipients TEXT NOT NULL,taskId TEXT,
+        publishSeq INTEGER,replyToMessageId TEXT REFERENCES messages(id),nativeThreadId TEXT
       );
       CREATE TABLE IF NOT EXISTS tasks(
         id TEXT PRIMARY KEY,chatId TEXT NOT NULL REFERENCES chats(id),botId TEXT NOT NULL,accountId TEXT NOT NULL,
@@ -43,6 +85,10 @@ export class Database {
       CREATE TABLE IF NOT EXISTS threads(
         chatId TEXT NOT NULL,botId TEXT NOT NULL,accountId TEXT NOT NULL,threadId TEXT NOT NULL,cwd TEXT NOT NULL,
         PRIMARY KEY(chatId,botId), UNIQUE(accountId,threadId)
+      );
+      CREATE TABLE IF NOT EXISTS group_delivery(
+        chatId TEXT NOT NULL REFERENCES chats(id),botId TEXT NOT NULL REFERENCES bots(id),
+        threadId TEXT NOT NULL,throughSeq INTEGER NOT NULL,PRIMARY KEY(chatId,botId,threadId)
       );
       CREATE TABLE IF NOT EXISTS composer_settings(
         chatId TEXT NOT NULL REFERENCES chats(id),botId TEXT NOT NULL REFERENCES bots(id),
@@ -81,7 +127,30 @@ export class Database {
     this.transaction(() => {
       if (!columns.includes('model')) this.db.exec("ALTER TABLE bots ADD COLUMN model TEXT NOT NULL DEFAULT ''")
       if (!columns.includes('effort')) this.db.exec("ALTER TABLE bots ADD COLUMN effort TEXT NOT NULL DEFAULT ''")
+      if (!taskColumns.includes('groupCutoff')) this.db.exec('ALTER TABLE tasks ADD COLUMN groupCutoff INTEGER')
+      if (!this.all('PRAGMA table_info(messages)').some(c => c.name === 'publishSeq')) {
+        this.db.exec(`
+          ALTER TABLE messages ADD COLUMN publishSeq INTEGER;
+          ALTER TABLE messages ADD COLUMN replyToMessageId TEXT REFERENCES messages(id);
+          ALTER TABLE messages ADD COLUMN nativeThreadId TEXT;
+        `)
+        publishLegacyGroupHistory(this.db)
+      }
+      this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS messages_by_publication
+        ON messages(chatId,publishSeq) WHERE publishSeq IS NOT NULL`)
     })
+  }
+  groupBoundary(chatId) {
+    return this.get(`SELECT coalesce(max(publishSeq),0) AS seq FROM messages
+      WHERE chatId=? AND publishSeq IS NOT NULL`, chatId).seq
+  }
+  publishGroupMessage(chatId, messageId) {
+    const row = this.get(`UPDATE messages SET publishSeq=coalesce(publishSeq,
+        (SELECT coalesce(max(publishSeq),0)+1 FROM messages WHERE chatId=? AND publishSeq IS NOT NULL))
+      WHERE id=? AND chatId=? AND EXISTS (SELECT 1 FROM chats WHERE id=? AND kind='group')
+      RETURNING publishSeq`, chatId, messageId, chatId, chatId)
+    if (!row) throw new Error('无法在当前群发布这条消息。')
+    return row.publishSeq
   }
   get(sql, ...args) {
     return this.db.prepare(sql).get(...args)
