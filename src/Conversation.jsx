@@ -16,6 +16,7 @@ import {
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { linkedChatId } from "../desktop/chat-transfer.mjs";
 import { Composer } from "./Composer";
+import { MessageNavigator } from "./MessageNavigator";
 import { MessageQuote } from "./MessageQuote";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { Button, errorText, Notice, ProviderIcon, Spinner } from "./ui";
@@ -232,7 +233,7 @@ export function Conversation({ chat, state, invoke, open, onOpenChat, onNewDraft
       linkedChatId(part) ? chatLink(part, part, index) : part);
   }
   const log = useMemo(() => messages.filter(m => m.chatId === chat.id), [messages, chat.id]);
-  const jobs = tasks.filter((t) => t.chatId === chat.id);
+  const jobs = useMemo(() => tasks.filter(t => t.chatId === chat.id), [tasks, chat.id]);
   const members = chat.members
     .map((id) => bots.find((b) => b.id === id))
     .filter((b) => b && !b.archived);
@@ -244,6 +245,7 @@ export function Conversation({ chat, state, invoke, open, onOpenChat, onNewDraft
   const bottom = useRef(null);
   const scroll = useRef(null);
   const follow = useRef(true);
+  const navigatorScrollTop = useRef(null);
   useEffect(() => {
     if (follow.current) bottom.current?.scrollIntoView({ block: "end" });
   }, [messages, tasks]);
@@ -281,6 +283,8 @@ export function Conversation({ chat, state, invoke, open, onOpenChat, onNewDraft
         ref={scroll}
         onScroll={() => {
           const y = scroll.current;
+          if (y.scrollTop === navigatorScrollTop.current) return;
+          navigatorScrollTop.current = null;
           follow.current = y.scrollHeight - y.clientHeight - y.scrollTop < 100;
         }}
       >
@@ -432,6 +436,10 @@ export function Conversation({ chat, state, invoke, open, onOpenChat, onNewDraft
           </div>
         )}
       </div>
+      <MessageNavigator messages={log} tasks={jobs} scrollRef={scroll} onNavigate={scroller => {
+        navigatorScrollTop.current = scroller.scrollTop;
+        follow.current = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 2;
+      }} />
       {chat.archived ? (
         <div className="archived-composer"><span>此聊天已归档</span><Button onClick={restoreChat}>恢复聊天</Button></div>
       ) : <Composer onOpenChat={onOpenChat} onNewDraft={onNewDraft} chat={chat} members={members} state={state} invoke={invoke}

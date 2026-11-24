@@ -1,0 +1,134 @@
+.message-nav {
+  --nav-ink: #1a1c1f;
+  --nav-muted: rgb(26 28 31 / 70%);
+  --nav-subtle: rgb(26 28 31 / 50%);
+  --nav-surface: #f8f8f8;
+  --nav-border: rgb(26 28 31 / 7.3%);
+  --nav-shadow: 0 18px 40px -16px #0000002e, 0 1px 0 #0000000a;
+  position: absolute;
+  z-index: 12;
+  top: 50%;
+  left: 8px;
+  width: 36px;
+  transform: translateY(-50%);
+  -webkit-app-region: no-drag;
+}
+
+@media (prefers-color-scheme: dark) {
+  .message-nav {
+    --nav-ink: #dfdfdf;
+    --nav-muted: rgb(255 255 255 / 70%);
+    --nav-subtle: rgb(255 255 255 / 50%);
+    --nav-surface: #252525;
+    --nav-border: rgb(223 223 223 / 7.5%);
+    --nav-shadow: 0 24px 48px -16px #0009, 0 1px 0 #ffffff0a;
+  }
+}
+
+.message-nav-list {
+  display: flex;
+  flex-direction: column;
+  width: 36px;
+  max-height: min(70vh, 40rem);
+  padding-block: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.message-nav-marker {
+  position: relative;
+  flex: 0 0 10px;
+  width: 36px;
+  height: 10px;
+  color: var(--nav-subtle);
+  touch-action: none;
+  --marker-opacity: 0.4;
+}
+
+.message-nav-tick {
+  position: absolute;
+  top: 4px;
+  left: 8px;
+  width: 26px;
+  height: 2px;
+  background: currentColor;
+  opacity: var(--marker-opacity);
+  transform: scaleX(calc((6 + 20 * var(--marker-progress)) / 26));
+  transform-origin: left;
+  transition: transform 160ms linear(0, .398 10%, .682 20%, .843 30%, .925 40%, .972 50%, 1.004 60%, 1.008 70%, 1.003 80%, 1);
+}
+
+.message-nav-marker[data-in-view="true"] {
+  color: var(--nav-ink);
+  --marker-opacity: 0.6;
+}
+
+.message-nav-list[data-previewing="true"] .message-nav-marker:not(:is(:hover, :focus-visible, [data-target="true"])) {
+  color: var(--nav-subtle);
+  --marker-opacity: 0.4;
+}
+
+.message-nav-marker:is(:hover, :focus-visible, [data-target="true"]) {
+  color: var(--nav-ink);
+  --marker-opacity: 1;
+}
+
+.message-nav-marker:focus-visible {
+  outline: none;
+}
+
+.message-nav-marker:is(:hover, :focus-visible) .message-nav-tick {
+  transform: scaleX(1);
+}
+
+.message-nav[data-dragging="true"] .message-nav-tick {
+  transition: none;
+}
+
+.message-nav-preview {
+  position: absolute;
+  left: 42px;
+  width: min(320px, calc(100vw - 120px));
+  padding: 8px 10px;
+  overflow: hidden;
+  border: 1px solid var(--nav-border);
+  border-radius: 8px;
+  background: var(--nav-surface);
+  color: var(--nav-muted);
+  box-shadow: var(--nav-shadow);
+  font-size: 13px;
+  font-weight: 430;
+  line-height: 1.5;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.message-nav-preview strong {
+  display: block;
+  overflow: hidden;
+  color: var(--nav-ink);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-nav-preview p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.message-nav-static-flash {
+  border-radius: 8px;
+  background: color-mix(in srgb, #339cff 10%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-nav-tick {
+    transition: none;
+  }
+}

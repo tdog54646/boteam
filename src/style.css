@@ -147,6 +147,7 @@ pre {
   background: var(--sidebar);
 }
 .main {
+  position: relative;
   display: flex;
   flex: 1 1 0;
   min-width: 0;
