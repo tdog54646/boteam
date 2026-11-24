@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm, writeFile, stat } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile, stat, symlink } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { composerActions, detect, options, prepare, run } from '../desktop/adapters/claude.mjs'
@@ -48,7 +48,7 @@ async function fixture(t, status = oauth, account = live, resultError = null) {
   await writeFile(
     bin,
     `#!${process.execPath}
-import { appendFileSync, existsSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 const args = process.argv.slice(2)
 if (args.includes('auth')) {
@@ -57,7 +57,7 @@ if (args.includes('auth')) {
 }
 const write = m => console.log(JSON.stringify(m))
 const session = args[args.indexOf(args.includes('--resume') ? '--resume' : '--session-id')+1]
-let model
+let model, afterClose = []
 for await (const line of createInterface({input:process.stdin})) {
   const m = JSON.parse(line)
   if (m.type === 'control_request') {
@@ -79,6 +79,13 @@ for await (const line of createInterface({input:process.stdin})) {
       write({type:'result',subtype:'error_during_execution',is_error:true,errors:[${JSON.stringify(resultError)}],session_id:session})
       continue
     }
+    const scenario = process.env.CLAUDE_CONFIG_DIR + '/stream-fixture.json'
+    if (existsSync(scenario)) {
+      const fixture = JSON.parse(readFileSync(scenario, 'utf8'))
+      for (const frame of fixture.frames) write({session_id:session,...frame})
+      afterClose = fixture.afterClose
+      continue
+    }
     write({type:'control_request',request_id:'ask1',request:{subtype:'can_use_tool',tool_name:'Bash',input:{command:'echo sk-ant-fake-private'}}})
   } else if (m.type === 'control_response') {
     const decision = m.response.response.behavior
@@ -87,6 +94,10 @@ for await (const line of createInterface({input:process.stdin})) {
     write({type:'assistant',message:{content:[{type:'text',text:'part1'+decision}]}})
     write({type:'result',subtype:'success',is_error:false,result:'part1'+decision,session_id:session})
   }
+}
+for (const { delay, ...frame } of afterClose) {
+  if (delay) await new Promise(resolve => setTimeout(resolve, delay))
+  write({session_id:session,...frame})
 }
 `,
     { mode: 0o700 },
@@ -236,6 +247,218 @@ test('resumes exact native UUID, waits for approvals, emits only text deltas', a
     assert.equal(args[args.indexOf('--permission-prompt-tool') + 1], 'stdio')
     assert.equal(text, 'hello')
   }
+})
+
+const nativeText = text => ({ type: 'text', text })
+const nativeAssistant = (content, parent_tool_use_id = null, uuid) => ({
+  type: 'assistant', parent_tool_use_id, uuid, message: { role: 'assistant', content },
+})
+const nativeUser = (content, parent_tool_use_id, uuid) => ({
+  type: 'user', parent_tool_use_id, uuid, message: { role: 'user', content },
+})
+const agentTool = (id, description, name = 'Agent') => ({
+  type: 'tool_use', id, name, input: { description },
+})
+const started = (task_id, tool_use_id, description) => ({
+  type: 'system', subtype: 'task_started', task_type: 'local_agent', task_id, tool_use_id, description,
+})
+const finished = (task_id, output_file) => ({
+  type: 'system', subtype: 'task_notification', status: 'completed', task_id, output_file,
+})
+
+async function observeAgents(t, frames, prepare, afterClose = [], { signal, onEvent } = {}) {
+  const f = await fixture(t)
+  const account = { ...f, ...await detect(f) }
+  if (prepare) await prepare(f.source)
+  await writeFile(path.join(f.source, 'stream-fixture.json'), JSON.stringify({
+    frames: [...frames, { type: 'result', subtype: 'success', is_error: false, result: 'Main reply' }],
+    afterClose,
+  }))
+  const events = []
+  await run({ account, cwd: f.source, threadId: session, prompt: 'request', signal, emit(e) {
+    events.push(e)
+    onEvent?.(e)
+  } })
+  return events
+}
+
+test('Claude forwards visible child messages from Agent and nested Task without duplicating parent streaming', async t => {
+  const userId = '12ffa329-fcd8-42c4-926b-4d57fc8bde06'
+  const answerId = '22ffa329-fcd8-42c4-926b-4d57fc8bde06'
+  const nestedId = '32ffa329-fcd8-42c4-926b-4d57fc8bde06'
+  const events = await observeAgents(t, [
+    nativeAssistant([agentTool('tool-root', 'Inspect fixture')]),
+    started('agent-root', 'tool-root', 'Inspect fixture'),
+    nativeUser([nativeText('Check fixture'), { type: 'tool_result', content: 'raw user tool result' }], 'tool-root', userId),
+    nativeAssistant([agentTool('tool-nested', 'Double check', 'Task')], 'tool-root'),
+    started('agent-nested', 'tool-nested', 'Double check'),
+    { type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Main reply' } } },
+    nativeAssistant([{ type: 'thinking', thinking: 'hidden thinking' }, nativeText('Inspecting fixture')], 'tool-root', answerId),
+    nativeAssistant([nativeText('Nested result')], 'tool-nested', nestedId),
+    nativeAssistant([nativeText('Unknown child content')], 'unregistered-tool'),
+    nativeAssistant([nativeText('Main reply')]),
+    finished('agent-nested'),
+    finished('agent-root'),
+  ])
+  assert.deepEqual(events.filter(e => e.type === 'text').map(e => e.value), ['Main reply'])
+  assert.deepEqual(events.filter(e => e.agent?.status).map(e => [e.agent.id, e.agent.status]), [
+    ['tool-root', 'running'], ['tool-nested', 'running'], ['tool-nested', 'completed'], ['tool-root', 'completed'],
+  ])
+  assert.deepEqual(events.filter(e => e.type === 'agentTranscript').map(e => [e.agent.id, e.entries.map(row => [row.role, row.text])]), [
+    ['tool-root', [['user', 'Check fixture']]],
+    ['tool-root', [['assistant', 'Inspecting fixture']]],
+    ['tool-nested', [['assistant', 'Nested result']]],
+  ])
+  assert.doesNotMatch(JSON.stringify(events), /hidden thinking|raw user tool result|Unknown child content/)
+})
+
+test('Claude reads only the announced managed session transcript and falls back to the typed Agent result', async t => {
+  const rowId = '42ffa329-fcd8-42c4-926b-4d57fc8bde06'
+  const row = (agentId, text, sessionId = session) => JSON.stringify({
+    isSidechain: true, type: 'assistant', agentId, sessionId, uuid: rowId,
+    message: { role: 'assistant', content: [{ type: 'redacted_thinking', data: 'hidden persisted data' }, nativeText(text)] },
+  })
+  const events = await observeAgents(t, [
+    nativeAssistant([agentTool('tool-real', 'Background work'), agentTool('tool-link', 'Foreground work')]),
+    started('agent-real', 'tool-real'),
+    started('agent-link', 'tool-link'),
+    finished('agent-real'),
+    finished('agent-link', '/another-profile/agent-link.jsonl'),
+    {
+      ...nativeUser([{ type: 'tool_result', tool_use_id: 'tool-real', content: [] }], null, rowId),
+      tool_use_result: { status: 'completed', agentId: 'agent-real', content: [nativeText('Same result in another frame')] },
+    },
+    {
+      ...nativeUser([{ type: 'tool_result', tool_use_id: 'tool-link', content: [nativeText('raw tool metadata')] }], null, rowId),
+      tool_use_result: { status: 'completed', agentId: 'agent-link', content: [nativeText('Verified final result')] },
+    },
+  ], async source => {
+    const project = (await realpath(source)).replace(/[^a-zA-Z0-9]/g, '-')
+    const nativeDir = path.join(source, 'projects', project, session, 'subagents')
+    await mkdir(nativeDir, { recursive: true })
+    await writeFile(path.join(nativeDir, 'agent-agent-real.jsonl'), [
+      row('agent-real', 'wrong native session', 'another-session'),
+      row('agent-unknown', 'wrong native agent'),
+      row('agent-real', 'Verified persisted text'),
+    ].join('\n'))
+    const outside = path.join(source, 'outside.jsonl')
+    await writeFile(outside, row('agent-link', 'linked private content'))
+    await symlink(outside, path.join(nativeDir, 'agent-agent-link.jsonl'))
+  })
+  assert.deepEqual(events.filter(e => e.type === 'agentTranscript').map(e => [e.agent.id, e.entries.map(row => row.text)]), [
+    ['tool-real', ['Verified persisted text']], ['tool-link', ['Verified final result']],
+  ])
+  assert.doesNotMatch(JSON.stringify(events), /wrong native|linked private|raw tool metadata|hidden persisted/)
+})
+
+test('Claude announces an older Task before its result when the CLI omits task_started', async t => {
+  const events = await observeAgents(t, [
+    nativeAssistant([agentTool('tool-legacy', 'Review legacy fixture', 'Task')]),
+    nativeAssistant([nativeText('Main reply')]),
+    nativeUser([{ type: 'tool_result', tool_use_id: 'tool-legacy', content: [] }], null),
+  ])
+  assert.deepEqual(events.flatMap(e => e.agent?.status ? [e.agent.status] : e.type === 'text' ? [e.value] : []),
+    ['running', 'Main reply', 'completed'])
+})
+
+test('Claude leaves an asynchronously launched Agent running until its native completion notification', async t => {
+  const events = await observeAgents(t, [
+    nativeAssistant([agentTool('tool-background', 'Run in background')]),
+    started('agent-background', 'tool-background'),
+    {
+      ...nativeUser([{ type: 'tool_result', tool_use_id: 'tool-background', content: [] }], null),
+      tool_use_result: { status: 'async_launched', agentId: 'agent-background' },
+    },
+    nativeAssistant([nativeText('Main reply')]),
+    { type: 'result', subtype: 'success', is_error: false, result: 'Main reply' },
+    finished('agent-background'),
+  ])
+  assert.deepEqual(events.flatMap(e => e.agent?.status ? [[e.agent.id, e.agent.status]] : e.type === 'text' ? [e.value] : []),
+    [['tool-background', 'running'], 'Main reply', ['tool-background', 'completed']])
+})
+
+test('Claude displays the confirmed background delegation when the CLI omits or repeats the child user frame', async t => {
+  const tool = agentTool('tool-background', 'Review fixture')
+  tool.input.prompt = 'Check the fixture'
+  tool.input.run_in_background = true
+  const linked = nativeUser([nativeText(tool.input.prompt)], tool.id, 'typed-user')
+  for (const forwardUser of [false, true]) {
+    const events = await observeAgents(t, [
+      nativeAssistant([tool]),
+      { ...started('agent-background', tool.id), prompt: forwardUser ? 'Internal wakeup' : tool.input.prompt },
+      {
+        ...nativeUser([{ type: 'tool_result', tool_use_id: tool.id, content: [] }], null),
+        tool_use_result: { status: 'async_launched', agentId: 'agent-background', prompt: tool.input.prompt },
+      },
+      ...(forwardUser ? [linked] : []),
+      nativeAssistant([nativeText('Child reports success')], tool.id, 'child-answer'),
+      finished('agent-background'),
+    ])
+    assert.deepEqual(events.filter(e => e.type === 'agentTranscript').flatMap(e => e.entries).map(row => [row.role, row.text]), [
+      ['user', 'Check the fixture'],
+      ['assistant', 'Child reports success'],
+    ])
+  }
+})
+
+test('Claude retains late child output during native shutdown when the parent reply is already done', async t => {
+  const id = '52ffa329-fcd8-42c4-926b-4d57fc8bde06'
+  const events = await observeAgents(t, [
+    nativeAssistant([agentTool('tool-late', 'Finishing in background')]),
+    started('agent-late', 'tool-late'),
+    nativeAssistant([nativeText('Main reply')]),
+  ], null, [
+    nativeAssistant([nativeText('Child finished during shutdown')], 'tool-late', id),
+    finished('agent-late'),
+    nativeAssistant([nativeText('Later native parent reply')]),
+  ])
+  assert.deepEqual(events.filter(e => e.type === 'text').map(e => e.value), ['Main reply'])
+  assert.deepEqual(events.filter(e => e.type === 'agentTranscript').flatMap(e => e.entries), [
+    { id, role: 'assistant', text: 'Child finished during shutdown' },
+  ])
+  assert.deepEqual(events.filter(e => e.agent?.status).map(e => e.agent.status), ['running', 'completed'])
+})
+
+test('Claude waits past the normal shutdown grace for a confirmed background Agent', async t => {
+  const tool = agentTool('tool-background', 'Finish the background fixture')
+  const events = await observeAgents(t, [
+    nativeAssistant([tool]),
+    started('agent-background', tool.id),
+    {
+      ...nativeUser([{ type: 'tool_result', tool_use_id: tool.id, content: [] }], null),
+      tool_use_result: { status: 'async_launched', agentId: 'agent-background' },
+    },
+    nativeAssistant([nativeText('Main reply')]),
+  ], null, [
+    { ...nativeAssistant([nativeText('Completed after the original grace')], tool.id, 'late-child-answer'), delay: 1800 },
+    finished('agent-background'),
+  ])
+  assert.deepEqual(events.filter(e => e.agent?.status).map(e => e.agent.status), ['running', 'completed'])
+  assert.deepEqual(events.filter(e => e.type === 'agentTranscript').flatMap(e => e.entries).map(e => e.text),
+    ['Completed after the original grace'])
+})
+
+test('Claude can cancel the wait for a confirmed background Agent after the parent reply', async t => {
+  const controller = new AbortController()
+  const tool = agentTool('tool-background', 'Waiting for cancellation')
+  tool.input.run_in_background = true
+  const events = await observeAgents(t, [
+    nativeAssistant([tool]),
+    started('agent-background', tool.id),
+    nativeAssistant([nativeText('Main reply')]),
+  ], null, [
+    nativeAssistant([nativeText('Background Agent is still working')], tool.id, 'before-cancel'),
+    { ...nativeAssistant([nativeText('Too late')], tool.id, 'late-child-answer'), delay: 1800 },
+    finished('agent-background'),
+  ], {
+    signal: controller.signal,
+    onEvent(event) {
+      if (event.type === 'agentTranscript') controller.abort()
+    },
+  })
+  assert.deepEqual(events.filter(e => e.type === 'agentTranscript').flatMap(e => e.entries).map(e => e.text),
+    ['Background Agent is still working'])
+  assert.deepEqual(events.filter(e => e.agent?.status).map(e => e.agent.status), ['running', 'interrupted'])
 })
 
 test('reauthorization transfers only app-owned sessions to the permanent new login directory', async (t) => {

@@ -1,4 +1,5 @@
-import { agentActivity, webActivity } from './chat-activity.mjs'
+import { webActivity } from './chat-activity.mjs'
+import { claudeSubagents } from './claude-subagents.mjs'
 import { execFile, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -25,6 +26,8 @@ const permissions = { default: 'default', plan: 'plan', edits: 'acceptEdits' }
 export const permissionModes = Object.keys(permissions)
 
 const defaults = ['--safe-mode', '--setting-sources', '']
+const shutdownGraceMs = 1500
+const backgroundWaitMs = 10 * 60_000
 const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i
 const defaultSource = path.join(os.homedir(), '.claude')
 const authOverride =
@@ -512,7 +515,8 @@ async function nativeSession(
   const group = process.platform !== 'win32'
   const child = spawn(account.bin, args, {
     cwd,
-    env: environment(account.source),
+    // Older CLIs ignore this option. Their persisted child transcript is the fallback.
+    env: { ...environment(account.source), ...(operation === 'run' && { CLAUDE_CODE_FORWARD_SUBAGENT_TEXT: '1' }) },
     stdio: ['pipe', 'pipe', 'ignore'],
     detached: group,
   })
@@ -537,14 +541,17 @@ async function nativeSession(
       yield message
     }
   })()
+  let observeAgents
   async function control(request, failure) {
     const requestId = randomUUID()
     send({ type: 'control_request', request_id: requestId, request })
     for (;;) {
       const { value: message, done } = await messages.next()
       if (done) throw new Error(signal?.aborted ? '任务已取消。' : failure)
-      if (message.type !== 'control_response' || message.response?.request_id !== requestId)
+      if (message.type !== 'control_response' || message.response?.request_id !== requestId) {
+        await observeAgents?.(message)
         continue
+      }
       if (message.response.subtype !== 'success') throw new Error(failure)
       return message.response.response
     }
@@ -645,7 +652,8 @@ async function nativeSession(
       parent_tool_use_id: null,
       session_id: id,
     })
-    const agentCalls = new Map()
+    const agents = claudeSubagents({ source: account.source, cwd, session: id, emit })
+    observeAgents = agents.handle
     for await (const message of messages) {
       if (message.session_id && message.session_id !== id)
         throw new Error('Claude 返回了不匹配的原生会话。')
@@ -653,6 +661,7 @@ async function nativeSession(
         seenSession = true
         await emit({ type: 'session', value: id })
       }
+      await observeAgents(message)
       if (message.type === 'control_request') {
         const req = message.request || {}
         const detail = actionDetail(req)
@@ -682,22 +691,18 @@ async function nativeSession(
           await emit({ type: 'text', value: event.delta.text })
           emittedText = streamed = true
         }
-      } else if (message.type === 'assistant' && !message.error) {
-        for (const block of message.message?.content || []) {
-          if (block.type === 'tool_use') {
-            let activity
-            if (['Agent', 'Task'].includes(block.name)) {
-              activity = agentActivity(block.id, 'running', block.input?.description)
-              if (activity) agentCalls.set(block.id, block.input?.run_in_background === true)
-            } else if (['WebFetch', 'WebSearch'].includes(block.name)) {
-              activity = webActivity(block.input?.url, block.input?.query)
-            }
-            await emit(activity || { type: 'tool', value: toolName(block.name) })
+      } else if (message.type === 'assistant' && !message.parent_tool_use_id && !message.error) {
+        for (const block of Array.isArray(message.message?.content) ? message.message.content : []) {
+          if (block?.type === 'tool_use') {
+            if (message.session_id === id && await agents.noteCall(block)) continue
+            const event = ['WebFetch', 'WebSearch'].includes(block.name)
+              ? webActivity(block.input?.url, block.input?.query)
+              : { type: 'tool', value: toolName(block.name) }
+            await emit(event)
           }
           if (
-            block.type === 'text' &&
+            block?.type === 'text' &&
             !streamed &&
-            !message.parent_tool_use_id &&
             typeof block.text === 'string'
           ) {
             await emit({ type: 'text', value: block.text })
@@ -705,17 +710,6 @@ async function nativeSession(
           }
         }
         streamed = false
-      } else if (message.type === 'user' && Array.isArray(message.message?.content)) {
-        for (const block of message.message.content) {
-          if (block.type === 'tool_result' && agentCalls.get(block.tool_use_id) === false) {
-            agentCalls.delete(block.tool_use_id)
-            await emit(agentActivity(block.tool_use_id, block.is_error ? 'errored' : 'completed'))
-          }
-        }
-      } else if (message.type === 'system' && message.subtype === 'task_notification') {
-        const status = { completed: 'completed', failed: 'errored', stopped: 'interrupted' }[message.status]
-        if (status && agentCalls.delete(message.tool_use_id))
-          await emit(agentActivity(message.tool_use_id, status))
       } else if (message.type === 'result') {
         if (message.is_error || message.subtype !== 'success') throw failResult(message)
         if (!seenSession) throw new Error('Claude 未返回可恢复的原生会话。')
@@ -748,6 +742,25 @@ async function nativeSession(
             if (result?.title) await emit({ type: 'title', value: result.title })
           } finally { clearTimeout(deadline) }
         }
+        if (agents.hasAgents()) {
+          // Print mode can finish the parent turn before a known background
+          // agent. Allow Claude's normal wait at EOF, then its usual flush grace.
+          child.stdin.end()
+          let waitingForBackground = agents.hasBackground()
+          let reap = setTimeout(() => stop('SIGKILL'), waitingForBackground ? backgroundWaitMs : shutdownGraceMs)
+          try {
+            for await (const frame of messages) {
+              await observeAgents(frame)
+              if (waitingForBackground && !agents.hasBackground()) {
+                waitingForBackground = false
+                clearTimeout(reap)
+                reap = setTimeout(() => stop('SIGKILL'), shutdownGraceMs)
+              }
+            }
+            await onClose
+            await agents.settle(child.signalCode === 'SIGKILL')
+          } finally { clearTimeout(reap) }
+        }
         return
       }
     }
@@ -757,7 +770,7 @@ async function nativeSession(
     child.stdin.end()
     input.close()
     // Give the native client time to flush its session before forcing exit.
-    const reap = setTimeout(() => stop('SIGKILL'), 1500)
+    const reap = setTimeout(() => stop('SIGKILL'), shutdownGraceMs)
     await onClose
     clearTimeout(reap)
     signal?.removeEventListener('abort', abort)
