@@ -6,7 +6,7 @@
   --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   --canvas: #fff;
   --surface: #fff;
-  --sidebar: #ededed;
+  --sidebar: #fbfbfb;
   --under: #f9f9f9;
   --fg: #1a1c1f;
   --muted: color-mix(in srgb, var(--fg) 70%, var(--canvas));
@@ -38,7 +38,7 @@
   :root {
     --canvas: #181818;
     --surface: #282828;
-    --sidebar: #212121;
+    --sidebar: #1c2225;
     --under: #1e1e1e;
     --fg: #dfdfdf;
     --line: rgb(255 255 255 / 8%);
@@ -162,7 +162,7 @@ pre {
   flex-direction: column;
   user-select: none;
   background: var(--sidebar);
-  border-right: 1px solid var(--line);
+  border-right: 1px solid light-dark(#ededed, var(--line));
   color: var(--fg);
 }
 .sidebar-titlebar,
