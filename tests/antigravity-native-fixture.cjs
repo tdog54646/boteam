@@ -89,6 +89,13 @@ if (args.includes('/usage')) {
     if (id === 900 && result) {
       save(result)
       send({ id: promptId, result: { stopReason: 'end_turn' } })
+      if (state.backgroundResult) {
+        setTimeout(() => send({ method: 'session/update', params: {
+          sessionId: state.backgroundResult.sessionId,
+          update: { sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: state.backgroundResult.text } },
+        } }), state.backgroundResult.delay)
+      }
       return
     }
     if (method === 'initialize')
@@ -180,6 +187,8 @@ if (args.includes('/usage')) {
       }
       if (state.eventTitle) for (const [sessionId, title] of [['foreign', 'foreign'], [params.sessionId, state.eventTitle]])
         send({ method: 'session/update', params: { sessionId, update: { sessionUpdate: 'session_info_update', title } } })
+      for (const { sessionId = params.sessionId, ...update } of state.promptUpdates || [])
+        send({ method: 'session/update', params: { sessionId, update } })
       promptId = id
       save({ method, params, ...session })
       if (state.promptError || state.stopReason) {

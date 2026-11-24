@@ -1,7 +1,7 @@
 import { redact } from '../native.mjs'
 
 const statuses = {
-  pendingInit: '等待启动', running: '运行中', interrupted: '已中断',
+  pendingInit: '等待启动', running: '运行中', dispatched: '已派发', unconfirmed: '状态待确认', interrupted: '已中断',
   completed: '已完成', errored: '失败', shutdown: '已关闭', notFound: '未找到',
 }
 

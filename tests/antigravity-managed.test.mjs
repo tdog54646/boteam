@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
+import { DatabaseSync } from 'node:sqlite'
 import * as adapter from '../desktop/adapters/antigravity.mjs'
 import { withAcp } from '../desktop/adapters/antigravity-acp.mjs'
 import { privateProfile } from '../desktop/adapters/antigravity-profile.mjs'
@@ -487,4 +488,126 @@ test('ACP drains batched dispatch updates before the prompt consumer continues',
     await drainEvents()
     assert.deepEqual(observed, ['agent_message_chunk', 'tool_call'])
   })
+})
+
+test('ACP reports a current subagent dispatch and its prompt without assuming child completion', mac, async t => {
+  const { account, cwd, state } = await setup(t)
+  Object.assign(account, await adapter.detect(account))
+  const dispatch = { sessionUpdate: 'tool_call', toolCallId: 'call_8112314', name: 'invoke_subagent',
+    title: 'Run invoke_subagent', kind: 'other', status: 'in_progress',
+    args: { TypeName: 'self', Role: 'Documentation review', Prompt: '核对文档。 access_token=private-value' },
+    rawInput: { Prompt: 'raw-input-marker' } }
+  const oldChild = '4cddec86-07af-4575-a10d-9342be6b8794'
+  const directory = join(account.source, '.gemini', 'antigravity-cli')
+  const logs = join(directory, 'brain', oldChild, '.system_generated', 'logs')
+  await mkdir(logs, { recursive: true })
+  const index = new DatabaseSync(join(directory, 'conversation_summaries.db'))
+  try {
+    index.exec(`CREATE TABLE conversation_summaries(conversation_id TEXT,parent_conversation_id TEXT,status TEXT,
+      not_fully_idle INTEGER,killed INTEGER)`)
+    index.prepare("INSERT INTO conversation_summaries VALUES(?,?,'CASCADE_RUN_STATUS_IDLE',0,0)").run(oldChild, sid)
+  } finally { index.close() }
+  await writeFile(join(logs, 'transcript.jsonl'), [
+    { type: 'SYSTEM_MESSAGE', source: 'SYSTEM', step_index: 0, content: dispatch.args.Prompt },
+    { type: 'PLANNER_RESPONSE', source: 'MODEL', step_index: 1, status: 'DONE', content: 'old-child-report' },
+  ].map(step => JSON.stringify(step)).join('\n'))
+  await state({ promptUpdates: [
+    { ...dispatch, sessionId: 'foreign', toolCallId: 'call_999999', args: { Prompt: 'foreign-marker' } },
+    { ...dispatch, toolCallId: 'call_1234', name: 'other_tool', title: 'Native tool unaffected' },
+    { sessionUpdate: 'tool_call_update', toolCallId: 'call_999999', name: 'invoke_subagent', status: 'completed' },
+    dispatch,
+    dispatch,
+    { ...dispatch, sessionUpdate: 'tool_call_update', sessionId: 'foreign', status: 'failed' },
+    { ...dispatch, sessionUpdate: 'tool_call_update', status: 'completed', rawOutput: 'raw-output-marker' },
+    { ...dispatch, toolCallId: 'call_8112315', args: { TypeName: 'unavailable' } },
+    { sessionUpdate: 'tool_call_update', toolCallId: 'call_8112315', status: 'failed' },
+  ] })
+  const events = []
+  await assert.rejects(
+    adapter.run({ account, cwd, threadId: sid, bot: { model: 'gemini-flash', effort: 'low' },
+      prompt: 'parent prompt', emit: e => events.push(e), approve: () => false }),
+    /已收到 0\/1 份报告/,
+  )
+  const activity = events.filter(e => e.type === 'tool' && e.agent)
+  assert.deepEqual(activity.map(e => e.agent.status), ['pendingInit', 'dispatched', 'pendingInit', 'errored'])
+  const [{ agent }] = activity
+  assert.equal(agent.name, 'Documentation review')
+  assert.equal(activity[1].agent.id, agent.id)
+  assert.notEqual(activity[3].agent.id, agent.id)
+  assert.equal(activity[3].agent.id, activity[2].agent.id)
+  const entries = events.filter(e => e.type === 'agentTranscript')
+  assert.ok(events.indexOf(activity[0]) < events.indexOf(entries[0]))
+  assert.ok(entries.every(e => e.agent.id === agent.id))
+  assert.deepEqual(entries.flatMap(e => e.entries).filter(e => e.role !== 'activity').map(({ role, text }) => ({ role, text })),
+    [{ role: 'user', text: '核对文档。 access_token=[已隐藏]' }])
+  assert.ok(events.some(e => e.type === 'tool' && e.value === 'Native tool unaffected' && !e.agent))
+  assert.deepEqual(events.filter(e => e.type === 'text').map(e => e.value), ['reply'])
+  assert.doesNotMatch(JSON.stringify(entries), /private-value|foreign-marker|raw-(?:input|output)-marker/)
+})
+
+test('ACP keeps an idle-indexed child connected until the web search report wakes its parent', mac, async t => {
+  const { account, cwd, state } = await setup(t)
+  Object.assign(account, await adapter.detect(account))
+  const currentTime = performance.now.bind(performance)
+  let simulatedTime = 0
+  t.mock.method(performance, 'now', () => currentTime() + simulatedTime)
+  const directory = join(account.source, '.gemini', 'antigravity-cli')
+  const child = '6aaaa0df-093f-4dac-9610-cad07c3eb145'
+  const logs = join(directory, 'brain', child, '.system_generated', 'logs')
+  await mkdir(logs, { recursive: true })
+  const childPrompt = 'Collect the synthetic fixture results'
+  const transcript = join(logs, 'transcript.jsonl')
+  const writeSteps = (...steps) => writeFile(transcript, [
+    { type: 'SYSTEM_MESSAGE', source: 'SYSTEM', content: childPrompt },
+    ...steps,
+  ].map((step, step_index) => JSON.stringify({ status: 'DONE', step_index, ...step })).join('\n'))
+  const nativeFile = join(directory, 'conversation_summaries.db')
+  await state({ promptUpdates: [
+    { sessionUpdate: 'tool_call', toolCallId: 'call_178', name: 'invoke_subagent', status: 'completed',
+      args: { Role: 'Reader', Prompt: childPrompt } },
+  ], backgroundResult: { sessionId: sid, text: 'parent combined result', delay: 13_000 } })
+  const events = []
+  let archive
+  const run = adapter.run({ account, cwd, threadId: sid, bot: { model: 'gemini-flash', effort: 'low' },
+    prompt: 'parent prompt', approve: () => false, emit(event) {
+      events.push(event)
+      if (archive || event.agent?.status !== 'dispatched') return
+      archive = (async () => {
+        await new Promise(resolve => setTimeout(resolve, 650))
+        const index = new DatabaseSync(nativeFile)
+        try {
+          index.exec(`CREATE TABLE conversation_summaries(conversation_id TEXT,parent_conversation_id TEXT,status TEXT,
+            not_fully_idle INTEGER,killed INTEGER)`)
+          index.prepare("INSERT INTO conversation_summaries VALUES(?,?,'CASCADE_RUN_STATUS_IDLE',0,0)").run(child, sid)
+          index.prepare("INSERT INTO conversation_summaries VALUES(?,NULL,'CASCADE_RUN_STATUS_IDLE',0,0)").run(sid)
+          const search = { type: 'PLANNER_RESPONSE', source: 'MODEL', tool_calls: [
+            { name: 'search_web' }, { name: 'search_web' },
+          ] }
+          const result = { type: 'GENERIC', source: 'MODEL', content: 'Search result' }
+          await writeSteps(search)
+          await new Promise(resolve => setTimeout(resolve, 3500))
+          simulatedTime = 570_000
+          await new Promise(resolve => setTimeout(resolve, 3000))
+          await writeSteps(search, result)
+          await new Promise(resolve => setTimeout(resolve, 3000))
+          // Exceed ten minutes in total, but only after the search result landed.
+          simulatedTime = 630_000
+          await new Promise(resolve => setTimeout(resolve, 2300))
+          await writeSteps(search, result, result,
+            { type: 'PLANNER_RESPONSE', source: 'MODEL', tool_calls: [
+              { name: 'send_message', args: { Recipient: JSON.stringify(sid), Message: '"Relevant source found"' } },
+            ] }, { type: 'GENERIC', source: 'MODEL', content: `Message sent to "${sid}".` })
+          index.prepare("UPDATE conversation_summaries SET status='CASCADE_RUN_STATUS_RUNNING',not_fully_idle=1 WHERE conversation_id=?").run(sid)
+          await new Promise(resolve => setTimeout(resolve, 2100))
+          index.exec("UPDATE conversation_summaries SET status='CASCADE_RUN_STATUS_IDLE',not_fully_idle=0")
+        } finally { index.close() }
+      })()
+    } })
+  try {
+    await run
+    assert.deepEqual(events.filter(event => event.type === 'text').map(event => event.value), ['reply', 'parent combined result'])
+    assert.ok(events.some(event => event.agent?.status === 'completed' && event.agent.nativeThreadId === child))
+    assert.ok(events.some(event => event.type === 'agentTranscript' &&
+      event.entries.some(entry => entry.role === 'assistant' && entry.text === 'Relevant source found')))
+  } finally { await archive }
 })

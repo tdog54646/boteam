@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -116,4 +116,62 @@ test('an unnamed dispatch uses its saved prompt topic and ignores placeholder ty
   }), '历史迁移说明')
   assert.equal(dispatchAgentName({ TypeName: 'self', Prompt: '请研究「Codex 文档」。' }), '「Codex 文档」')
   assert.equal(dispatchAgentName({ Role: '  ', TypeName: 'self' }), undefined)
+})
+
+test('Antigravity recovers only uniquely matched visible child archive messages for its verified owner', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'boteam-agy-subagent-archive-'))
+  const workspace = new Workspace({ root, adapters: {} })
+  t.after(async () => { await workspace.close(); await rm(root, { recursive: true, force: true }) })
+  const source = await workspace.accounts.privateDir()
+  const dir = join(source, '.gemini', 'antigravity-cli')
+  await mkdir(dir, { recursive: true })
+  const parent = '6da07ea3-d35d-436f-bdda-3c0438b65504'
+  const child = 'be1af14f-e99e-4c67-8aae-e17963895384'
+  const other = 'fc3ddf9b-7089-47f7-b971-5227f19069a7'
+  const agentId = 'agy:' + parent + ':call_127'
+  const prompt = '独立检查回归测试的执行路径。'
+  const native = new DatabaseSync(join(dir, 'conversation_summaries.db'))
+  try {
+    native.exec(`CREATE TABLE conversation_summaries(conversation_id TEXT, parent_conversation_id TEXT, status TEXT,
+      not_fully_idle INTEGER, killed INTEGER)`)
+    const add = native.prepare("INSERT INTO conversation_summaries VALUES(?,?,'CASCADE_RUN_STATUS_IDLE',0,0)")
+    add.run(child, parent)
+    add.run(other, '7170531e-3383-4e25-8684-709ee2c02aba')
+  } finally { native.close() }
+  for (const [id, response] of [[child, '子智能体找到了验收脚本。'], [other, 'outside scope']]) {
+    const folder = join(dir, 'brain', id, '.system_generated', 'logs')
+    await mkdir(folder, { recursive: true })
+    await writeFile(join(folder, 'transcript.jsonl'), [
+      { type: 'SYSTEM_MESSAGE', source: 'SYSTEM', step_index: 0, status: 'DONE', content: 'hidden instructions\n' + prompt },
+      { type: 'PLANNER_RESPONSE', source: 'MODEL', step_index: 1, status: 'DONE', tool_calls: [{ name: 'search_web', args: { prompt: 'private arguments' } }] },
+      { type: 'GENERIC', source: 'MODEL', step_index: 2, status: 'DONE', content: 'hidden tool data' },
+      { type: 'PLANNER_RESPONSE', source: 'MODEL', step_index: 3, status: 'DONE', model: 'gemini-flash',
+        content: response, thinking: 'hidden thought' },
+    ].map(value => JSON.stringify(value)).join('\n'))
+  }
+  const { db } = workspace
+  db.run('INSERT INTO accounts(id,provider,identity,info) VALUES(?,?,?,?)', 'account', 'antigravity', 'fixture',
+    JSON.stringify({ source, managed: true, status: 'ready' }))
+  db.run("INSERT INTO chats VALUES('chat','direct','Fixture','')")
+  db.run(`INSERT INTO messages(id,chatId,author,name,text,createdAt,recipients)
+    VALUES('message','chat','user','Fixture','request','','["bot"]')`)
+  db.run(`INSERT INTO tasks(id,chatId,botId,accountId,messageId,status,tool,createdAt)
+    VALUES('task','chat','bot','account','message','done','agy','')`)
+  workspace.event('task', '子智能体 · 已派发', { agent: { id: agentId, name: '独立核对', status: 'dispatched' } })
+  saveAgentEntries(db, 'task', { agent: { id: agentId }, entries: [{ id: 'dispatch-prompt', role: 'user', text: prompt }] })
+  const scope = { chatId: 'chat', botId: 'bot', agentId }
+  await workspace.handle('refreshSubagents', { chatId: 'chat' })
+  assert.deepEqual((await workspace.handle('agentTranscript', scope)).map(entry => entry.role), ['user'])
+  db.run('INSERT INTO threads(chatId,botId,accountId,threadId,cwd) VALUES(?,?,?,?,?)', 'chat', 'bot', 'account', parent, root)
+  await workspace.handle('refreshSubagents', { chatId: 'chat' })
+  await workspace.handle('refreshSubagents', { chatId: 'chat' })
+  const entries = await workspace.handle('agentTranscript', scope)
+  assert.deepEqual(entries.map(entry => [entry.role, entry.text]), [
+    ['user', prompt], ['activity', '搜索网页'], ['assistant', '子智能体找到了验收脚本。'],
+  ])
+  const events = workspace.snapshot().tasks[0].events
+  assert.equal(events.length, 2)
+  assert.equal(events.at(-1).agent.nativeThreadId, child)
+  assert.equal(events.at(-1).agent.status, 'completed')
+  assert.equal(events.at(-1).agent.model, 'gemini-flash')
 })

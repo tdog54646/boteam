@@ -19,7 +19,10 @@ import { authenticatePersonal, withAcp } from './antigravity-acp.mjs'
 import { cliPreferences, externalSource, hasCliLogin, installCliLogin, withCliLogin } from './antigravity-import.mjs'
 import { commandUpdates, sessionSkills, sessionSlashCommands } from './antigravity-actions.mjs'
 import { slashPrompt } from './native-slash.mjs'
-import { nativeEnv } from '../native.mjs'
+import { nativeEnv, redact } from '../native.mjs'
+import { agentActivity } from './chat-activity.mjs'
+import { dispatchAgentName } from '../subagent-names.mjs'
+import { existingAntigravityChildren, waitForAntigravityChildren } from './antigravity-subagents.mjs'
 
 import { contextUsage, inlineImages, quotaWindow } from './usage.mjs'
 
@@ -448,10 +451,13 @@ export async function run({
   if (slashCommand && extensionIds.length) throw new Error('请选择一个 Antigravity 命令或技能。')
   const { profile, found } = await verify(account, signal)
   const updates = commandUpdates()
+  const dispatches = []
+  const observeSubagent = subagentDispatches(emit, dispatches)
   if (threadId && !uuid.test(threadId)) throw new Error('Antigravity 原生会话标识无效。')
   let id,
     selectedModel,
-    authorized = false
+    authorized = false,
+    parentActivity = 0
   const handle = async (msg) => {
     if (extensionIds.length || slashCommand) updates.observe(msg)
     const p = msg.params || {}
@@ -477,6 +483,8 @@ export async function run({
       }
     }
     if (msg.method !== 'session/update' || !authorized || p.sessionId !== id) return
+    if (['agent_message_chunk', 'tool_call', 'tool_call_update'].includes(p.update?.sessionUpdate)) parentActivity++
+    if (await observeSubagent(id, p.update)) return
     if (p.update?.sessionUpdate === 'session_info_update' && p.update.title && titleRequest?.())
       await emit({ type: 'title', value: p.update.title })
     if (p.update?.sessionUpdate === 'agent_message_chunk' && p.update.content?.type === 'text')
@@ -491,7 +499,7 @@ export async function run({
         value: p.update.title || p.update.kind || 'Antigravity 工具',
       })
   }
-  return withAcp(profile, signal, handle, async (request, capabilities) => {
+  return withAcp(profile, signal, handle, async (request, capabilities, drainEvents) => {
     let targetModel = bot.model || account.model,
       targetEffort = bot.effort
     // A resumed native session remembers the previous turn's selections. Read
@@ -549,15 +557,20 @@ export async function run({
     await emit({ type: 'session', value: id })
     selectedModel = model.current
     const images = capabilities?.promptCapabilities?.image ? await inlineImages(attachments) : []
+    const existingChildren = threadId ? await existingAntigravityChildren(profile.home, id) : undefined
     authorized = true
     const result = await request('session/prompt', {
       sessionId: id,
       prompt: [{ type: 'text', text: prompt }, ...images],
     })
+    await drainEvents()
     if (result?.stopReason === 'max_tokens')
       throw new Error('Antigravity 本轮达到 token 上限，请缩短输入或将任务分步执行。')
     if (result?.stopReason !== 'end_turn')
       throw new Error('Antigravity 在完成本轮前停止，请检查额度或重试。')
+    if (dispatches.length) await waitForAntigravityChildren(profile.home, id, dispatches, {
+      signal, existingChildren, drainEvents, parentActivity: () => parentActivity, publish: publishChildArchives(emit),
+    })
     const quota = await readQuota(profile, model, selectedModel, signal)
     if (quota) await emit({ type: 'quota', value: quota })
     if (titleRequest?.() && capabilities?.sessionCapabilities?.list) {
@@ -566,4 +579,59 @@ export async function run({
       if (title) await emit({ type: 'title', value: title })
     }
   })
+}
+
+function subagentDispatches(emit, dispatches) {
+  const calls = new Map()
+  const report = ({ id, status, name }) => emit(agentActivity(id, status, name))
+  return async (sessionId, update) => {
+    const callId = update?.toolCallId
+    if (typeof callId !== 'string' || !/^[\w.-]{1,100}$/.test(callId)) return false
+    const agent = calls.get(callId)
+    if (update.sessionUpdate === 'tool_call_update') {
+      if (!agent || (update.name !== undefined && update.name !== 'invoke_subagent')) return false
+      if (agent.status === 'pendingInit' && ['completed', 'failed'].includes(update.status)) {
+        // ACP completes the invocation tool, while the child runs independently.
+        agent.status = update.status === 'completed' ? 'dispatched' : 'errored'
+        await report(agent)
+      }
+      return true
+    }
+    if (update.sessionUpdate !== 'tool_call' || update.name !== 'invoke_subagent') return false
+    if (agent) return true
+    const id = `agy:${sessionId}:${callId}`
+    const status = update.status === 'failed' ? 'errored'
+      : update.status === 'completed' ? 'dispatched' : 'pendingInit'
+    const args = update.args || {}
+    const { Prompt: prompt } = args
+    const child = { id, agentId: id, status, prompt, name: dispatchAgentName(args) }
+    calls.set(callId, child)
+    await report(child)
+    if (typeof prompt === 'string' && prompt.trim()) {
+      dispatches.push(child)
+      await emit({ type: 'agentTranscript', agent: { id }, entries: [
+        { id: 'dispatch-prompt', role: 'user', text: redact(prompt).slice(0, 20000) },
+      ] })
+    }
+    return true
+  }
+}
+
+function publishChildArchives(emit) {
+  const previous = new Map()
+  return async (children, finished) => {
+    for (const { agentId, status, entries, nativeThreadId, model } of children) {
+      const prior = previous.get(agentId)
+      const visibleStatus = status === 'unconfirmed' && !finished ? 'running' : status
+      if (prior?.status !== visibleStatus || prior.nativeThreadId !== nativeThreadId || prior.model !== model) {
+        const event = agentActivity(agentId, visibleStatus)
+        await emit({ ...event, agent: { ...event.agent, nativeThreadId, model } })
+      }
+      const oldEntries = prior?.entries
+      const changed = entries.filter(entry => oldEntries?.get(entry.id) !== entry.text)
+      if (changed.length) await emit({ type: 'agentTranscript', agent: { id: agentId }, entries: changed })
+      previous.set(agentId, { status: visibleStatus, nativeThreadId, model,
+        entries: new Map(entries.map(entry => [entry.id, entry.text])) })
+    }
+  }
 }

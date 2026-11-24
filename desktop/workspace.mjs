@@ -16,6 +16,8 @@ import { forkConversation, directForkPrompt } from './chat-fork.mjs'
 import { manageChat } from './chat-management.mjs'
 import { agentEntries, agentSummary, saveAgentEntries } from './subagents.mjs'
 import { labelLegacySubagents } from './subagent-names.mjs'
+import { readAntigravityChildren } from './adapters/antigravity-subagents.mjs'
+import { agentActivity } from './adapters/chat-activity.mjs'
 import { draftProjectCwd, chatProjectCwd, configureNewChatProject, inheritProject, manageProject } from './projects.mjs'
 
 const active = "('queued','running','approval')"
@@ -97,6 +99,7 @@ export class Workspace {
     this.threadEdits = new Map()
     this.lanes = new Map()
     this.running = new Map()
+    this.subagentReads = new Map()
     this.closed = false
   }
   snapshot() {
@@ -483,6 +486,8 @@ export class Workspace {
         return this.snapshot()
       case 'agentTranscript':
         return agentEntries(this.db, p)
+      case 'refreshSubagents':
+        return this.refreshSubagents(p.chatId)
       case 'suggestChatTitle':
         return suggestChatTitle(this.db, p.chatId)
       case 'chatDirectories':
@@ -976,6 +981,65 @@ export class Workspace {
       JSON.stringify({ text: redact(text).slice(0, 2000), agent: summary, source, ...(summary && { observedAt: Date.now() }) }),
       id,
     )
+  }
+  refreshSubagents(chatId) {
+    if (typeof chatId !== 'string' || !chatId || chatId.length > 160) return
+    const pending = this.subagentReads.get(chatId)
+    if (pending) return pending
+    const request = this.accountOperation(this.readSubagentArchives(chatId))
+    this.subagentReads.set(chatId, request)
+    return request.finally(() => this.subagentReads.delete(chatId))
+  }
+  async readSubagentArchives(chatId) {
+    const dispatches = this.db.all(`SELECT t.id AS taskId,t.status AS taskStatus,t.accountId,e.agentId,e.text AS prompt,t.events,n.threadId,
+        json_extract(a.info,'$.source') AS home
+      FROM tasks t JOIN subagent_entries e ON e.taskId=t.id
+      JOIN accounts a ON a.id=t.accountId AND a.provider='antigravity'
+      JOIN threads n ON n.chatId=t.chatId AND n.botId=t.botId AND n.accountId=t.accountId
+      WHERE t.chatId=? AND e.entryId='dispatch-prompt' AND e.role='user'
+        AND substr(e.agentId,1,4)='agy:' AND json_extract(a.info,'$.managed')=1
+      ORDER BY t.rowid DESC,e.rowid LIMIT 301`, chatId)
+    if (dispatches.length > 300) return
+    const groups = new Map()
+    const byTask = new Map()
+    for (const row of dispatches) {
+      if (this.running.has(row.taskId)) continue // The live ACP adapter publishes its own archive updates.
+      if (typeof row.home !== 'string' || !this.accounts.ownsProfile(row.home)) continue
+      const [, parent, call] = row.agentId.split(':')
+      if (!call || parent !== row.threadId) continue
+      if (!byTask.has(row.taskId))
+        byTask.set(row.taskId, new Map(JSON.parse(row.events).filter(event => event.agent).map(({ agent }) => [agent.id, agent])))
+      const agent = byTask.get(row.taskId).get(row.agentId)
+      if (!agent || ['errored', 'interrupted'].includes(agent.status) ||
+          (row.taskStatus === 'failed' && !agent.nativeThreadId)) continue
+      const key = JSON.stringify([row.accountId, parent])
+      if (!groups.has(key)) groups.set(key, { home: row.home, parent, dispatches: [] })
+      groups.get(key).dispatches.push({
+        agentId: row.agentId, taskId: row.taskId, prompt: row.prompt,
+        nativeThreadId: agent.nativeThreadId,
+      })
+    }
+    let changed = false
+    for (const group of groups.values()) {
+      if (this.closed) return
+      for (const { taskId, agentId, nativeThreadId, status, model, entries } of
+        await readAntigravityChildren(group.home, group.parent, group.dispatches)) {
+        if (this.closed) return
+        const task = this.db.get('SELECT events FROM tasks WHERE id=? AND chatId=?', taskId, chatId)
+        if (!task) continue
+        const previous = JSON.parse(task.events).findLast(event => event.agent?.id === agentId)?.agent
+        if (!previous || (previous.nativeThreadId && previous.nativeThreadId !== nativeThreadId)) continue
+        const next = status === 'unconfirmed' && ['completed', 'errored', 'interrupted'].includes(previous.status)
+          ? previous.status : status
+        if (previous.status !== next || previous.nativeThreadId !== nativeThreadId || (model && previous.model !== model)) {
+          const activity = agentActivity(agentId, next)
+          this.event(taskId, activity.value, { agent: { ...previous, ...activity.agent, nativeThreadId, ...(model && { model }) } })
+          changed = true
+        }
+        changed = saveAgentEntries(this.db, taskId, { agent: { id: agentId }, entries }) || changed
+      }
+    }
+    if (changed) this.notify()
   }
   requestApproval(id, state, request) {
     if (this.closed || !state.verified || state.controller.signal.aborted || state.approval)
