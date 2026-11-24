@@ -171,6 +171,13 @@ if (args.includes('/usage')) {
         ...Array.from(sessions.keys(), sessionId => ({ sessionId, title: state.listTitle }))] }
     }
     if (method === 'session/prompt') {
+      if (state.batchPromptResult) {
+        const updates = (state.promptUpdates || []).map(({ sessionId = params.sessionId, ...update }) =>
+          ({ method: 'session/update', params: { sessionId, update } }))
+        const frames = [...updates, { id, result: { stopReason: 'end_turn' } }]
+        console.log(frames.map(frame => JSON.stringify({ jsonrpc: '2.0', ...frame })).join('\n'))
+        return
+      }
       if (state.eventTitle) for (const [sessionId, title] of [['foreign', 'foreign'], [params.sessionId, state.eventTitle]])
         send({ method: 'session/update', params: { sessionId, update: { sessionUpdate: 'session_info_update', title } } })
       promptId = id

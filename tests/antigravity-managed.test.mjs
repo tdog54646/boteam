@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import * as adapter from '../desktop/adapters/antigravity.mjs'
+import { withAcp } from '../desktop/adapters/antigravity-acp.mjs'
 import { privateProfile } from '../desktop/adapters/antigravity-profile.mjs'
 
 const mac = { skip: process.platform !== 'darwin' }
@@ -458,4 +459,32 @@ test('ACP titles use scoped session info notifications or negotiated session met
       emit: e => { if (e.type === 'title') titles.push(e.value) }, approve: () => false })
     assert.deepEqual(titles, ['核对子目录'])
   }
+})
+
+test('ACP drains batched dispatch updates before the prompt consumer continues', mac, async t => {
+  const { account, cwd, state } = await setup(t)
+  await state({
+    batchPromptResult: true,
+    promptUpdates: [
+      { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Dispatched' } },
+      { sessionUpdate: 'tool_call', toolCallId: 'call_batched', name: 'invoke_subagent', status: 'completed' },
+    ],
+  })
+  const profile = await privateProfile(account.bin, account.source)
+  const observed = []
+  let rpc
+  await withAcp(profile, undefined, async ({ params }) => {
+    if (params.update.name === 'invoke_subagent') {
+      const { sessions } = await rpc('session/list', { cwd }, 1200)
+      assert.ok(sessions.some(session => session.sessionId === params.sessionId))
+    }
+    observed.push(params.update.sessionUpdate)
+  }, async (request, _capabilities, drainEvents) => {
+    rpc = request
+    const { sessionId } = await request('session/new', { cwd, mcpServers: [] })
+    const result = await request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Fixture' }] })
+    assert.equal(result.stopReason, 'end_turn')
+    await drainEvents()
+    assert.deepEqual(observed, ['agent_message_chunk', 'tool_call'])
+  })
 })

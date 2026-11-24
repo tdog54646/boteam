@@ -138,6 +138,12 @@ export async function withAcp(profile, signal, handle, work) {
       write({ id, method, params })
     })
   }
+  // Work can drain queued notifications at an operation boundary. RPC
+  // responses stay independent so an update handler can make requests.
+  const drainEvents = async () => {
+    await events
+    if (failure) throw failure
+  }
   try {
     const init = await request('initialize', {
       protocolVersion: 1,
@@ -150,9 +156,8 @@ export async function withAcp(profile, signal, handle, work) {
       !init.authMethods?.some((m) => m.id === 'oauth-personal')
     )
       throw new Error('当前 Antigravity CLI 缺少官方 ACP 订阅支持。')
-    const value = await work(request, init.agentCapabilities)
-    await events
-    if (failure) throw failure
+    const value = await work(request, init.agentCapabilities, drainEvents)
+    await drainEvents()
     return value
   } finally {
     signal?.removeEventListener('abort', abort)
