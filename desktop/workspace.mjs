@@ -15,6 +15,7 @@ import { groupPrompt } from './group-context.mjs'
 import { forkConversation, directForkPrompt } from './chat-fork.mjs'
 import { manageChat } from './chat-management.mjs'
 import { agentEntries, agentSummary, saveAgentEntries } from './subagents.mjs'
+import { labelLegacySubagents } from './subagent-names.mjs'
 import { draftProjectCwd, chatProjectCwd, configureNewChatProject, inheritProject, manageProject } from './projects.mjs'
 
 const active = "('queued','running','approval')"
@@ -102,6 +103,7 @@ export class Workspace {
     const permissionModes = Object.fromEntries(Object.entries(this.adapters)
       .map(([name, adapter]) => [name, adapter.permissionModes || ['default']]))
     const state = this.db.snapshot()
+    labelLegacySubagents(this.db, state.tasks, state.messages)
     for (const account of state.accounts) account.bindingRevision = this.bindingRevisions.get(account.id) || 0
     return { ...state, permissionModes, nativeThreads: this.db.all('SELECT chatId,botId,threadId,cwd FROM threads') }
   }

@@ -7,6 +7,7 @@ import test from 'node:test'
 import { Workspace } from '../desktop/workspace.mjs'
 import { Database } from '../desktop/database.mjs'
 import { agentEntries, saveAgentEntries } from '../desktop/subagents.mjs'
+import { dispatchAgentName } from '../desktop/subagent-names.mjs'
 
 test('child transcript replaces streamed entries, stays private to its chat and survives restart and fork', async t => {
   const root = await mkdtemp(join(tmpdir(), 'boteam-subagents-'))
@@ -78,4 +79,41 @@ test('replayed entries retain their position and do not consume the distinct his
   const result = agentEntries(db, { chatId: 'chat', botId: 'bot', agentId: 'child' })
   assert.deepEqual(result.map(entry => entry.id), entries.map(entry => entry.id))
   assert.equal(result[50].text, 'entry 50 (updated)')
+})
+
+test('legacy Antigravity self labels recover the matching roles from this task’s own dispatches', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'boteam-agent-legacy-name-'))
+  const workspace = new Workspace({ root, adapters: {} })
+  t.after(async () => { await workspace.close(); await rm(root, { recursive: true, force: true }) })
+  const { db } = workspace
+  db.run("INSERT INTO chats VALUES('chat','direct','Fixture','')")
+  db.run(`INSERT INTO messages(id,chatId,author,name,text,createdAt,recipients)
+    VALUES('message','chat','user','Fixture','request','','["bot"]')`)
+  const agents = [
+    ['agy:session:backend', '检索后端开发 Java 和 .NET 岗位的笔试题。'],
+    ['agy:session:frontend', '检索前端开发及 MES 二次开发岗位的面经。'],
+  ]
+  const events = JSON.stringify(agents.map(([id]) => ({ agent: { id, name: 'self', status: 'dispatched' } })))
+  db.run(`INSERT INTO tasks(id,chatId,botId,accountId,messageId,status,tool,events,createdAt)
+    VALUES('task','chat','bot','account','message','done','fixture',?,'')`, events)
+  db.run(`INSERT INTO messages(id,chatId,author,name,text,createdAt,recipients,taskId)
+    VALUES('reply','chat','bot','Fixture',?,'','[]','task')`,
+    '已派发 2 个子 Agent。\n1. **前端与 MES 开发检索员**：整理前端资料。\n2. **后端面经检索员**：整理后端资料。')
+  for (const [id, text] of agents)
+    saveAgentEntries(db, 'task', { agent: { id }, entries: [{ id: 'dispatch-prompt', role: 'user', text }] })
+  assert.deepEqual(workspace.snapshot().tasks[0].events.map(e => e.agent.name), ['后端面经检索员', '前端与 MES 开发检索员'])
+  assert.equal(db.get("SELECT events FROM tasks WHERE id='task'").events, events)
+  const id = agents[0][0]
+  workspace.event('task', '运行中', { agent: { id, status: 'running', name: '原生角色名称' } })
+  workspace.event('task', '结束', { agent: { id, status: 'completed' } })
+  assert.equal(workspace.snapshot().tasks[0].events.at(-1).agent.name, '原生角色名称')
+})
+
+test('an unnamed dispatch uses its saved prompt topic and ignores placeholder types', () => {
+  assert.equal(dispatchAgentName({
+    TypeName: 'SELF',
+    Prompt: '你的任务是使用 search_web 工具，专门检索「BoTeam」的历史迁移说明。返回来源和摘要。',
+  }), '历史迁移说明')
+  assert.equal(dispatchAgentName({ TypeName: 'self', Prompt: '请研究「Codex 文档」。' }), '「Codex 文档」')
+  assert.equal(dispatchAgentName({ Role: '  ', TypeName: 'self' }), undefined)
 })
