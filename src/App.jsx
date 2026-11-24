@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CircleAlert,
   PanelLeftOpen,
@@ -14,6 +14,7 @@ import { ChatActionMenu } from "./ChatActionMenu";
 import { ChatActionDialog, useChatActions } from "./ChatActions";
 import "./chat-management.css";
 import { WorkspacePanel } from "./WorkspacePanel";
+import { listSubagents } from "./Subagents";
 import { Onboarding } from "./Onboarding";
 import { Sidebar, ChatSearch } from "./Sidebar";
 import { ProjectActionDialog, ProjectDialog } from "./ProjectDialog";
@@ -285,6 +286,21 @@ export default function App() {
   }, [ready, state.onboarded, dialog, newChat]);
   const wizard = ready && !state.onboarded;
   const chat = state.chats.find((c) => c.id === page);
+  const agents = useMemo(() => listSubagents(chat?.id, state.tasks, state.bots, state.accounts),
+    [chat?.id, state.tasks, state.bots, state.accounts]);
+  const nativeAgents = agents.filter(agent => agent.id.startsWith("agy:"));
+  const watchNativeAgents = nativeAgents.some(agent => ["pendingInit", "dispatched", "running", "unconfirmed"].includes(agent.status));
+  useEffect(() => {
+    if (!chat?.id || !nativeAgents.length) return;
+    const deadline = performance.now() + 120_000;
+    let disposed = false, timer;
+    async function refreshAgents() {
+      await invoke("refreshSubagents", { chatId: chat.id }).catch(() => {});
+      if (!disposed && watchNativeAgents && performance.now() < deadline) timer = setTimeout(refreshAgents, 2400);
+    }
+    void refreshAgents();
+    return () => { disposed = true; clearTimeout(timer); };
+  }, [chat?.id, nativeAgents.length, watchNativeAgents]);
   useEffect(() => { document.title = chat ? chat.name + " · BoTeam" : "BoTeam"; }, [chat?.name]);
   const panelMembers = (chat?.members || draft?.members || [])
     .map(id => state.bots.find(b => b.id === id)).filter(b => b && !b.archived);
@@ -399,7 +415,7 @@ export default function App() {
                 {(chat || draft).members.length} 位成员
               </button>
             )}
-            {workPage && <ChatToolbar key={panelKey} chat={chat} draftChat={draft?.legacyHome ? null : draft} members={panelMembers} state={state}
+            {workPage && <ChatToolbar key={panelKey} chat={chat} draftChat={draft?.legacyHome ? null : draft} members={panelMembers} state={state} agents={agents}
               invoke={draft ? invokeDraft : invoke} draft={chat?.archived ? null : sourceDraft} pickSource={() => sourceControl.current?.pickFiles()} onChatMenu={actions.showMenu} onChatAction={actions.act}
               menuOpen={actions.menu?.variant === "header"}
               workspaceVisible={panelVisible} toggleWorkspace={() => showPanel()} openWorkspace={showPanel} />}
@@ -489,7 +505,7 @@ export default function App() {
         )}
       </main>
       {workPage && <WorkspacePanel key={panelScope} draftScope={panelScope} initialProjectCwd={panelCwd}
-        chatId={chat?.id || draft?.id} botId={panelMembers[0]?.id} bots={panelMembers}
+        chatId={chat?.id || draft?.id} botId={panelMembers[0]?.id} bots={panelMembers} agents={agents}
         visible={panelVisible} expanded={panelVisible && panel.expanded}
         request={panel?.key === panelKey ? panel.request : null} invoke={invokePanel}
         onClose={() => setPanel(previous => ({ ...previous, visible: false, expanded: false }))}

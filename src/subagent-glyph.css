@@ -1,0 +1,8 @@
+.subagent-glyph {
+  display: inline-flex;
+  flex: none;
+}
+
+.subagent-glyph img {
+  display: block;
+}

@@ -1,9 +1,10 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
-  Check, ChevronDown, Ellipsis, File, FileText, Folder, Folders, Globe2,
+  Bot, Check, ChevronDown, Ellipsis, File, FileText, Folder, Folders, Globe2,
   LayoutGrid, List, Maximize2, Minimize2, PanelRight, Plus, Search, FileDiff, SquareTerminal, X,
 } from "lucide-react";
 import { SourceAttachmentView } from "./SourceAttachmentView";
+import { SubagentsPanel } from "./Subagents";
 import { errorText, IconButton, Spinner } from "./ui";
 import {
   BrowserView, ChangesView, DocumentView, FilesView, webAddress,
@@ -21,8 +22,9 @@ const tools = [
   { type: "terminal", name: "终端", icon: SquareTerminal },
   { type: "files", name: "文件", icon: Folders },
 ];
-const icons = { home: Plus, file: File, attachment: File, url: Globe2, ...Object.fromEntries(tools.map((tool) => [tool.type, tool.icon])) };
+const icons = { home: Plus, file: File, attachment: File, url: Globe2, agents: Bot, ...Object.fromEntries(tools.map((tool) => [tool.type, tool.icon])) };
 function tabName(tab) {
+  if (tab.type === "agents") return "子智能体";
   return tab.title || tab.path?.split("/").at(-1) || (tab.url && new URL(tab.url).hostname)
     || tools.find((tool) => tool.type === tab.type)?.name || "新标签页";
 }
@@ -130,7 +132,7 @@ function Launcher({ call, open }) {
   </div>;
 }
 
-function TabContent({ tab, chatId, initialProjectCwd, active, invoke, bots, openTab, patchTab, draftScope }) {
+function TabContent({ tab, chatId, initialProjectCwd, active, invoke, bots, agents, openTab, patchTab, draftScope }) {
   const call = useCallback((method, payload) => invoke(method, {
     ...payload, chatId, botId: tab.botId, expectedProjectCwd: initialProjectCwd,
   }), [invoke, chatId, tab.botId, initialProjectCwd]);
@@ -151,6 +153,8 @@ function TabContent({ tab, chatId, initialProjectCwd, active, invoke, bots, open
   const open = (details) => openTab({ botId: tab.botId, ...details }, tab.type === "home" ? tab.id : null);
   let view;
   switch (tab.type) {
+    case "agents": view = <SubagentsPanel agents={agents} agentKey={tab.agentKey} chatId={chatId} invoke={invoke} activeTab={active}
+      select={agentKey => patchTab(tab.id, { agentKey })} />; break;
     case "attachment": view = <SourceAttachmentView chatId={chatId} attachmentId={tab.attachmentId}
       title={tab.title} invoke={invoke} />; break;
     case "files": view = <FilesView initialPath={tab.path} call={call} open={open} />; break;
@@ -179,7 +183,7 @@ function TabContent({ tab, chatId, initialProjectCwd, active, invoke, bots, open
   </section>;
 }
 
-export function WorkspacePanel({ chatId, botId, draftScope, initialProjectCwd, bots = [], invoke, visible = true, expanded = false,
+export function WorkspacePanel({ chatId, botId, draftScope, initialProjectCwd, bots = [], agents = [], invoke, visible = true, expanded = false,
   onToggleExpanded, onClose, request }) {
   const [tabs, setTabs] = useState(() => {
     const drafts = draftsByScope.get(draftScope);
@@ -209,7 +213,10 @@ export function WorkspacePanel({ chatId, botId, draftScope, initialProjectCwd, b
     const existing = tabs.find((tab) => tab.type === details.type &&
       (tab.botId || botId) === (details.botId || botId) && tab.path === details.path && (tab.location || tab.url) === details.url &&
       tab.attachmentId === details.attachmentId);
-    if (existing) select(existing.id);
+    if (existing) {
+      if (details.type === "agents") patchTab(existing.id, { agentKey: details.agentKey });
+      select(existing.id);
+    }
     else openTab(details, current?.type === "home" ? current.id : null);
   }, [request, visible, selected, tabs, botId]);
   useEffect(() => {
@@ -269,6 +276,6 @@ export function WorkspacePanel({ chatId, botId, draftScope, initialProjectCwd, b
       <button onClick={() => closeTab(discard, true)}>放弃并关闭</button>
     </div>}
     {tabs.map((tab) => <TabContent key={tab.id} tab={tab} chatId={chatId} initialProjectCwd={initialProjectCwd} active={visible && selected === tab.id}
-      invoke={invoke} bots={bots} draftScope={draftScope} openTab={openTab} patchTab={patchTab} />)}
+      invoke={invoke} bots={bots} agents={agents} draftScope={draftScope} openTab={openTab} patchTab={patchTab} />)}
   </aside>;
 }

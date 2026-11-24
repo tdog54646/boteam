@@ -1,0 +1,80 @@
+.subagent-list,
+.subagent-transcript {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 13px 16px 20px;
+}
+.subagent-list section + section { margin-top: 19px; }
+.subagent-list h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 5px 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+}
+.subagent-list h2 > span { color: var(--subtle); font-variant-numeric: tabular-nums; }
+.subagent-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 46px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 9px;
+}
+.subagent-row:hover { background: var(--hover); }
+.subagent-row > svg { color: var(--subtle); }
+.subagent-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px;
+  border-bottom: 1px solid var(--line);
+}
+.subagent-heading > .icon-btn { flex: none; }
+.subagent-identity, .subagent-title {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  line-height: 17px;
+}
+.subagent-identity h2, .subagent-title strong {
+  font-size: 13px;
+  font-weight: 570;
+}
+.subagent-identity :is(h2, small), .subagent-title :is(strong, small) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.subagent-identity small, .subagent-title small { font-size: 11px; color: var(--muted); }
+.subagent-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+.subagent-state > i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.subagent-state[data-state="running"] { color: var(--accent); }
+.subagent-state[data-state="completed"] { color: var(--success); }
+.subagent-state[data-state="errored"] { color: var(--danger); }
+.subagent-entry {
+  padding: 11px 0 14px;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.subagent-entry > h3 { color: var(--muted); font-size: 11px; font-weight: 550; margin-bottom: 6px; }
+.subagent-entry[data-role="user"] > .markdown {
+  border-inline-start: 2px solid var(--line-strong);
+  padding-inline-start: 10px;
+}
+.subagent-activity, .subagent-hint { margin: 9px 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.subagent-activity { white-space: pre-wrap; }
+.subagent-hint > svg { vertical-align: middle; }
