@@ -14,6 +14,7 @@ import { stageFork, verifyFork } from './codex-fork.mjs'
 import { codexCommands, compactThread, installedMethods, mcpInfo } from './codex-slash.mjs'
 import { contextUsage, imageSnapshots, quotaWindow } from './usage.mjs'
 import { codexActivity } from './chat-activity.mjs'
+import { codexSubagents } from './codex-subagents.mjs'
 
 export const permissionModes = [
   'default',
@@ -972,6 +973,7 @@ async function runTurns(
 ) {
   const { emit, prompt, attachments, permission = 'default', approve } = scope
   const session = opened.thread.id
+  const subagents = codexSubagents({ emit, parentId: session, rpc })
   let currentQuota = await readQuota(rpc, opened.model)
   if (currentQuota) await emit({ type: 'quota', value: currentQuota })
   let turn,
@@ -1017,6 +1019,7 @@ async function runTurns(
   }
   const sent = new Map()
   const changedFiles = new Map()
+  const completedAgentItems = new Set()
   const append = (id, delta) => {
     // A group review publishes the native findings after the turn succeeds.
     if (!delta || publicReview) return
@@ -1056,7 +1059,10 @@ async function runTurns(
       }
       continue
     }
-    if (p.threadId !== session) continue
+    if (p.threadId !== session) {
+      await subagents.childEvent(msg.method, p)
+      continue
+    }
     if (msg.method === 'thread/name/updated') {
       if (scope.titleRequest?.() && p.threadName) await emit({ type: 'title', value: p.threadName })
       continue
@@ -1080,6 +1086,7 @@ async function runTurns(
       usageModel = opened.model
       sent.clear()
       changedFiles.clear()
+      completedAgentItems.clear()
       continue
     }
     if (!turn || (p.turnId || p.turn?.id) !== turn) continue
@@ -1121,7 +1128,12 @@ async function runTurns(
         append(p.item.id, full.slice(previous.length))
     }
     if (msg.method === 'item/started' || msg.method === 'item/completed') {
-      for (const activity of codexActivity(p.item, msg.method === 'item/completed')) await emit(activity)
+      if (['subAgentActivity', 'collabAgentToolCall'].includes(p.item?.type)) {
+        if (msg.method === 'item/completed' && typeof p.item.id === 'string') completedAgentItems.add(p.item.id)
+        await subagents.parentItem(p.item)
+      } else {
+        for (const activity of codexActivity(p.item, msg.method === 'item/completed')) await emit(activity)
+      }
     }
     if (msg.method === 'item/started' && Object.hasOwn(toolNames, p.item?.type)) {
       const item = p.item
@@ -1135,6 +1147,13 @@ async function runTurns(
       emit({ type: 'tool', value: summary })
     }
     if (msg.method === 'turn/completed') {
+      for (const item of Array.isArray(p.turn.items) ? p.turn.items : []) {
+        if (['subAgentActivity', 'collabAgentToolCall'].includes(item?.type) && !completedAgentItems.has(item.id))
+          await subagents.parentItem(item)
+      }
+      // The native server can omit child notifications for unloaded threads.
+      // Read only children identified by this parent turn, before closing RPC.
+      await subagents.recover()
       if (p.turn.status === 'interrupted') throw new Error('Codex 任务已中断。')
       if (p.turn.status !== 'completed') throw nativeError(p.turn.error?.message, p.turn.error?.codexErrorInfo)
       if (publicReview) {

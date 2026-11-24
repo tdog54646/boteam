@@ -23,6 +23,7 @@ const notifications = new Set([
   'boteam/refreshRejected',
   'account/login/completed',
   'account/rateLimits/updated',
+  'thread/started',
   'thread/tokenUsage/updated',
   'thread/name/updated',
   'model/rerouted',

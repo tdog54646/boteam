@@ -105,6 +105,24 @@ readline.createInterface({input:process.stdin}).on('line', line => {
    return reply({thread:{id:threadId},approvalsReviewer:scenario.wrongReviewer?'user':p.approvalsReviewer,collaborationMode:scenario.priorPlan?{mode:'plan'}:null,model:scenario.wrongModel?'different':p.model,reasoningEffort:p.config?.model_reasoning_effort,modelProvider:'openai',approvalPolicy:p.approvalPolicy,sandbox:{type:p.sandbox==='read-only'?'readOnly':'workspaceWrite',networkAccess:false}});
  }
  if(method==='thread/read' && scenario.metadataTitle) return reply({thread:{id:p.threadId,name:scenario.metadataTitle}});
+ if(scenario.subagents && (method==='thread/read'||method==='thread/turns/list')) {
+   if(!['worker-replay','worker-foreign','worker-live'].includes(p.threadId)) {
+     return out({id,error:{code:-32600,message:'no rollout found'}});
+   }
+   const childId=p.threadId, parentThreadId=childId==='worker-foreign'?'unrelated-parent':threadId;
+   const turns=childId==='worker-live'?[]:[{id:'child-turn',itemsView:'full',status:scenario.modernSubagentActivity?'inProgress':'completed',items:[
+     {type:'userMessage',id:'request',content:[{type:'text',text:'Read two files'},{type:'localImage',path:'/private-image'}]},
+     {type:'reasoning',id:'reasoning',summary:['PRIVATE THOUGHT'],content:['PRIVATE THOUGHT']},
+     {type:'agentMessage',id:'response',text:childId==='worker-foreign'?'FOREIGN REPLAY':'Read both files.',phase:'final_answer'},
+   ]}];
+   if(method==='thread/turns/list') {
+     if(childId==='worker-foreign'||p.itemsView!=='full'||!Number.isInteger(p.limit)||p.limit>50) process.exit(8);
+     if(scenario.legacySubagents) return out({id,error:{code:-32601,message:'Unknown method'}});
+     return reply({data:turns,nextCursor:null,backwardsCursor:null});
+   }
+   if(p.includeTurns && !scenario.legacySubagents) return out({id,error:{code:-32602,message:'Use paginated history'}});
+   return reply({thread:{id:childId,parentThreadId,source:{subAgent:{thread_spawn:{parent_thread_id:parentThreadId}}},agentNickname:'Inspector',turns:p.includeTurns?turns:[]}});
+ }
  if(method==='thread/read' || method==='thread/fork'){
    const path=require('node:path');
    const dir=path.join(process.env.CODEX_HOME,'sessions','2026','11','20');
@@ -163,6 +181,44 @@ readline.createInterface({input:process.stdin}).on('line', line => {
    }
    if(scenario.turnError) {
      notify('turn/completed',{threadId,turn:{id:turnId,status:'failed',error:scenario.turnError,items:[]}});
+     return;
+   }
+   if(scenario.subagents) {
+     if(scenario.followupSubagent) {
+       notify('item/completed',{threadId,turnId,item:{type:'collabAgentToolCall',id:'followup',tool:'followupTask',status:'completed',senderThreadId:threadId,receiverThreadIds:['worker-replay','worker-foreign'],prompt:'Read another file',model:null,reasoningEffort:null,agentsStates:{}}});
+       notify('turn/started',{threadId:'worker-replay',turn:{id:'child-followup',status:'inProgress',items:[]}});
+       notify('item/agentMessage/delta',{threadId:'worker-foreign',turnId:'child-followup',itemId:'answer',delta:'FOREIGN FOLLOWUP'});
+       notify('item/completed',{threadId:'worker-replay',turnId:'child-followup',item:{type:'agentMessage',id:'answer',text:'Read the next file.'}});
+       notify('turn/completed',{threadId:'worker-replay',turn:{id:'child-followup',status:'completed',items:[]}});
+       notify('turn/completed',{threadId,turn:{id:turnId,status:'completed',items:[]}});
+       return;
+     }
+     if(scenario.modernSubagentActivity) {
+       const started={type:'subAgentActivity',id:'spawn',kind:'started',agentThreadId:'worker-replay',agentPath:'Scout',model:'gpt-6',reasoningEffort:'high'};
+       const completed={...started,id:'finish',kind:'completed',model:null,reasoningEffort:null};
+       notify('item/completed',{threadId,turnId,item:started});
+       notify('turn/completed',{threadId,turn:{id:turnId,status:'completed',items:[started,completed]}});
+       return;
+     }
+     const ids=['worker-live','worker-replay','worker-foreign'];
+     const collab=(tool,status,agentsStates) => notify('item/completed',{threadId,turnId,item:{type:'collabAgentToolCall',id:tool,tool,status,...(!scenario.legacySubagents&&{senderThreadId:threadId}),receiverThreadIds:ids,prompt:null,model:'fixture-child',reasoningEffort:'high',agentsStates}});
+     collab('spawnAgent','completed',Object.fromEntries(ids.map(id=>[id,{status:'running',message:null}])));
+     notify('item/completed',{threadId,turnId,item:{type:'collabAgentToolCall',tool:'spawnAgent',senderThreadId:'foreign-parent',receiverThreadIds:['foreign-sender']}});
+     notify('thread/started',{thread:{id:'worker-live',parentThreadId:threadId,agentNickname:'Scout'}});
+     const child=(method,fields,id='worker-live')=>notify(method,{threadId:id,turnId:'child-turn',...fields});
+     child('item/completed',{item:{type:'agentMessage',id:'unrelated',text:'FOREIGN LIVE'}},'unrelated');
+     child('item/completed',{item:{type:'userMessage',id:'request',content:[{type:'text',text:'Check build'}]}});
+     child('item/started',{item:{type:'commandExecution',id:'exec',command:'PRIVATE COMMAND',cwd:'/private-path'}});
+     child('item/agentMessage/delta',{itemId:'response',delta:'Build '});
+     child('item/agentMessage/delta',{itemId:'response',delta:'ok'});
+     child('item/completed',{item:{type:'agentMessage',id:'response',text:'Build ok; api_key=secret-example'}});
+     child('item/completed',{item:{type:'reasoning',id:'thought',summary:['PRIVATE THOUGHT']}});
+     notify('turn/completed',{threadId:'worker-live',turn:{id:'child-turn',status:'completed',items:[]}});
+     collab('wait','completed',Object.fromEntries(ids.map(id=>[id,{
+       status:scenario.missingChildTerminal&&id==='worker-replay'?'running':'completed',message:'RAW STATUS CONTENT'
+     }])));
+     notify('item/agentMessage/delta',{threadId,turnId,itemId:'main-response',delta:'Main reply'});
+     notify('turn/completed',{threadId,turn:{id:turnId,status:'completed',items:[]}});
      return;
    }
    if(scenario.questions) {
@@ -304,6 +360,99 @@ test('expired credentials, linked files and API key modes cannot start a task', 
   await fs.unlink(path.join(f.source, 'auth.json'))
   await fs.symlink(original, path.join(f.source, 'auth.json'))
   assert.notEqual((await detect(f)).status, 'ready')
+})
+
+test('Codex emits scoped, sanitized live subagent entries in order and updates by item ID', async (t) => {
+  const f = await fixture(t)
+  await f.scenario({ subagents: true })
+  const account = await prepare({ candidate: { ...f, ...(await detect(f)) }, profile: f.profile })
+  const events = []
+  await run({ account, cwd: f.base, prompt: 'Delegate', emit: (e) => events.push(e) })
+
+  assert.equal(events.filter((e) => e.type === 'text').map((e) => e.value).join(''), 'Main reply')
+  const childEvents = events.filter((e) => e.agent?.id === 'worker-live')
+  assert.equal(childEvents[0]?.type, 'tool')
+  assert.equal(childEvents[0]?.agent.model, 'fixture-child')
+  assert.equal(childEvents[0]?.agent.effort, 'high')
+  assert.ok(childEvents.some((e) => e.agent.status === 'running' && e.agent.name === 'Scout'))
+  assert.ok(childEvents.some((e) => e.agent.status === 'completed'))
+  const entries = childEvents.filter((e) => e.type === 'agentTranscript').flatMap((e) => e.entries)
+  assert.deepEqual(entries.map((entry) => entry.role), ['user', 'activity', 'assistant', 'assistant', 'assistant'])
+  assert.equal(entries[0]?.text, 'Check build')
+  assert.deepEqual(entries.slice(-3).map((entry) => entry.text), ['Build ', 'Build ok', 'Build ok; api_key=[已隐藏]'])
+  assert.equal(new Set(entries.slice(-3).map((entry) => entry.id)).size, 1)
+  assert.ok(!events.some((e) => e.agent?.id === 'foreign-sender'))
+  assert.doesNotMatch(JSON.stringify(events), /FOREIGN LIVE|PRIVATE THOUGHT|PRIVATE COMMAND|secret-example|RAW STATUS CONTENT/)
+})
+
+test('Codex replays child turns only when the native read confirms the parent thread', async (t) => {
+  const f = await fixture(t)
+  await f.scenario({ subagents: true })
+  const account = await prepare({ candidate: { ...f, ...(await detect(f)) }, profile: f.profile })
+  const events = []
+  await run({ account, cwd: f.base, prompt: 'Delegate', emit: (e) => events.push(e) })
+
+  const transcripts = events.filter((e) => e.type === 'agentTranscript')
+  const replayed = transcripts.filter((e) => e.agent.id === 'worker-replay').flatMap((e) => e.entries)
+  assert.deepEqual(replayed.map(({ role, text }) => [role, text]), [['user', 'Read two files'], ['assistant', 'Read both files.']])
+  assert.ok(events.findIndex((e) => e.type === 'agentTranscript' && e.agent.id === 'worker-replay') <
+    events.findIndex((e) => e.type === 'text' && e.value === 'Main reply'))
+  assert.ok(!transcripts.some((e) => e.agent.id === 'worker-foreign'))
+  assert.doesNotMatch(JSON.stringify(transcripts), /FOREIGN REPLAY|PRIVATE THOUGHT|private-image/)
+})
+
+test('Codex retains status and scoped replay for older collaboration events without senderThreadId', async (t) => {
+  const f = await fixture(t)
+  await f.scenario({ subagents: true, legacySubagents: true })
+  const account = await prepare({ candidate: { ...f, ...(await detect(f)) }, profile: f.profile })
+  const events = []
+  await run({ account, cwd: f.base, prompt: 'Delegate', emit: (e) => events.push(e) })
+  assert.ok(events.some((e) => e.agent?.id === 'worker-replay' && e.agent.status === 'completed'))
+  assert.ok(events.some((e) => e.agent?.id === 'worker-replay' &&
+    e.entries?.some((entry) => entry.text === 'Read both files.')))
+  assert.ok(!events.some((e) => e.type === 'agentTranscript' && e.agent.id === 'worker-foreign'))
+})
+
+test('Codex recovers the native terminal status when the parent misses the child event', async (t) => {
+  const f = await fixture(t)
+  await f.scenario({ subagents: true, missingChildTerminal: true })
+  const account = await prepare({ candidate: { ...f, ...(await detect(f)) }, profile: f.profile })
+  const events = []
+  await run({ account, cwd: f.base, prompt: 'Delegate', emit: (e) => events.push(e) })
+  const last = events.filter(e => e.agent?.id === 'worker-replay' && e.type === 'tool').at(-1)
+  assert.equal(last?.agent.status, 'completed')
+})
+
+test('Codex connects a resumed parent turn to its existing child when the follow-up has no status map', async (t) => {
+  const f = await fixture(t)
+  const account = await prepare({ candidate: { ...f, ...(await detect(f)) }, profile: f.profile })
+  let threadId
+  await f.scenario({ subagents: true })
+  await run({ account, cwd: f.base, prompt: 'Delegate', emit: (e) => { if (e.type === 'session') threadId = e.value } })
+  await f.scenario({ subagents: true, followupSubagent: true })
+  const events = []
+  await run({ account, cwd: f.base, threadId, prompt: 'Follow up', emit: (e) => events.push(e) })
+
+  const child = events.filter((e) => e.agent?.id === 'worker-replay')
+  assert.equal(child[0]?.type, 'tool')
+  assert.equal(child[0]?.agent.name, 'Inspector')
+  assert.ok(child.some((e) => e.entries?.some((entry) => entry.text === 'Read the next file.')))
+  assert.equal(child.filter((e) => e.type === 'tool').at(-1)?.agent.status, 'completed')
+  assert.ok(!events.some((e) => e.agent?.id === 'worker-foreign'))
+})
+
+test('Codex uses resolved subagent activity metadata and the native completion snapshot', async (t) => {
+  const f = await fixture(t)
+  await f.scenario({ subagents: true, modernSubagentActivity: true })
+  const account = await prepare({ candidate: { ...f, ...(await detect(f)) }, profile: f.profile })
+  const events = []
+  await run({ account, cwd: f.base, prompt: 'Delegate', emit: (e) => events.push(e) })
+
+  const child = events.filter((e) => e.agent?.id === 'worker-replay' && e.type === 'tool')
+  assert.deepEqual(child.map((e) => e.agent), [
+    { id: 'worker-replay', status: 'running', name: 'Scout', model: 'gpt-6', effort: 'high' },
+    { id: 'worker-replay', status: 'completed', name: 'Scout', model: 'gpt-6', effort: 'high' },
+  ])
 })
 
 test('account catalog drives independent new and resumed model/effort overrides', async (t) => {
