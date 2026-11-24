@@ -14,6 +14,7 @@ import { commandName } from './adapters/native-slash.mjs'
 import { groupPrompt } from './group-context.mjs'
 import { forkConversation, directForkPrompt } from './chat-fork.mjs'
 import { manageChat } from './chat-management.mjs'
+import { agentEntries, agentSummary, saveAgentEntries } from './subagents.mjs'
 import { draftProjectCwd, chatProjectCwd, configureNewChatProject, inheritProject, manageProject } from './projects.mjs'
 
 const active = "('queued','running','approval')"
@@ -478,6 +479,8 @@ export class Workspace {
     switch (method) {
       case 'snapshot':
         return this.snapshot()
+      case 'agentTranscript':
+        return agentEntries(this.db, p)
       case 'suggestChatTitle':
         return suggestChatTitle(this.db, p.chatId)
       case 'chatDirectories':
@@ -911,6 +914,9 @@ export class Workspace {
               case 'tool':
                 this.event(id, val, event)
                 break
+              case 'agentTranscript':
+                saveAgentEntries(this.db, id, event)
+                break
               case 'context':
                 this.composer.recordContext(chatId, bot.id, event.value)
                 break
@@ -962,9 +968,10 @@ export class Workspace {
     }
   }
   event(id, text, { agent, source } = {}) {
+    const summary = agentSummary(agent)
     this.db.run(
       "UPDATE tasks SET events=json_insert(events,'$[#]',json(?)) WHERE id=?",
-      JSON.stringify({ text: redact(text).slice(0, 2000), agent, source }),
+      JSON.stringify({ text: redact(text).slice(0, 2000), agent: summary, source, ...(summary && { observedAt: Date.now() }) }),
       id,
     )
   }

@@ -103,6 +103,11 @@ export class Database {
         approval TEXT,createdAt TEXT NOT NULL,verifiedKey TEXT NOT NULL DEFAULT ''
       );
       CREATE INDEX IF NOT EXISTS tasks_by_context ON tasks(chatId,botId,status);
+      CREATE TABLE IF NOT EXISTS subagent_entries(
+        taskId TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        agentId TEXT NOT NULL,entryId TEXT NOT NULL,role TEXT NOT NULL,text TEXT NOT NULL,
+        PRIMARY KEY(taskId,agentId,entryId)
+      );
       CREATE TABLE IF NOT EXISTS threads(
         chatId TEXT NOT NULL,botId TEXT NOT NULL,accountId TEXT NOT NULL,threadId TEXT NOT NULL,cwd TEXT NOT NULL,
         PRIMARY KEY(chatId,botId), UNIQUE(accountId,threadId)

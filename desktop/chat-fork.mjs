@@ -28,7 +28,13 @@ function copyTimeline(db, sourceId, chatId, nativeForks) {
     (id,chatId,botId,accountId,messageId,status,tool,identity,error,events,approval,createdAt,verifiedKey,runSettings,groupCutoff)
     SELECT ?,?,botId,accountId,?,status,tool,identity,error,events,NULL,createdAt,verifiedKey,runSettings,groupCutoff
     FROM tasks WHERE id=?`)
-  for (const t of tasks) copyTask.run(taskIds.get(t.id), chatId, messageIds.get(t.messageId), t.id)
+  const copyAgentEntries = db.db.prepare(`INSERT INTO subagent_entries(taskId,agentId,entryId,role,text)
+    SELECT ?,agentId,entryId,role,text FROM subagent_entries WHERE taskId=? ORDER BY rowid`)
+  for (const t of tasks) {
+    const taskId = taskIds.get(t.id)
+    copyTask.run(taskId, chatId, messageIds.get(t.messageId), t.id)
+    copyAgentEntries.run(taskId, t.id)
+  }
   return { messageIds, lastMessage: messageIds.get(messages.at(-1)?.id) ?? null }
 }
 
