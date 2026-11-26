@@ -27,8 +27,11 @@ export function useComposerActions({ state, chat, draft, bot, projectCwd, draftS
     ...(draft && draftSettings && { settings: draftSettings }),
     ...(force && { refresh: true }),
   }), [invoke, botId, chatId, draft, draftSettings]);
+  const fallbackKey = JSON.stringify([
+    binding, chatId || draft?.id, botId, chat?.projectId || draft?.projectId, projectCwd,
+  ]);
   const enabled = Boolean(botId && account?.status === "ready");
-  const result = useNativeCatalog({ id, binding, enabled, query, refreshOnEntry: true });
+  const result = useNativeCatalog({ id, binding, fallbackKey, enabled, query, refreshOnEntry: true });
   return {
     ...result,
     scope: JSON.stringify([id, binding]),

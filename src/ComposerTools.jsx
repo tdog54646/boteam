@@ -244,6 +244,70 @@ function Ring({ values }) {
   );
 }
 
+function SpeedGauge({ value }) {
+  const known = Number.isFinite(value) && value >= 0;
+  const pct = known && value > 0 ? Math.min(100, Math.max(8, (value / 120) * 100)) : 0;
+  const angle = known ? -115 + pct * 2.3 : -35;
+  const arcPath = "M 4.03 17.4 A 9.2 9.2 0 1 1 19.97 17.4";
+  return (
+    <svg className="usage-ring speed-gauge" viewBox="0 0 24 24" aria-hidden="true">
+      <g fill="none" strokeWidth="2.8" strokeLinecap="round">
+        <path className={`ring-track ${known ? "" : "unknown"}`} d={arcPath} />
+        {known && pct > 0 && (
+          <path
+            className="ring-value"
+            d={arcPath}
+            pathLength="100"
+            strokeDasharray={`${pct} 100`}
+          />
+        )}
+      </g>
+      <g transform={`rotate(${angle} 12 13.2)`}>
+        <line
+          className={`gauge-needle ${known ? "" : "unknown"}`}
+          x1="12"
+          y1="13.2"
+          x2="12"
+          y2="7.4"
+          strokeWidth="2.1"
+          strokeLinecap="round"
+        />
+      </g>
+      <circle className={`gauge-hub ${known ? "" : "unknown"}`} cx="12" cy="13.2" r="1.5" />
+    </svg>
+  );
+}
+
+function CacheRing({ value }) {
+  const known = Number.isFinite(value) && value >= 0;
+  return (
+    <svg className="usage-ring cache-ring" viewBox="0 0 24 24" aria-hidden="true">
+      <g fill="none" strokeWidth="2.8" transform="rotate(-90 12 12)">
+        <circle
+          className={`ring-track ${known ? "" : "unknown"}`}
+          cx="12"
+          cy="12"
+          r="9.5"
+        />
+        {known && value > 0 && (
+          <circle
+            className="ring-value"
+            cx="12"
+            cy="12"
+            r="9.5"
+            pathLength="100"
+            strokeDasharray={`${Math.min(100, value)} 100`}
+          />
+        )}
+      </g>
+      <path
+        className={`cache-glyph ${known ? "" : "unknown"}`}
+        d="M12.7 7.6L9.6 12.2h2.5l-.8 4.2 3.1-4.6h-2.5z"
+      />
+    </svg>
+  );
+}
+
 const number = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 });
 const displayTime = (date) => {
   const time = new Date(date);
@@ -276,6 +340,79 @@ function ContextReading({ usage }) {
         {Number.isFinite(usage.limit) ? number.format(usage.limit) : "未知"} tokens
       </p>
       {usage.updatedAt && <p>更新于 {displayTime(usage.updatedAt)}</p>}
+    </>
+  );
+}
+
+function formatMetricDuration(durationMs) {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return "";
+  if (durationMs < 1000) return `${Math.round(durationMs)}ms`;
+  const seconds = durationMs / 1000;
+  if (seconds < 60) return `${number.format(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const rem = Math.round(seconds % 60);
+  return rem > 0 ? `${mins}m ${rem}s` : `${mins}m`;
+}
+
+function matchesMetricModel(modelId, metricModel) {
+  if (!modelId || !metricModel) return true;
+  const left = modelId.toLowerCase();
+  const right = metricModel.toLowerCase();
+  return left === right || left.startsWith(right) || right.startsWith(left);
+}
+
+function SpeedReading({ metrics }) {
+  const speed = Number.isFinite(metrics?.tokensPerSecond) ? metrics.tokensPerSecond : null;
+  const sessionSpeed = Number.isFinite(metrics?.sessionTokensPerSecond)
+    ? metrics.sessionTokensPerSecond
+    : null;
+  const durationLabel = formatMetricDuration(metrics?.durationMs);
+  return (
+    <>
+      <div className="usage-line">
+        <span>本轮速度</span>
+        <strong>{speed == null ? "等待输出读数" : `${number.format(speed)} tok/s`}</strong>
+      </div>
+      <p>
+        本轮输出 {number.format(metrics?.outputTokens || 0)} tokens
+        {metrics?.reasoningTokens > 0 ? `（含思考 ${number.format(metrics.reasoningTokens)}）` : ""}
+        {durationLabel ? ` · 耗时 ${durationLabel}` : ""}
+      </p>
+      {metrics?.turnCount > 1 && sessionSpeed != null && (
+        <div className="usage-line">
+          <span>会话均速（{metrics.turnCount} 轮）</span>
+          <strong>{number.format(sessionSpeed)} tok/s</strong>
+        </div>
+      )}
+      {metrics?.updatedAt && <p>更新于 {displayTime(metrics.updatedAt)}</p>}
+    </>
+  );
+}
+
+function CacheReading({ metrics }) {
+  const hit = Number.isFinite(metrics?.cacheHitPercent) ? metrics.cacheHitPercent : null;
+  const sessionHit = Number.isFinite(metrics?.sessionCacheHitPercent)
+    ? metrics.sessionCacheHitPercent
+    : null;
+  return (
+    <>
+      <div className="usage-line">
+        <span>本轮命中率</span>
+        <strong>{hit == null ? "暂无输入读数" : `${number.format(hit)}%`}</strong>
+      </div>
+      <p>
+        命中 {number.format(metrics?.cachedInputTokens || 0)} / {number.format(metrics?.inputTokens || 0)} 输入 tokens
+        {metrics?.cacheCreationTokens > 0
+          ? ` · 新建缓存 ${number.format(metrics.cacheCreationTokens)}`
+          : ""}
+      </p>
+      {metrics?.turnCount > 1 && sessionHit != null && (
+        <div className="usage-line">
+          <span>会话累计（{metrics.turnCount} 轮）</span>
+          <strong>{number.format(sessionHit)}%</strong>
+        </div>
+      )}
+      {metrics?.updatedAt && <p>更新于 {displayTime(metrics.updatedAt)}</p>}
     </>
   );
 }
@@ -320,7 +457,8 @@ export function ComposerTools({
   const account = state.accounts.find((a) => a.id === bot?.accountId);
   const { catalog, loading, refresh } = useModelCatalog(account, invoke, { refreshOnEntry: true });
   const [pending, setPending] = useState(null);
-  const saving = useRef(false);
+  const saveChain = useRef(Promise.resolve());
+  const saveSeq = useRef(0);
   const stored = draftSettings?.[bot?.id] || state.composerSettings?.find(
     (s) => s.chatId === chatId && s.botId === bot?.id,
   );
@@ -356,9 +494,10 @@ export function ComposerTools({
   const codex = account?.provider === "codex";
   const modes = providerModes.filter((mode) => {
     if (permission === mode) return true;
-    if (mode === "auto-review") return actions?.autoReview;
-    if (mode === "workspace-auto" && account?.provider === "antigravity")
-      return actions?.workspaceAuto;
+    if (mode === "auto-review") return Boolean(actions?.autoReview);
+    if (mode === "workspace-auto" && account?.provider === "antigravity") {
+      return actions ? Boolean(actions.workspaceAuto) : account?.status === "ready";
+    }
     return true;
   });
   const menuModes = codex
@@ -373,6 +512,11 @@ export function ComposerTools({
     (r) => r.chatId === chatId && r.botId === bot?.id,
   );
   const usage = modelId && lastUsage?.model === modelId ? lastUsage : null;
+  const lastMetrics = (state.tokenMetrics || []).find(
+    (r) => r.chatId === chatId && r.botId === bot?.id,
+  );
+  const metrics =
+    lastMetrics && matchesMetricModel(modelId, lastMetrics.model) ? lastMetrics : null;
   const [quotaRequest, setQuotaRequest] = useState(null);
   const [lastReset, setLastReset] = useState(0);
   // The quota IPC reads the persisted chat settings, including during an optimistic edit.
@@ -460,25 +604,33 @@ export function ComposerTools({
   );
   const shared = { popup, setPopup };
   async function save(values, closeAfter = true) {
-    if (busy || saving.current) return;
-    saving.current = true;
+    if (busy) return;
+    const seq = ++saveSeq.current;
     const previous = pending;
-    if (!closeAfter) {
-      const patch =
-        previous?.botId === bot.id ? { ...previous.patch, ...values } : values;
-      setPending({ botId: bot.id, patch });
+    const nextPatch = {
+      ...(previous?.botId === bot.id ? previous.patch : {}),
+      ...values,
+    };
+    if (providerModes.includes("plan")) {
+      if (values.planMode !== undefined) {
+        nextPatch.permission = values.planMode ? "plan" : "default";
+        nextPatch.planMode = Boolean(values.planMode);
+      } else if (values.permission !== undefined) {
+        nextPatch.planMode = values.permission === "plan";
+      }
     }
-    setBusy(true);
+    setPending({ botId: bot.id, patch: nextPatch });
+    if (closeAfter) setPopup(null);
     setError("");
+    const runSave = saveChain.current.catch(() => {}).then(() => saveSettings(bot.id, values));
+    saveChain.current = runSave;
     try {
-      await saveSettings(bot.id, values);
-      if (closeAfter) setPopup(null);
+      await runSave;
     } catch (e) {
-      if (!closeAfter) setPending(previous);
-      setError(errorText(e));
-    } finally {
-      saving.current = false;
-      setBusy(false);
+      if (saveSeq.current === seq) {
+        setPending(previous);
+        setError(errorText(e));
+      }
     }
   }
   return (
@@ -567,6 +719,72 @@ export function ComposerTools({
         )}
       {children}
       <div className="composer-trailing">
+        <ToolPopover
+          {...shared}
+          id="speed"
+          label="Token 输出速度"
+          inspect
+          trailing
+          className="ring-tool speed-tool"
+          trigger={<SpeedGauge value={metrics?.tokensPerSecond ?? null} />}
+        >
+          <h3>Token 输出速度</h3>
+          {groupPicker}
+          <p title={modelId}>当前模型 · {modelLabel}</p>
+          {metrics ? (
+            <SpeedReading metrics={metrics} />
+          ) : (
+            <p>
+              {modelId
+                ? "发送消息后自动统计当前模型的输出速度。"
+                : loading
+                  ? "正在读取原生模型…"
+                  : "当前原生模型尚未确认。"}
+            </p>
+          )}
+          {!metrics && lastMetrics && (
+            <details className="previous-context" key={bot.id}>
+              <summary>上次原生读数</summary>
+              <p title={lastMetrics.model}>
+                {modelLabelFor(catalog, lastMetrics.model) || lastMetrics.model || "原生工具未报告模型"}
+              </p>
+              <SpeedReading metrics={lastMetrics} />
+            </details>
+          )}
+        </ToolPopover>
+        <ToolPopover
+          {...shared}
+          id="cache"
+          label="缓存命中率"
+          inspect
+          trailing
+          className="ring-tool cache-tool"
+          trigger={<CacheRing value={metrics?.cacheHitPercent ?? null} />}
+        >
+          <h3>缓存命中率</h3>
+          {groupPicker}
+          <p title={modelId}>当前模型 · {modelLabel}</p>
+          {metrics ? (
+            <CacheReading metrics={metrics} />
+          ) : (
+            <p>
+              {modelId
+                ? "发送消息后自动统计当前模型的缓存命中率。"
+                : loading
+                  ? "正在读取原生模型…"
+                  : "当前原生模型尚未确认。"}
+            </p>
+          )}
+          {!metrics && lastMetrics && (
+            <details className="previous-context" key={bot.id}>
+              <summary>上次原生读数</summary>
+              <p title={lastMetrics.model}>
+                {modelLabelFor(catalog, lastMetrics.model) || lastMetrics.model || "原生工具未报告模型"}
+              </p>
+              <CacheReading metrics={lastMetrics} />
+            </details>
+          )}
+        </ToolPopover>
         <ToolPopover
           {...shared}
           id="context"

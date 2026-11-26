@@ -22,7 +22,7 @@ export function Home({ state, invoke, open, draft, members, setSelection, firstP
         </h1>
         {draft ? (
           <Composer
-            key={draft.id}
+            key={draft.legacyHome ? "home:" + draft.members[0] : draft.id}
             state={state}
             members={members}
             draft={draft}

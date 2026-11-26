@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errorText } from "./ui";
 
-// Remember reads for this editor visit. The main process owns the cross-visit cache.
-export function useNativeCatalog({ id, binding, enabled, query, refreshOnEntry }) {
+// Remember reads for this editor visit. Retain the last verified catalog within the same
+// workspace/chat scope while a setting change refreshes in the background.
+const latestByScope = new Map();
+
+export function useNativeCatalog({ id, binding, fallbackKey = binding, enabled, query, refreshOnEntry }) {
   const [reads, setReads] = useState({});
   const requests = useRef(new Map());
   const load = useCallback(async (force = false) => {
@@ -13,6 +16,12 @@ export function useNativeCatalog({ id, binding, enabled, query, refreshOnEntry }
     requests.current.set(id, request);
     function publish(data, error) {
       if (requests.current.get(id) !== request) return;
+      if (data && fallbackKey) {
+        if (latestByScope.size >= 64) {
+          latestByScope.delete(latestByScope.keys().next().value);
+        }
+        latestByScope.set(fallbackKey, data);
+      }
       const pending = request.pending;
       setReads(previous => {
         const before = previous[id];
@@ -33,7 +42,7 @@ export function useNativeCatalog({ id, binding, enabled, query, refreshOnEntry }
       request.pending = false;
       publish(null, errorText(error));
     }
-  }, [id, binding, enabled, query, refreshOnEntry]);
+  }, [id, binding, fallbackKey, enabled, query, refreshOnEntry]);
 
   useEffect(() => {
     if (enabled) load();
@@ -48,9 +57,12 @@ export function useNativeCatalog({ id, binding, enabled, query, refreshOnEntry }
   useEffect(() => () => requests.current.clear(), []);
 
   const read = enabled && reads[id]?.binding === binding ? reads[id] : null;
+  const isPending = enabled && (read?.pending ?? true);
+  const fallbackData =
+    isPending && !read?.error && fallbackKey ? latestByScope.get(fallbackKey) || null : null;
   return {
-    data: read?.data,
-    pending: enabled && (read?.pending ?? true),
+    data: read?.data ?? fallbackData,
+    pending: isPending,
     error: read?.error,
     retry: enabled ? () => load(true) : undefined,
   };

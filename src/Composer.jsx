@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useImperativeHandle, useRef, useState } from "react";
+import React, { useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowUp,
@@ -36,8 +36,13 @@ import { AttachmentPreview } from "./AttachmentPreview";
 import { SketchDialog } from "./SketchDialog";
 import { MessageQuote } from "./MessageQuote";
 import { FirstChatProject } from "./FirstChatProject";
+import {
+  deleteComposerDraft,
+  getComposerDraft,
+  setComposerDraft,
+  subscribeComposerDraft,
+} from "./composerDrafts";
 
-const drafts = new Map();
 export function Composer({
   chat,
   members,
@@ -58,20 +63,20 @@ export function Composer({
   const scope = draft ? (draft.legacyHome ? `home:${draft.members[0]}` : `draft:${draft.id}`) : chat.id;
   const projectCwd = chat ? chat.initialProjectCwd ?? null : draft?.folder ??
     state.projects?.find(project => project.id === draft?.projectId)?.folders[0] ?? null;
-  const [settingsByBot, setSettingsByBot] = useState(() => drafts.get(scope)?.settingsByBot || {});
-  const [pausedGoals, setPausedGoals] = useState(() => drafts.get(scope)?.pausedGoals || {});
-  const [text, setText] = useState(() => drafts.get(scope)?.text || "");
-  const [replyToMessageId, setReplyToMessageId] = useState(() => drafts.get(scope)?.replyToMessageId || null);
+  const [settingsByBot, setSettingsByBot] = useState(() => getComposerDraft(scope)?.settingsByBot || {});
+  const [pausedGoals, setPausedGoals] = useState(() => getComposerDraft(scope)?.pausedGoals || {});
+  const [text, setText] = useState(() => getComposerDraft(scope)?.text || "");
+  const [replyToMessageId, setReplyToMessageId] = useState(() => getComposerDraft(scope)?.replyToMessageId || null);
   const quotedMessage = publicMessages?.get(replyToMessageId);
   const quoteDescriptionId = useId();
   const [selected, setSelected] = useState(
-    () => drafts.get(scope)?.selected || [],
+    () => getComposerDraft(scope)?.selected || [],
   );
   const [extensions, setExtensions] = useState(
-    () => drafts.get(scope)?.extensions || {},
+    () => getComposerDraft(scope)?.extensions || {},
   );
   const [slashMember, setSlashMember] = useState(
-    () => drafts.get(scope)?.slashMember,
+    () => getComposerDraft(scope)?.slashMember,
   );
   const [slashDialog, setSlashDialog] = useState(null);
   const [open, setOpen] = useState(false);
@@ -95,6 +100,7 @@ export function Composer({
   const dragDepth = useRef(0);
   const fileLock = useRef(false);
   const sendLock = useRef(false);
+  const suppressDraftSave = useRef(false);
   const pendingSlashSend = useRef(null);
   useImperativeHandle(sourceControl, () => ({ pickFiles }));
   const canPick = filesReady && !busy && !workingFiles && members.length > 0;
@@ -117,12 +123,37 @@ export function Composer({
   useEffect(() => {
     onBusyChange?.(busy || workingFiles);
   }, [busy, workingFiles, onBusyChange]);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && el.value.length > 0) {
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
+  }, [scope]);
+  useLayoutEffect(() => {
+    if (suppressDraftSave.current) return;
+    setComposerDraft(scope, {
+      text,
+      selected,
+      extensions,
+      slashMember,
+      replyToMessageId,
+      settingsByBot,
+      pausedGoals,
+      hasAttachments: filesReady && files.length > 0,
+    });
+  }, [scope, text, selected, extensions, slashMember, replyToMessageId, settingsByBot, pausedGoals, filesReady, files.length]);
   useEffect(() => {
-    if (text || selected.length || Object.keys(extensions).length || replyToMessageId ||
-        Object.keys(settingsByBot).length || Object.keys(pausedGoals).length)
-      drafts.set(scope, { text, selected, extensions, slashMember, replyToMessageId, settingsByBot, pausedGoals });
-    else drafts.delete(scope);
-  }, [scope, text, selected, extensions, slashMember, replyToMessageId, settingsByBot, pausedGoals]);
+    return subscribeComposerDraft(scope, (remote) => {
+      if (sendLock.current) return;
+      setText(remote?.text || "");
+      setSelected(remote?.selected || []);
+      setExtensions(remote?.extensions || {});
+      setSlashMember(remote?.slashMember);
+      setReplyToMessageId(remote?.replyToMessageId || null);
+      setSettingsByBot(remote?.settingsByBot || {});
+      setPausedGoals(remote?.pausedGoals || {});
+    });
+  }, [scope]);
   useEffect(() => {
     let current = true;
     invoke("listAttachments", { scope })
@@ -484,11 +515,13 @@ export function Composer({
           } else {
             onNewDraft({ kind: "direct", members: [botId], projectId: chat?.projectId || firstProject?.projectId });
           }
-          drafts.set(scope, { ...drafts.get(scope), text: "" });
+          suppressDraftSave.current = true;
+          setComposerDraft(scope, { ...getComposerDraft(scope), text: "" });
         } else {
           throw new Error("此快捷命令尚未接入。");
         }
         setText("");
+        suppressDraftSave.current = false;
         slash.dismiss();
       } catch (e) {
         setError(errorText(e));
@@ -533,8 +566,25 @@ export function Composer({
       send();
     }
   }, [text, slashTarget?.id, actions.scope, slash.ready, slash.error]);
+  const settingsSaveChain = useRef(Promise.resolve());
+  const activeSettingsSave = useRef(null);
   function saveSettings(botId, patch) {
-    if (!draft) return invoke("setComposerSettings", { chatId: chat.id, botId, ...patch });
+    if (!draft) {
+      const next = settingsSaveChain.current
+        .catch(() => {})
+        .then(() => invoke("setComposerSettings", { chatId: chat.id, botId, ...patch }));
+      settingsSaveChain.current = next;
+      activeSettingsSave.current = next;
+      next.then(
+        () => {
+          if (activeSettingsSave.current === next) activeSettingsSave.current = null;
+        },
+        () => {
+          if (activeSettingsSave.current === next) activeSettingsSave.current = null;
+        },
+      );
+      return next;
+    }
     const accountId = members.find(member => member.id === botId)?.accountId;
     const provider = accounts.find(account => account.id === accountId)?.provider;
     setSettingsByBot(previous => {
@@ -559,9 +609,10 @@ export function Composer({
   async function saveDraftGoal({ action, botId, objective, status }) {
     if (action === "set" && status === "active") {
       const result = await firstMessage({ recipients: [botId], goalObjective: objective });
+      suppressDraftSave.current = true;
       if (text || selected.length || Object.keys(extensions).length)
-        drafts.set(result.chatId, { text, selected, extensions, slashMember });
-      drafts.delete(scope);
+        setComposerDraft(result.chatId, { text, selected, extensions, slashMember });
+      deleteComposerDraft(scope);
       return result.chatId;
     }
     setPausedGoals(previous => {
@@ -577,6 +628,9 @@ export function Composer({
     setBusy(true);
     setError("");
     try {
+      if (!draft && activeSettingsSave.current) {
+        await activeSettingsSave.current;
+      }
       const nativeActions = Object.fromEntries(
         recipients
           .filter((id) => extensions[id]?.length)
@@ -601,7 +655,8 @@ export function Composer({
       let chatId = chat?.id;
       if (draft) ({ chatId } = await firstMessage(message));
       else await invoke("send", { ...message, chatId });
-      drafts.delete(scope);
+      suppressDraftSave.current = true;
+      deleteComposerDraft(scope);
       setReplyToMessageId(null);
       setFiles([]);
       setPopup(null);
@@ -613,6 +668,7 @@ export function Composer({
       setPausedGoals({});
       setOpen(false);
       setMention(null);
+      suppressDraftSave.current = false;
       ref.current?.focus();
       await onSent?.(chatId);
     } catch (e) {

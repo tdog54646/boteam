@@ -233,6 +233,32 @@ async function seed(root) {
       db.run('INSERT INTO members VALUES(?,?)', groupId, id)
       db.run('INSERT INTO context_usage VALUES(?,?,?,?,?,?)',
         groupId, id, id === first ? 36000 : 8000, 200000, id === third ? '' : model, stamp())
+      db.run(
+        `INSERT INTO token_metrics(
+          chatId,botId,lastTaskId,inputTokens,cachedInputTokens,cacheCreationTokens,
+          outputTokens,reasoningTokens,durationMs,tokensPerSecond,cacheHitPercent,
+          priorInputTokens,priorCachedTokens,priorOutputTokens,priorDurationMs,
+          turnCount,model,updatedAt
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        groupId,
+        id,
+        'seed-task-' + id,
+        id === first ? 20000 : 12000,
+        id === first ? 15700 : 8400,
+        id === second ? 1200 : 0,
+        id === first ? 432 : 310,
+        id === first ? 64 : 0,
+        5000,
+        id === first ? 86.4 : 62,
+        id === first ? 78.5 : 70,
+        10000,
+        7100,
+        360,
+        5000,
+        2,
+        id === third ? '' : model,
+        stamp(),
+      )
     }
     db.run('INSERT INTO chats VALUES(?,?,?,?)', 'engineering-chat', 'direct', '工程助手', stamp())
     db.run('INSERT INTO members VALUES(?,?)', 'engineering-chat', first)
@@ -640,7 +666,7 @@ async function verifySlash(page, expect, screenshots, commandFixture) {
   await overviewButton.click()
   await overview.getByRole('button', { name: '1 个已完成' }).click()
   await expect(overview.getByRole('button', { name: /资料核对/ })).toBeVisible()
-  await overview.getByRole('button', { name: '查看全部' }).click()
+  await overview.getByRole('button', { name: '查看全部', exact: true }).click()
   await overview.getByRole('searchbox').fill('桌面端')
   await overview.getByRole('button', { name: '桌面端资料' }).click()
   await expect(overview).toHaveCount(0)
@@ -1076,11 +1102,29 @@ async function verify() {
     await expect(quotaPanel).not.toContainText(/内圈|外圈/)
     await expect(quota.locator('svg g')).toHaveCount(2)
     await quotaPanel.getByRole('combobox').press('Escape')
+    await button('Token 输出速度').hover()
+    await expect(panel('Token 输出速度')).toContainText('86.4 tok/s')
+    await expect(panel('Token 输出速度')).toContainText('会话均速（2 轮）')
+    await page.keyboard.press('Escape')
+    await button('缓存命中率').hover()
+    await expect(panel('缓存命中率')).toContainText('78.5%')
+    await expect(panel('缓存命中率')).toContainText('会话累计（2 轮）')
+    await page.keyboard.press('Escape')
     await button('上下文使用情况').focus()
     await expect(panel('上下文使用情况')).toContainText('36,000 / 200,000')
     await page.keyboard.press('Escape')
+    const [speedBox, cacheBox, contextBox, quotaBox] = await Promise.all([
+      button('Token 输出速度').boundingBox(),
+      button('缓存命中率').boundingBox(),
+      button('上下文使用情况').boundingBox(),
+      button('模型剩余额度').boundingBox(),
+    ])
+    assert.ok(
+      speedBox.x < cacheBox.x && cacheBox.x < contextBox.x && contextBox.x < quotaBox.x,
+      'Token speed and cache hit icons must sit immediately to the left of context and quota rings',
+    )
     await resize(800, 600)
-    const controls = ['添加文件或内容','更改权限','选择接收人','上下文使用情况','模型剩余额度','更换模型和思考强度','发送消息']
+    const controls = ['添加文件或内容','更改权限','选择接收人','Token 输出速度','缓存命中率','上下文使用情况','模型剩余额度','更换模型和思考强度','发送消息']
     for (const name of controls) {
       const control = button(name)
       await expect(control).toBeInViewport({ratio:1})
