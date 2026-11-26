@@ -9,8 +9,8 @@ function copyTimeline(db, sourceId, chatId, nativeForks) {
   const messageIds = new Map(messages.map(m => [m.id, randomUUID()]))
   const taskIds = new Map(tasks.map(t => [t.id, randomUUID()]))
   const copyMessage = db.db.prepare(`INSERT INTO messages
-    (id,chatId,botId,author,name,text,createdAt,recipients,taskId,publishSeq,nativeThreadId)
-    SELECT ?,?,botId,author,name,text,createdAt,recipients,?,publishSeq,? FROM messages WHERE id=?`)
+    (id,chatId,botId,author,name,text,createdAt,recipients,taskId,publishSeq,nativeThreadId,segments)
+    SELECT ?,?,botId,author,name,text,createdAt,recipients,?,publishSeq,?,segments FROM messages WHERE id=?`)
   const linkAttachments = db.db.prepare(`INSERT INTO fork_attachments(messageId,attachmentId)
     SELECT ?,attachmentId FROM message_attachments WHERE messageId=?`)
   for (const m of messages) {
@@ -25,11 +25,11 @@ function copyTimeline(db, sourceId, chatId, nativeForks) {
     if (messageIds.has(m.replyToMessageId)) linkQuote.run(messageIds.get(m.replyToMessageId), messageIds.get(m.id))
   }
   const copyTask = db.db.prepare(`INSERT INTO tasks
-    (id,chatId,botId,accountId,messageId,status,tool,identity,error,events,approval,createdAt,verifiedKey,runSettings,groupCutoff)
-    SELECT ?,?,botId,accountId,?,status,tool,identity,error,events,NULL,createdAt,verifiedKey,runSettings,groupCutoff
+    (id,chatId,botId,accountId,messageId,status,tool,identity,error,events,approval,createdAt,verifiedKey,runSettings,groupCutoff,startedAt,completedAt,authExpired)
+    SELECT ?,?,botId,accountId,?,status,tool,identity,error,events,NULL,createdAt,verifiedKey,runSettings,groupCutoff,startedAt,completedAt,authExpired
     FROM tasks WHERE id=?`)
-  const copyAgentEntries = db.db.prepare(`INSERT INTO subagent_entries(taskId,agentId,entryId,role,text)
-    SELECT ?,agentId,entryId,role,text FROM subagent_entries WHERE taskId=? ORDER BY rowid`)
+  const copyAgentEntries = db.db.prepare(`INSERT INTO subagent_entries(taskId,agentId,entryId,role,text,meta)
+    SELECT ?,agentId,entryId,role,text,meta FROM subagent_entries WHERE taskId=? ORDER BY rowid`)
   for (const t of tasks) {
     const taskId = taskIds.get(t.id)
     copyTask.run(taskId, chatId, messageIds.get(t.messageId), t.id)

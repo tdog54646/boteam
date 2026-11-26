@@ -105,13 +105,21 @@ export class ComposerSettings {
           chatId,
           botId,
         )
-      if (hasPermission)
+      if (hasPermission) {
         this.db.run(
           'UPDATE composer_settings SET permission=? WHERE chatId=? AND botId=?',
           p.permission,
           chatId,
           botId,
         )
+        if (planIsPermission && !hasPlan && p.permission !== 'plan') {
+          this.db.run(
+            'UPDATE composer_settings SET planMode=0 WHERE chatId=? AND botId=?',
+            chatId,
+            botId,
+          )
+        }
+      }
       if (hasPlan) {
         if (planIsPermission) {
           if (p.planMode || previous.permission === 'plan') {
@@ -140,6 +148,86 @@ export class ComposerSettings {
       value.used,
       value.limit,
       redact(value.model || '').slice(0, 500),
+      new Date().toISOString(),
+    )
+  }
+  recordMetrics(chatId, botId, value, taskId = '') {
+    if (!value || typeof value !== 'object') return
+    const inputTokens = Number.isSafeInteger(value.inputTokens) && value.inputTokens >= 0 ? value.inputTokens : 0
+    const cachedInputTokens =
+      Number.isSafeInteger(value.cachedInputTokens) && value.cachedInputTokens >= 0
+        ? Math.min(value.cachedInputTokens, inputTokens || value.cachedInputTokens)
+        : 0
+    const cacheCreationTokens =
+      Number.isSafeInteger(value.cacheCreationTokens) && value.cacheCreationTokens >= 0
+        ? value.cacheCreationTokens
+        : 0
+    const outputTokens = Number.isSafeInteger(value.outputTokens) && value.outputTokens >= 0 ? value.outputTokens : 0
+    const reasoningTokens =
+      Number.isSafeInteger(value.reasoningTokens) && value.reasoningTokens >= 0 ? value.reasoningTokens : 0
+    const durationMs = Number.isSafeInteger(value.durationMs) && value.durationMs >= 0 ? value.durationMs : 0
+    if (inputTokens <= 0 && outputTokens <= 0) return
+    const tokensPerSecond =
+      outputTokens > 0 && durationMs > 0
+        ? Math.round((outputTokens / (durationMs / 1000)) * 10) / 10
+        : Number.isFinite(value.tokensPerSecond) && value.tokensPerSecond >= 0
+          ? Math.round(value.tokensPerSecond * 10) / 10
+          : null
+    const cacheHitPercent =
+      inputTokens > 0
+        ? Math.round((cachedInputTokens / inputTokens) * 1000) / 10
+        : Number.isFinite(value.cacheHitPercent) && value.cacheHitPercent >= 0 && value.cacheHitPercent <= 100
+          ? Math.round(value.cacheHitPercent * 10) / 10
+          : null
+    const safeTaskId = typeof taskId === 'string' ? taskId.slice(0, 120) : ''
+    const prev = this.db.get('SELECT * FROM token_metrics WHERE chatId=? AND botId=?', chatId, botId)
+    const sameTask = Boolean(prev && safeTaskId && prev.lastTaskId === safeTaskId)
+    const priorInputTokens = !prev
+      ? 0
+      : sameTask
+        ? prev.priorInputTokens
+        : (prev.priorInputTokens || 0) + (prev.inputTokens || 0)
+    const priorCachedTokens = !prev
+      ? 0
+      : sameTask
+        ? prev.priorCachedTokens
+        : (prev.priorCachedTokens || 0) + (prev.cachedInputTokens || 0)
+    const priorOutputTokens = !prev
+      ? 0
+      : sameTask
+        ? prev.priorOutputTokens
+        : (prev.priorOutputTokens || 0) + (prev.outputTokens || 0)
+    const priorDurationMs = !prev
+      ? 0
+      : sameTask
+        ? prev.priorDurationMs
+        : (prev.priorDurationMs || 0) + (prev.durationMs || 0)
+    const turnCount = !prev ? 1 : sameTask ? prev.turnCount || 1 : (prev.turnCount || 1) + 1
+    const model = redact(value.model || prev?.model || '').slice(0, 500)
+    this.db.run(
+      `INSERT OR REPLACE INTO token_metrics(
+        chatId,botId,lastTaskId,inputTokens,cachedInputTokens,cacheCreationTokens,
+        outputTokens,reasoningTokens,durationMs,tokensPerSecond,cacheHitPercent,
+        priorInputTokens,priorCachedTokens,priorOutputTokens,priorDurationMs,
+        turnCount,model,updatedAt
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      chatId,
+      botId,
+      safeTaskId,
+      inputTokens,
+      cachedInputTokens,
+      cacheCreationTokens,
+      outputTokens,
+      reasoningTokens,
+      durationMs,
+      tokensPerSecond,
+      cacheHitPercent,
+      priorInputTokens,
+      priorCachedTokens,
+      priorOutputTokens,
+      priorDurationMs,
+      turnCount,
+      model,
       new Date().toISOString(),
     )
   }

@@ -124,6 +124,17 @@ export class Database {
         chatId TEXT NOT NULL,botId TEXT NOT NULL,used INTEGER NOT NULL,
         "limit" INTEGER NOT NULL,model TEXT NOT NULL,updatedAt TEXT NOT NULL,PRIMARY KEY(chatId,botId)
       );
+      CREATE TABLE IF NOT EXISTS token_metrics(
+        chatId TEXT NOT NULL,botId TEXT NOT NULL,lastTaskId TEXT NOT NULL DEFAULT '',
+        inputTokens INTEGER NOT NULL DEFAULT 0,cachedInputTokens INTEGER NOT NULL DEFAULT 0,
+        cacheCreationTokens INTEGER NOT NULL DEFAULT 0,outputTokens INTEGER NOT NULL DEFAULT 0,
+        reasoningTokens INTEGER NOT NULL DEFAULT 0,durationMs INTEGER NOT NULL DEFAULT 0,
+        tokensPerSecond REAL,cacheHitPercent REAL,
+        priorInputTokens INTEGER NOT NULL DEFAULT 0,priorCachedTokens INTEGER NOT NULL DEFAULT 0,
+        priorOutputTokens INTEGER NOT NULL DEFAULT 0,priorDurationMs INTEGER NOT NULL DEFAULT 0,
+        turnCount INTEGER NOT NULL DEFAULT 0,model TEXT NOT NULL DEFAULT '',updatedAt TEXT NOT NULL,
+        PRIMARY KEY(chatId,botId)
+      );
       CREATE TABLE IF NOT EXISTS pending_chat_goals(
         chatId TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,botId TEXT NOT NULL REFERENCES bots(id),
         objective TEXT NOT NULL,PRIMARY KEY(chatId,botId)
@@ -169,8 +180,14 @@ export class Database {
     if (!taskColumns.includes('verifiedKey')) {
       this.db.exec("ALTER TABLE tasks ADD COLUMN verifiedKey TEXT NOT NULL DEFAULT ''")
     }
-    if (!taskColumns.includes('runSettings'))
-      this.db.exec("ALTER TABLE tasks ADD COLUMN runSettings TEXT NOT NULL DEFAULT '{}'")
+      if (!taskColumns.includes('runSettings'))
+        this.db.exec("ALTER TABLE tasks ADD COLUMN runSettings TEXT NOT NULL DEFAULT '{}'")
+      if (!taskColumns.includes('startedAt'))
+        this.db.exec('ALTER TABLE tasks ADD COLUMN startedAt TEXT')
+      if (!taskColumns.includes('completedAt'))
+        this.db.exec('ALTER TABLE tasks ADD COLUMN completedAt TEXT')
+      if (!taskColumns.includes('authExpired'))
+        this.db.exec('ALTER TABLE tasks ADD COLUMN authExpired INTEGER NOT NULL DEFAULT 0')
     if (!this.all('PRAGMA table_info(composer_settings)').some(c => c.name === 'planMode'))
       this.db.exec('ALTER TABLE composer_settings ADD COLUMN planMode INTEGER NOT NULL DEFAULT 0')
     const columns = this.all('PRAGMA table_info(bots)').map((column) => column.name)
@@ -200,13 +217,20 @@ export class Database {
       if (!columns.includes('model')) this.db.exec("ALTER TABLE bots ADD COLUMN model TEXT NOT NULL DEFAULT ''")
       if (!columns.includes('effort')) this.db.exec("ALTER TABLE bots ADD COLUMN effort TEXT NOT NULL DEFAULT ''")
       if (!taskColumns.includes('groupCutoff')) this.db.exec('ALTER TABLE tasks ADD COLUMN groupCutoff INTEGER')
-      if (!this.all('PRAGMA table_info(messages)').some(c => c.name === 'publishSeq')) {
+      const messageColumns = this.all('PRAGMA table_info(messages)').map(c => c.name)
+      if (!messageColumns.includes('publishSeq')) {
         this.db.exec(`
           ALTER TABLE messages ADD COLUMN publishSeq INTEGER;
           ALTER TABLE messages ADD COLUMN replyToMessageId TEXT REFERENCES messages(id);
           ALTER TABLE messages ADD COLUMN nativeThreadId TEXT;
         `)
         publishLegacyGroupHistory(this.db)
+      }
+      if (!messageColumns.includes('segments')) {
+        this.db.exec('ALTER TABLE messages ADD COLUMN segments TEXT')
+      }
+      if (!this.all('PRAGMA table_info(subagent_entries)').some(c => c.name === 'meta')) {
+        this.db.exec('ALTER TABLE subagent_entries ADD COLUMN meta TEXT')
       }
       this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS messages_by_publication
         ON messages(chatId,publishSeq) WHERE publishSeq IS NOT NULL`)
@@ -281,6 +305,39 @@ export class Database {
         ...row, planMode: Boolean(row.planMode) || row.permission === 'plan',
       })),
       contextUsage: this.all('SELECT * FROM context_usage'),
+      tokenMetrics: this.all('SELECT * FROM token_metrics').map(row => {
+        const sessionInputTokens = (row.priorInputTokens || 0) + (row.inputTokens || 0)
+        const sessionCachedTokens = (row.priorCachedTokens || 0) + (row.cachedInputTokens || 0)
+        const sessionOutputTokens = (row.priorOutputTokens || 0) + (row.outputTokens || 0)
+        const sessionDurationMs = (row.priorDurationMs || 0) + (row.durationMs || 0)
+        return {
+          chatId: row.chatId,
+          botId: row.botId,
+          model: row.model,
+          updatedAt: row.updatedAt,
+          turnCount: row.turnCount || 1,
+          inputTokens: row.inputTokens,
+          cachedInputTokens: row.cachedInputTokens,
+          cacheCreationTokens: row.cacheCreationTokens || 0,
+          outputTokens: row.outputTokens,
+          reasoningTokens: row.reasoningTokens || 0,
+          durationMs: row.durationMs,
+          tokensPerSecond: row.tokensPerSecond,
+          cacheHitPercent: row.cacheHitPercent,
+          sessionInputTokens,
+          sessionCachedTokens,
+          sessionOutputTokens,
+          sessionDurationMs,
+          sessionTokensPerSecond:
+            sessionOutputTokens > 0 && sessionDurationMs > 0
+              ? Math.round((sessionOutputTokens / (sessionDurationMs / 1000)) * 10) / 10
+              : null,
+          sessionCacheHitPercent:
+            sessionInputTokens > 0
+              ? Math.round((sessionCachedTokens / sessionInputTokens) * 1000) / 10
+              : null,
+        }
+      }),
       quotas: this.all('SELECT * FROM quota_usage').map(q => ({
         ...q, scope: q.model ? 'model' : 'account',
         windows: JSON.parse(q.windows).filter(w => w.resetsAt == null || w.resetsAt > Date.now()),
@@ -308,9 +365,11 @@ export class Database {
         ...m,
         attachments: byMessage.get(m.id) || [],
         recipients: JSON.parse(m.recipients),
+        segments: m.segments ? JSON.parse(m.segments) : null,
       })),
       tasks: this.all('SELECT * FROM tasks ORDER BY rowid').map((t) => ({
         ...t,
+        authExpired: Boolean(t.authExpired),
         runSettings: JSON.parse(t.runSettings),
         events: JSON.parse(t.events),
         approval: JSON.parse(t.approval),

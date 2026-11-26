@@ -23,6 +23,97 @@ export function contextUsage(used, limit, model) {
   return { used, limit, ...(typeof model === 'string' && model && { model }) }
 }
 
+function nonNegativeInt(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0
+}
+
+export function turnMetrics({
+  totalInputTokens = 0,
+  cachedInputTokens = 0,
+  cacheCreationTokens = 0,
+  outputTokens = 0,
+  reasoningTokens = 0,
+  durationMs = 0,
+  model,
+} = {}) {
+  const cached = nonNegativeInt(cachedInputTokens)
+  const created = nonNegativeInt(cacheCreationTokens)
+  const input = Math.max(nonNegativeInt(totalInputTokens), cached + created)
+  const output = nonNegativeInt(outputTokens)
+  const reasoning = Math.min(nonNegativeInt(reasoningTokens), output || nonNegativeInt(reasoningTokens))
+  const duration = nonNegativeInt(durationMs)
+  if (input <= 0 && output <= 0) return
+  const tokensPerSecond =
+    output > 0 && duration > 0 ? Math.round((output / (duration / 1000)) * 10) / 10 : null
+  const cacheHitPercent =
+    input > 0 ? Math.round((cached / input) * 1000) / 10 : null
+  return {
+    inputTokens: input,
+    cachedInputTokens: cached,
+    cacheCreationTokens: created,
+    outputTokens: output,
+    reasoningTokens: reasoning,
+    durationMs: duration,
+    tokensPerSecond,
+    cacheHitPercent,
+    ...(typeof model === 'string' && model && { model }),
+  }
+}
+
+// OpenAI / Codex TokenUsageBreakdown: inputTokens includes cachedInputTokens
+// unless totalTokens proves the breakdown was reported in disjoint buckets.
+export function inclusiveTurnMetrics(breakdown, durationMs, model) {
+  if (
+    !breakdown ||
+    (!Number.isSafeInteger(breakdown.inputTokens) && !Number.isSafeInteger(breakdown.outputTokens))
+  )
+    return
+  const rawInput = nonNegativeInt(breakdown.inputTokens)
+  const cached = nonNegativeInt(breakdown.cachedInputTokens)
+  const created = nonNegativeInt(breakdown.cacheWriteInputTokens)
+  const output = nonNegativeInt(breakdown.outputTokens)
+  const reasoning = nonNegativeInt(breakdown.reasoningOutputTokens)
+  const total = nonNegativeInt(breakdown.totalTokens)
+  const disjoint = cached > 0 && total >= rawInput + cached + output && rawInput + output < total
+  const totalInputTokens = disjoint ? rawInput + cached + created : Math.max(rawInput, cached + created)
+  return turnMetrics({
+    totalInputTokens,
+    cachedInputTokens: cached,
+    cacheCreationTokens: created,
+    outputTokens: output,
+    reasoningTokens: reasoning,
+    durationMs,
+    model,
+  })
+}
+
+// Anthropic / Antigravity ModelUsageStats: uncached input, cache creation,
+// and cache read tokens are reported as disjoint buckets.
+export function disjointTurnMetrics(
+  {
+    uncachedInputTokens = 0,
+    cachedInputTokens = 0,
+    cacheCreationTokens = 0,
+    outputTokens = 0,
+    reasoningTokens = 0,
+    durationMs = 0,
+    model,
+  } = {},
+) {
+  const uncached = nonNegativeInt(uncachedInputTokens)
+  const cached = nonNegativeInt(cachedInputTokens)
+  const created = nonNegativeInt(cacheCreationTokens)
+  return turnMetrics({
+    totalInputTokens: uncached + cached + created,
+    cachedInputTokens: cached,
+    cacheCreationTokens: created,
+    outputTokens,
+    reasoningTokens,
+    durationMs,
+    model,
+  })
+}
+
 export function quotaWindow(minutes, remainingPercent, resetMs) {
   if (
     !Number.isSafeInteger(minutes) ||

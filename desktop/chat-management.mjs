@@ -64,7 +64,7 @@ function deleteRecords(db, chatId) {
     }
   }
   db.run('DELETE FROM chat_forks WHERE sourceChatId=? OR chatId=?', chatId, chatId)
-  for (const table of ['fork_member_context','tasks','messages','group_delivery','threads','members','composer_settings','context_usage'])
+  for (const table of ['fork_member_context','tasks','messages','group_delivery','threads','members','composer_settings','context_usage','token_metrics'])
     db.run('DELETE FROM ' + table + ' WHERE chatId=?', chatId)
   db.run('DELETE FROM chats WHERE id=?', chatId)
   return unlinked
