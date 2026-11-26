@@ -146,6 +146,53 @@ pre {
   overflow: hidden;
   background: var(--sidebar);
 }
+.shell.has-custom-rail {
+  --rail-width: clamp(180px, var(--custom-rail-width), 42vw);
+}
+.pane-resizer {
+  position: relative;
+  flex: 0 0 8px;
+  width: 8px;
+  margin-inline: -4px;
+  align-self: stretch;
+  z-index: 25;
+  cursor: col-resize;
+  -webkit-app-region: no-drag;
+  touch-action: none;
+  outline: none;
+}
+.pane-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  pointer-events: none;
+  transition: background-color 120ms ease;
+}
+.pane-resizer-left::after {
+  left: 2.5px;
+}
+.pane-resizer-right::after {
+  left: 3.5px;
+}
+.pane-resizer:hover::after,
+.pane-resizer:focus-visible::after {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.pane-resizer.is-dragging::after {
+  background: var(--accent);
+}
+body.is-resizing-pane,
+body.is-resizing-pane * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+body.is-resizing-pane iframe,
+body.is-resizing-pane webview {
+  pointer-events: none !important;
+}
 .main {
   position: relative;
   display: flex;
@@ -877,6 +924,9 @@ pre {
 @media (max-width: 720px) {
   :root {
     --rail-width: 190px;
+  }
+  .shell.has-custom-rail {
+    --rail-width: clamp(160px, var(--custom-rail-width), 36vw);
   }
   .rail-row time {
     display: none;

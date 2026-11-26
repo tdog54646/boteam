@@ -1,5 +1,5 @@
 .workspace-panel {
-  --panel-width: clamp(340px, 36vw, 540px);
+  --panel-width: clamp(360px, 42vw, 640px);
   display: flex;
   flex: 0 0 var(--panel-width);
   flex-direction: column;
@@ -10,6 +10,9 @@
   isolation: isolate;
   background: var(--canvas);
   border-left: 1px solid var(--line);
+}
+.shell.has-custom-panel .workspace-panel:not(.wp-expanded) {
+  --panel-width: max(280px, min(var(--custom-panel-width), calc(100vw - var(--active-rail-width, 0px) - 300px)));
 }
 .sidebar-closed .wp-expanded .wp-header { padding-left: 84px; }
 .workspace-panel.wp-expanded { flex: 1 1 100%; width: auto; }
@@ -217,11 +220,14 @@
 .wp-address { flex: 1; width: 0; height: 26px; background: var(--under); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; font-size: 12px; }
 .wp-browser webview { flex: 1; display: flex; height: 100%; min-height: 0; }
 @media (max-width: 899px) {
+  .pane-resizer-right {
+    display: none;
+  }
   .workspace-panel:not(.wp-expanded) {
     position: absolute;
     z-index: 12;
     inset: 0 0 0 auto;
-    width: min(390px, calc(100vw - 20px));
+    width: min(var(--custom-panel-width, 390px), calc(100vw - 20px));
     box-shadow: -8px 0 24px rgb(0 0 0 / 7%);
   }
 }

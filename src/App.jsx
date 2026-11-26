@@ -20,6 +20,17 @@ import { Sidebar, ChatSearch } from "./Sidebar";
 import { ProjectActionDialog, ProjectDialog } from "./ProjectDialog";
 import { Home } from "./Home";
 import { hasComposerDraft, pruneComposerDrafts } from "./composerDrafts";
+import {
+  PANEL_MAX_WIDTH,
+  PANEL_MIN_WIDTH,
+  PANEL_WIDTH_KEY,
+  PaneResizer,
+  readStoredPaneWidth,
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  SIDEBAR_WIDTH_KEY,
+  writeStoredPaneWidth,
+} from "./PaneResizer";
 import { Button, errorText, IconButton, Modal, Notice, Spinner } from "./ui";
 
 const empty = {
@@ -65,6 +76,13 @@ export default function App() {
   );
   const [dialog, setDialog] = useState(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    readStoredPaneWidth(SIDEBAR_WIDTH_KEY, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH),
+  );
+  const [panelWidth, setPanelWidth] = useState(() =>
+    readStoredPaneWidth(PANEL_WIDTH_KEY, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH),
+  );
+  const shellRef = useRef(null);
   const [homeSelection, setHomeSelection] = useState(() => localStorage.getItem(defaultBotKey) || "");
   const homeBot = state.bots.find(b => !b.archived && b.id === homeSelection) || state.bots.find(b => !b.archived);
   const [panel, setPanel] = useState(null);
@@ -120,6 +138,10 @@ export default function App() {
         draftPages.current = next;
         setDrafts(next);
       }
+      if (event.key === SIDEBAR_WIDTH_KEY || event.key === null)
+        setSidebarWidth(readStoredPaneWidth(SIDEBAR_WIDTH_KEY, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH));
+      if (event.key === PANEL_WIDTH_KEY || event.key === null)
+        setPanelWidth(readStoredPaneWidth(PANEL_WIDTH_KEY, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH));
     }
     window.addEventListener("storage", syncSelection);
     return () => window.removeEventListener("storage", syncSelection);
@@ -409,31 +431,83 @@ export default function App() {
       : page === "accounts"
         ? "账号管理"
         : chat?.name || draftTitle || "新对话";
+  const shellClasses = [
+    "shell",
+    collapsed ? "sidebar-closed" : "",
+    sidebarWidth != null ? "has-custom-rail" : "",
+    panelWidth != null ? "has-custom-panel" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const shellStyle = {
+    ...(sidebarWidth != null ? { "--custom-rail-width": `${sidebarWidth}px` } : {}),
+    ...(panelWidth != null ? { "--custom-panel-width": `${panelWidth}px` } : {}),
+    "--active-rail-width": collapsed ? "0px" : "var(--rail-width)",
+  };
+  const getLeftResizerBounds = () => {
+    const vw = typeof window !== "undefined" ? window.innerWidth : 1260;
+    const panelRect =
+      workPage && panelVisible && !panel?.expanded && vw >= 900
+        ? shellRef.current?.querySelector(".workspace-panel")?.getBoundingClientRect()
+        : null;
+    const reservedRight = panelRect ? Math.min(panelRect.width, Math.floor(vw * 0.48)) : 0;
+    return {
+      min: SIDEBAR_MIN_WIDTH,
+      max: Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.floor(vw * 0.44), vw - reservedRight - 300)),
+    };
+  };
+  const getRightResizerBounds = () => {
+    const vw = typeof window !== "undefined" ? window.innerWidth : 1260;
+    const sidebarRect = !collapsed ? shellRef.current?.querySelector(".sidebar")?.getBoundingClientRect() : null;
+    const reservedLeft = sidebarRect ? sidebarRect.width : 0;
+    return {
+      min: PANEL_MIN_WIDTH,
+      max: Math.max(PANEL_MIN_WIDTH, Math.min(PANEL_MAX_WIDTH, vw - reservedLeft - 300)),
+    };
+  };
   return (
-    <div className={`shell ${collapsed ? "sidebar-closed" : ""}`}>
+    <div ref={shellRef} className={shellClasses} style={shellStyle}>
       {!collapsed && (
-        <Sidebar
-          state={state}
-          invoke={invoke}
-          refresh={refresh}
-          onNewChat={newChat}
-          dialogOpen={Boolean(dialog)}
-          homeBot={homeBot}
-          onSelectBot={chooseHomeBot}
-          onChatMenu={actions.showMenu}
-          onChatAction={actions.act}
-          menuChatId={actions.menu?.variant === "context" ? actions.menu.chatId : null}
-          page={page}
-          select={select}
-          open={setDialog}
-          disabled={wizard || !ready}
-          collapse={() => setCollapsed(true)}
-          history={{
-            back: position > 0,
-            forward: position + 1 < trail.current.length,
-            move,
-          }}
-        />
+        <>
+          <Sidebar
+            state={state}
+            invoke={invoke}
+            refresh={refresh}
+            onNewChat={newChat}
+            dialogOpen={Boolean(dialog)}
+            homeBot={homeBot}
+            onSelectBot={chooseHomeBot}
+            onChatMenu={actions.showMenu}
+            onChatAction={actions.act}
+            menuChatId={actions.menu?.variant === "context" ? actions.menu.chatId : null}
+            page={page}
+            select={select}
+            open={setDialog}
+            disabled={wizard || !ready}
+            collapse={() => setCollapsed(true)}
+            history={{
+              back: position > 0,
+              forward: position + 1 < trail.current.length,
+              move,
+            }}
+          />
+          <PaneResizer
+            side="left"
+            label="调整侧边栏宽度"
+            value={sidebarWidth}
+            min={SIDEBAR_MIN_WIDTH}
+            max={SIDEBAR_MAX_WIDTH}
+            getBounds={getLeftResizerBounds}
+            onResize={(next, commit) => {
+              setSidebarWidth(next);
+              if (commit) writeStoredPaneWidth(SIDEBAR_WIDTH_KEY, next);
+            }}
+            onReset={() => {
+              setSidebarWidth(null);
+              writeStoredPaneWidth(SIDEBAR_WIDTH_KEY, null);
+            }}
+          />
+        </>
       )}
       <main className="main" hidden={panelVisible && panel.expanded}>
         <header className="topbar">
@@ -547,6 +621,24 @@ export default function App() {
           />
         )}
       </main>
+      {workPage && panelVisible && !panel?.expanded && (
+        <PaneResizer
+          side="right"
+          label="调整右侧面板宽度"
+          value={panelWidth}
+          min={PANEL_MIN_WIDTH}
+          max={PANEL_MAX_WIDTH}
+          getBounds={getRightResizerBounds}
+          onResize={(next, commit) => {
+            setPanelWidth(next);
+            if (commit) writeStoredPaneWidth(PANEL_WIDTH_KEY, next);
+          }}
+          onReset={() => {
+            setPanelWidth(null);
+            writeStoredPaneWidth(PANEL_WIDTH_KEY, null);
+          }}
+        />
+      )}
       {workPage && <WorkspacePanel key={panelScope} draftScope={panelScope} initialProjectCwd={panelCwd}
         chatId={chat?.id || draft?.id} botId={panelMembers[0]?.id} bots={panelMembers} agents={agents}
         visible={panelVisible} expanded={panelVisible && panel.expanded}
