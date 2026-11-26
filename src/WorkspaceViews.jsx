@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronRight,
-  File, FilePlus2, Folder, GitBranch, Pencil, RefreshCw, X,
+  File, FilePlus2, Folder, GitBranch, RefreshCw, X,
 } from "lucide-react";
+import { FilePreviewBody, FilePreviewToolbarControls } from "./FilePreviewView";
+import { FileCategoryGlyph } from "./MarkdownContent";
 import { Button, errorText, IconButton, Notice, Spinner } from "./ui";
 
 export function usePanelLoad(load, deps) {
@@ -155,10 +157,49 @@ function Editor({ file, draft, directory, call, onSaved, onDraft, onCancel }) {
   </div>;
 }
 
-export function DocumentView({ tab, call, onSaved, onDraft }) {
+function resolveRelativePreviewPath(baseFilePath, targetPath, resolvedDir) {
+  if (!targetPath) return "";
+  if (targetPath.startsWith("/")) return targetPath;
+  if (resolvedDir) {
+    const dirParts = String(resolvedDir).split("/").filter(Boolean);
+    for (const seg of String(targetPath).split("/")) {
+      if (!seg || seg === ".") continue;
+      if (seg === "..") dirParts.pop();
+      else dirParts.push(seg);
+    }
+    return "/" + dirParts.join("/");
+  }
+  const baseParts = String(baseFilePath || "").split("/").slice(0, -1).filter(Boolean);
+  for (const seg of String(targetPath).split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") baseParts.pop();
+    else baseParts.push(seg);
+  }
+  return baseParts.join("/");
+}
+
+export function DocumentView({ tab, call, open, onSaved, onDraft }) {
   const [edit, setEdit] = useState(tab.type === "file" && Boolean(tab.draft));
-  const load = usePanelLoad(() => tab.path ? call("panelRead", { path: tab.path }) : null,
-    [call, tab.path]);
+  const [viewMode, setViewMode] = useState(() => (tab.line != null ? "source" : "preview"));
+  const [zoom, setZoom] = useState(1);
+  const load = usePanelLoad(
+    () =>
+      tab.path
+        ? call("panelRead", {
+            path: tab.path,
+            allowWorkspaceAbsolute: Boolean(tab.allowWorkspaceAbsolute),
+          })
+        : null,
+    [call, tab.path, tab.allowWorkspaceAbsolute],
+  );
+  useEffect(() => {
+    setZoom(1);
+    setViewMode(tab.line != null ? "source" : "preview");
+  }, [tab.path]);
+  useEffect(() => {
+    if (tab.line != null) setViewMode("source");
+  }, [tab.line, tab.endLine, tab.jumpSeq]);
+
   const original = tab.draft?.file || load.data;
   if (tab.type === "page" || (edit && original)) {
     return <Editor file={tab.type === "page" ? null : original} draft={tab.draft} directory={tab.directory}
@@ -166,19 +207,56 @@ export function DocumentView({ tab, call, onSaved, onDraft }) {
       onSaved={(path) => { setEdit(false); if (tab.path === path) load.reload(); onSaved(path); }} />;
   }
   const file = load.data;
+  const displayTitle = file?.path || tab.path;
+  const canEdit = Boolean(file && !file.binary && !file.truncated && file.editable && file.revision != null);
+  const revealFile = tab.path ? () => call("panelReveal", { path: tab.path }).catch(() => {}) : undefined;
+
   return <>
     <div className="wp-tools">
-      <File size={15} /><span className="wp-tool-title" title={tab.path}>{tab.path}</span>
-      {file && !file.binary && !file.truncated && /\.(md|markdown)$/i.test(tab.path) &&
-        <IconButton icon={Pencil} label="编辑页面" onClick={() => setEdit(true)} />}
-      <IconButton icon={RefreshCw} label="刷新文件内容" onClick={load.reload} />
+      <FileCategoryGlyph filePath={displayTitle} size={15} />
+      <span className="wp-tool-title" title={displayTitle}>{displayTitle}</span>
+      <FilePreviewToolbarControls
+        file={file}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+        zoom={zoom}
+        setZoom={setZoom}
+        canEdit={canEdit}
+        onEdit={() => setEdit(true)}
+        onReload={load.reload}
+        onReveal={file ? revealFile : undefined}
+      />
     </div>
-    <div className="wp-scroll">
+    <div className={`wp-scroll ${file ? "fp-flush-scroll" : ""}`}>
       <Loading load={load} />
-      {file?.src ? <img className="wp-image" alt={file.name} src={file.src} /> :
-        file?.binary ? <p className="wp-empty">此文件不支持预览。</p> :
-        file && <pre className="wp-text-preview">{file.content || "（空文件）"}</pre>}
-      {file?.truncated && <p className="wp-empty">文件较大，仅显示部分内容。</p>}
+      {file && (
+        <FilePreviewBody
+          file={file}
+          viewMode={viewMode}
+          zoom={zoom}
+          line={tab.line}
+          endLine={tab.endLine}
+          scrollTrigger={tab.jumpSeq}
+          onReveal={revealFile}
+          onOpenUrl={(url) => open?.({ type: "url", url })}
+          onOpenFile={(ref) => {
+            const nextPath = resolveRelativePreviewPath(
+              file.path || tab.path,
+              ref.path,
+              file.resolvedDir,
+            );
+            if (nextPath) {
+              open?.({
+                type: "file",
+                path: nextPath,
+                line: ref.line,
+                endLine: ref.endLine,
+                allowWorkspaceAbsolute: true,
+              });
+            }
+          }}
+        />
+      )}
     </div>
   </>;
 }

@@ -154,7 +154,7 @@ function TabContent({ tab, chatId, initialProjectCwd, active, invoke, bots, agen
   let view;
   switch (tab.type) {
     case "agents": view = <SubagentsPanel agents={agents} agentKey={tab.agentKey} chatId={chatId} invoke={invoke} activeTab={active}
-      select={agentKey => patchTab(tab.id, { agentKey })} />; break;
+      open={open} select={agentKey => patchTab(tab.id, { agentKey })} />; break;
     case "attachment": view = <SourceAttachmentView chatId={chatId} attachmentId={tab.attachmentId}
       title={tab.title} invoke={invoke} />; break;
     case "files": view = <FilesView initialPath={tab.path} call={call} open={open} />; break;
@@ -164,7 +164,7 @@ function TabContent({ tab, chatId, initialProjectCwd, active, invoke, bots, agen
     </Suspense>; break;
     case "file":
     case "page":
-      view = <DocumentView tab={tab} call={call} onDraft={onDraft}
+      view = <DocumentView tab={tab} call={call} open={open} onDraft={onDraft}
         onSaved={(path) => patchTab(tab.id, { type: "file", path, dirty: false })} />; break;
     case "url": view = <BrowserView url={tab.url} onNavigate={onNavigate} setTitle={setTitle} />; break;
     default: view = <Launcher call={call} open={open} />;
@@ -215,9 +215,17 @@ export function WorkspacePanel({ chatId, botId, draftScope, initialProjectCwd, b
       tab.attachmentId === details.attachmentId);
     if (existing) {
       if (details.type === "agents") patchTab(existing.id, { agentKey: details.agentKey });
+      if (details.type === "file") {
+        patchTab(existing.id, {
+          line: details.line ?? null,
+          endLine: details.endLine ?? null,
+          allowWorkspaceAbsolute: Boolean(existing.allowWorkspaceAbsolute || details.allowWorkspaceAbsolute),
+          jumpSeq: id,
+        });
+      }
       select(existing.id);
     }
-    else openTab(details, current?.type === "home" ? current.id : null);
+    else openTab({ ...details, ...(details.type === "file" && { jumpSeq: id }) }, current?.type === "home" ? current.id : null);
   }, [request, visible, selected, tabs, botId]);
   useEffect(() => {
     if (visible) document.getElementById("wp-tab-" + selected)?.parentElement.scrollIntoView({ block: "nearest", inline: "nearest" });
