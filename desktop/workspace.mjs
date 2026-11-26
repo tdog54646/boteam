@@ -6,6 +6,7 @@ import { beginChatTitle, applyNativeTitle, suggestChatTitle } from './chat-title
 import { WorkspacePanel } from './workspace-panel.mjs'
 import { attachmentPreview } from './panel-files.mjs'
 import { Accounts } from './accounts.mjs'
+import { authExpiredError, isAuthExpiredError } from './auth-errors.mjs'
 import { redact } from './native.mjs'
 import { ComposerSettings, validateSelection } from './composer.mjs'
 import { AttachmentStore } from './attachments.mjs'
@@ -839,20 +840,52 @@ export class Workspace {
     const controller = new AbortController()
     const state = { controller, accountId: account.id, approval: null, verified: false }
     this.running.set(id, state)
-    this.db.run("UPDATE tasks SET status='running' WHERE id=?", id)
+    this.db.run("UPDATE tasks SET status='running',startedAt=? WHERE id=?", stamp(), id)
     this.notify()
     let rawText = '',
-      flushTimer
+      flushTimer,
+      sawToolSinceLastSegment = false
+    const segments = []
+    const joinSegments = () => {
+      if (!segments.length) return ''
+      if (segments.length === 1) return segments[0].text
+      let combined = segments[0].text
+      for (let i = 1; i < segments.length; i++) {
+        const piece = segments[i].text
+        if (!piece) continue
+        if (!combined) combined = piece
+        else if (combined.endsWith('\n\n') || piece.startsWith('\n\n') || (combined.endsWith('\n') && piece.startsWith('\n')))
+          combined += piece
+        else if (combined.endsWith('\n') || piece.startsWith('\n'))
+          combined += '\n' + piece
+        else combined += '\n\n' + piece
+      }
+      return combined
+    }
+    const serializedSegments = () =>
+      segments.length
+        ? JSON.stringify(
+            segments.map((s) => ({
+              id: redact(String(s.id || '')).slice(0, 160),
+              text: redact(s.text),
+              ...(s.phase && { phase: redact(String(s.phase)).slice(0, 64) }),
+            })),
+          )
+        : null
     const flushText = () => {
       if (!flushTimer) return
       clearTimeout(flushTimer)
       flushTimer = null
-      this.db.run('UPDATE messages SET text=? WHERE id=?', redact(rawText), replyId)
+      this.db.run('UPDATE messages SET text=?,segments=? WHERE id=?', redact(rawText), serializedSegments(), replyId)
       if (!this.closed) this.notify()
     }
     try {
-      if (account.status !== 'ready')
+      if (account.status !== 'ready') {
+        if (account.status === 'login' || account.loginState === 'signed-out') {
+          throw authExpiredError(account.reason || '此账号登录已失效，请重新授权。')
+        }
         throw new Error(account.reason || '此账号需要重新授权或无法隔离。')
+      }
       const thread = this.db.get('SELECT threadId,cwd,accountId FROM threads WHERE chatId=? AND botId=?', chatId, bot.id)
       if (thread && thread.accountId !== account.id) throw new Error('原生会话与绑定账号不符。')
       const cwd = await this.ensureChatDirectory(chatId, bot)
@@ -914,18 +947,44 @@ export class Workspace {
                   this.db.run('DELETE FROM pending_chat_goals WHERE chatId=? AND botId=?', chatId, bot.id)
                 if (event.value?.status) this.event(id, '原生目标 · ' + event.value.status)
                 break
-              case 'text':
-                rawText += String(event.value)
+              case 'text': {
+                const chunk = String(event.value)
+                const itemId = typeof event.itemId === 'string' && event.itemId ? event.itemId : null
+                if (itemId) {
+                  let target = segments.at(-1)?.id === itemId ? segments.at(-1) : null
+                  if (!target) {
+                    const existing = segments.find((s) => s.id === itemId)
+                    if (existing && !sawToolSinceLastSegment) target = existing
+                    else {
+                      target = { id: itemId, text: '', ...(event.phase && { phase: event.phase }) }
+                      segments.push(target)
+                    }
+                  } else if (event.phase && !target.phase) {
+                    target.phase = event.phase
+                  }
+                  target.text += chunk
+                } else if (!segments.length || sawToolSinceLastSegment) {
+                  segments.push({ id: 'seg-' + segments.length, text: chunk, ...(event.phase && { phase: event.phase }) })
+                } else {
+                  segments.at(-1).text += chunk
+                }
+                sawToolSinceLastSegment = false
+                rawText = joinSegments()
                 if (!flushTimer) flushTimer = setTimeout(flushText, 65)
                 return
+              }
               case 'tool':
-                this.event(id, val, event)
+                if (event.kind !== 'meta' && segments.length > 0) sawToolSinceLastSegment = true
+                this.event(id, val, { ...event, segment: segments.length })
                 break
               case 'agentTranscript':
                 saveAgentEntries(this.db, id, event)
                 break
               case 'context':
                 this.composer.recordContext(chatId, bot.id, event.value)
+                break
+              case 'metrics':
+                this.composer.recordMetrics(chatId, bot.id, event.value, id)
                 break
               case 'quota':
                 this.composer.recordQuota(account.id, event.value)
@@ -942,10 +1001,11 @@ export class Workspace {
         clearTimeout(flushTimer)
         flushTimer = null
         const text = redact(rawText)
+        const savedSegments = serializedSegments()
         const publish = (groupCutoff != null || publishReview) && Boolean(text.trim())
         this.db.transaction(() => {
-          this.db.run('UPDATE messages SET text=?,nativeThreadId=? WHERE id=?', text, publish ? nativeThreadId : null, replyId)
-          this.db.run("UPDATE tasks SET status='done',approval=NULL WHERE id=?", id)
+          this.db.run('UPDATE messages SET text=?,segments=?,nativeThreadId=? WHERE id=?', text, savedSegments, publish ? nativeThreadId : null, replyId)
+          this.db.run("UPDATE tasks SET status='done',approval=NULL,completedAt=? WHERE id=?", stamp(), id)
           if (goalObjective)
             this.db.run('DELETE FROM pending_chat_goals WHERE chatId=? AND botId=?', chatId, bot.id)
           if (seed && nativeThreadId)
@@ -961,9 +1021,12 @@ export class Workspace {
     } catch (e) {
       if (!this.closed && !controller.signal.aborted) {
         const message = redact(e.message || '原生工具执行失败。').slice(0, 1200)
+        const authExpired = isAuthExpiredError(e) ? 1 : 0
         this.db.run(
-          "UPDATE tasks SET status='failed',approval=NULL,error=? WHERE id=?",
+          "UPDATE tasks SET status='failed',approval=NULL,error=?,authExpired=?,completedAt=? WHERE id=?",
           message,
+          authExpired,
+          stamp(),
           id,
         )
       }
@@ -974,11 +1037,64 @@ export class Workspace {
       if (!this.closed) this.notify()
     }
   }
-  event(id, text, { agent, source } = {}) {
+  event(id, text, extra = {}) {
+    const { agent, source, segment } = extra
     const summary = agentSummary(agent)
+    if (summary) {
+      this.db.run(
+        "UPDATE tasks SET events=json_insert(events,'$[#]',json(?)) WHERE id=?",
+        JSON.stringify({
+          text: redact(text).slice(0, 2000),
+          agent: summary,
+          source,
+          ...(Number.isInteger(segment) && { segment }),
+          observedAt: Date.now(),
+        }),
+        id,
+      )
+      return
+    }
+    const callId = typeof extra.callId === 'string' && extra.callId ? redact(extra.callId).slice(0, 160) : undefined
+    const entry = {
+      text: redact(text).slice(0, 2000),
+      agent: undefined,
+      source,
+      ...(typeof extra.kind === 'string' && extra.kind && { kind: extra.kind.slice(0, 40) }),
+      ...(callId && { callId }),
+      ...(typeof extra.status === 'string' && extra.status && { status: extra.status.slice(0, 32) }),
+      ...(typeof extra.command === 'string' && extra.command && { command: redact(extra.command).slice(0, 800) }),
+      ...(typeof extra.commandKind === 'string' && extra.commandKind && { commandKind: extra.commandKind.slice(0, 24) }),
+      ...(Number.isInteger(extra.exitCode) && { exitCode: extra.exitCode }),
+      ...(typeof extra.output === 'string' && extra.output && { output: redact(extra.output).slice(0, 3400) }),
+      ...(typeof extra.path === 'string' && extra.path && { path: redact(extra.path).slice(0, 480) }),
+      ...(Number.isInteger(extra.line) && extra.line > 0 && { line: extra.line }),
+      ...(typeof extra.query === 'string' && extra.query && { query: redact(extra.query).slice(0, 240) }),
+      ...(Array.isArray(extra.files) && extra.files.length > 0 && { files: extra.files.slice(0, 24) }),
+      ...(typeof extra.label === 'string' && extra.label && { label: redact(extra.label).slice(0, 200) }),
+      ...(typeof extra.detail === 'string' && extra.detail && { detail: redact(extra.detail).slice(0, 320) }),
+      ...(Number.isInteger(segment) && { segment }),
+    }
+    if (callId) {
+      const row = this.db.get('SELECT events FROM tasks WHERE id=?', id)
+      if (row?.events) {
+        const list = JSON.parse(row.events)
+        const existingIndex = list.findIndex((item) => !item.agent && item.callId === callId)
+        if (existingIndex >= 0) {
+          const prior = list[existingIndex]
+          list[existingIndex] = {
+            ...prior,
+            ...entry,
+            segment: Number.isInteger(prior.segment) ? prior.segment : entry.segment,
+            source: entry.source ?? prior.source,
+          }
+          this.db.run('UPDATE tasks SET events=? WHERE id=?', JSON.stringify(list), id)
+          return
+        }
+      }
+    }
     this.db.run(
       "UPDATE tasks SET events=json_insert(events,'$[#]',json(?)) WHERE id=?",
-      JSON.stringify({ text: redact(text).slice(0, 2000), agent: summary, source, ...(summary && { observedAt: Date.now() }) }),
+      JSON.stringify(entry),
       id,
     )
   }
@@ -1010,8 +1126,12 @@ export class Workspace {
       if (!byTask.has(row.taskId))
         byTask.set(row.taskId, new Map(JSON.parse(row.events).filter(event => event.agent).map(({ agent }) => [agent.id, agent])))
       const agent = byTask.get(row.taskId).get(row.agentId)
-      if (!agent || ['errored', 'interrupted'].includes(agent.status) ||
-          (row.taskStatus === 'failed' && !agent.nativeThreadId)) continue
+      if (
+        !agent ||
+        (!agent.nativeThreadId && ['errored', 'interrupted'].includes(agent.status)) ||
+        (row.taskStatus === 'failed' && !agent.nativeThreadId)
+      )
+        continue
       const key = JSON.stringify([row.accountId, parent])
       if (!groups.has(key)) groups.set(key, { home: row.home, parent, dispatches: [] })
       groups.get(key).dispatches.push({
@@ -1029,8 +1149,11 @@ export class Workspace {
         if (!task) continue
         const previous = JSON.parse(task.events).findLast(event => event.agent?.id === agentId)?.agent
         if (!previous || (previous.nativeThreadId && previous.nativeThreadId !== nativeThreadId)) continue
-        const next = status === 'unconfirmed' && ['completed', 'errored', 'interrupted'].includes(previous.status)
-          ? previous.status : status
+        const next =
+          ['errored', 'interrupted'].includes(previous.status) ||
+          (status === 'unconfirmed' && previous.status === 'completed')
+            ? previous.status
+            : status
         if (previous.status !== next || previous.nativeThreadId !== nativeThreadId || (model && previous.model !== model)) {
           const activity = agentActivity(agentId, next)
           this.event(taskId, activity.value, { agent: { ...previous, ...activity.agent, nativeThreadId, ...(model && { model }) } })
@@ -1116,7 +1239,8 @@ export class Workspace {
   cancel(id) {
     const state = this.running.get(id)
     const result = this.db.run(
-      `UPDATE tasks SET status='interrupted',approval=NULL,error='任务已停止。' WHERE id=? AND status IN ${active}`,
+      `UPDATE tasks SET status='interrupted',approval=NULL,error='任务已停止。',completedAt=? WHERE id=? AND status IN ${active}`,
+      stamp(),
       id,
     )
     if (!result.changes) throw new Error('此任务已结束。')

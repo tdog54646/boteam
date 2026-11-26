@@ -1,9 +1,11 @@
 import { mkdir, realpath, stat } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { localPath, panelFiles, panelRead, panelSave } from './panel-files.mjs'
+import { dirname, isAbsolute, join, sep } from 'node:path'
+import { localPath, panelFiles, panelRead, panelSave, resolveWorkspaceFilePath } from './panel-files.mjs'
 import { panelChanges, panelDiff } from './panel-git.mjs'
 import { PanelTerminals } from './panel-terminals.mjs'
 import { chatProjectCwd, draftProjectCwd } from './projects.mjs'
+
+const sessionUuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i
 
 export class WorkspacePanel {
   constructor(workspace) {
@@ -11,6 +13,100 @@ export class WorkspacePanel {
     this.writes = new Map()
     this.pendingWrites = new Map()
     this.terminals = new PanelTerminals()
+  }
+
+  chatPreviewScopes(chatId) {
+    if (!chatId) return { extraRoots: [], allowedFiles: [] }
+    const db = this.workspace.db
+    const lineage = []
+    const seenChats = new Set()
+    let cur = chatId
+    while (cur && !seenChats.has(cur) && lineage.length < 16) {
+      seenChats.add(cur)
+      lineage.push(cur)
+      cur = db.get('SELECT sourceChatId FROM chat_forks WHERE chatId=?', cur)?.sourceChatId
+    }
+
+    const extraRootSet = new Set()
+    const allowedFileSet = new Set()
+
+    for (const id of lineage) {
+      for (const item of this.workspace.chatDirectories(id)) {
+        if (item?.directory) extraRootSet.add(item.directory)
+      }
+      for (const row of db.all(
+        `SELECT pf.path FROM chat_projects cp JOIN project_folders pf ON pf.projectId=cp.projectId
+         WHERE cp.chatId=? ORDER BY pf.position`,
+        id,
+      )) {
+        if (row?.path) extraRootSet.add(row.path)
+      }
+
+      const threadRows = db.all(
+        `SELECT t.threadId, a.provider, json_extract(a.info, '$.source') AS source
+         FROM threads t JOIN accounts a ON a.id=t.accountId
+         WHERE t.chatId=?`,
+        id,
+      )
+      for (const row of threadRows) {
+        if (
+          row?.provider === 'antigravity' &&
+          typeof row.source === 'string' &&
+          row.source &&
+          sessionUuid.test(row.threadId || '')
+        ) {
+          extraRootSet.add(join(row.source, '.gemini', 'antigravity-cli', 'brain', row.threadId))
+        }
+      }
+
+      const taskRows = db.all(
+        `SELECT t.events, a.provider, json_extract(a.info, '$.source') AS source
+         FROM tasks t LEFT JOIN accounts a ON a.id=t.accountId
+         WHERE t.chatId=?`,
+        id,
+      )
+      for (const task of taskRows) {
+        const source = typeof task?.source === 'string' ? task.source : ''
+        let events = []
+        try {
+          events = JSON.parse(task.events || '[]')
+        } catch {
+          continue
+        }
+        for (const ev of events) {
+          if (!ev) continue
+          if (task.provider === 'antigravity' && source) {
+            const childId = ev.agent?.nativeThreadId
+            if (sessionUuid.test(childId || '')) {
+              extraRootSet.add(join(source, '.gemini', 'antigravity-cli', 'brain', childId))
+            }
+            const parts = typeof ev.agent?.id === 'string' ? ev.agent.id.split(':') : []
+            if (parts[0] === 'agy' && sessionUuid.test(parts[1] || '')) {
+              extraRootSet.add(join(source, '.gemini', 'antigravity-cli', 'brain', parts[1]))
+            }
+          }
+          if (task.provider === 'claude' && source) {
+            const plansDir = join(source, 'plans')
+            const candidates = [
+              ev.path,
+              ...(Array.isArray(ev.files) ? ev.files.map(f => f?.path) : []),
+            ]
+            for (const p of candidates) {
+              if (
+                typeof p === 'string' &&
+                isAbsolute(p) &&
+                p.startsWith(plansDir + sep) &&
+                /\.md$/i.test(p)
+              ) {
+                allowedFileSet.add(p)
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return { extraRoots: [...extraRootSet], allowedFiles: [...allowedFileSet] }
   }
 
   projectCwd({ chatId, draft }) {
@@ -64,10 +160,24 @@ export class WorkspacePanel {
     const generation = terminals.generation
     const root = await this.directory(p)
     if (this.workspace.closed) throw new Error('工作台已关闭。')
+    const { extraRoots, allowedFiles } = this.chatPreviewScopes(p.chatId)
     switch (method) {
       case 'panelFiles': return panelFiles(root, p, false)
       case 'panelSearch': return panelFiles(root, { query: p.query }, true)
-      case 'panelRead': return panelRead(root, p)
+      case 'panelRead':
+        return panelRead(root, p, {
+          makeThumbnail: this.workspace.makeThumbnail,
+          extraRoots,
+          allowedFiles,
+          allowWorkspaceAbsolute: p.allowWorkspaceAbsolute === true,
+        })
+      case 'panelReveal': {
+        const { absolute } = await resolveWorkspaceFilePath(root, p.path, extraRoots, true, allowedFiles)
+        const info = await stat(absolute).catch(() => null)
+        if (!info) throw new Error('文件不存在。')
+        await this.workspace.revealProjectDirectory?.(absolute)
+        return true
+      }
       case 'panelSave': {
         const name = localPath(root, p.path)
         const previous = this.writes.get(name) || Promise.resolve()

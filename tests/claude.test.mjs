@@ -712,3 +712,72 @@ test('Claude generates the first title through a native control and tolerates an
   const sent = (await readFile(path.join(f.source, 'titles'), 'utf8')).trim().split('\n').map(JSON.parse)
   assert.deepEqual(sent, Array(2).fill({ subtype: 'generate_session_title', description, persist: false }))
 })
+
+test('Claude edits mode auto-approves workspace file edits while guarding secrets, outside paths, and plan mode', async t => {
+  const f = await fixture(t)
+  const account = { ...f, ...(await detect(f)) }
+  const workspaceDir = path.join(f.source, 'work')
+  await mkdir(workspaceDir, { recursive: true })
+
+  const runToolCheck = async (permission, tool_name, input) => {
+    await writeFile(
+      path.join(f.source, 'stream-fixture.json'),
+      JSON.stringify({
+        frames: [
+          {
+            type: 'control_request',
+            request_id: 'ask-edit',
+            request: { subtype: 'can_use_tool', tool_name, input },
+          },
+        ],
+        afterClose: [],
+      }),
+    )
+    let approvals = 0
+    const events = []
+    await run({
+      account,
+      cwd: workspaceDir,
+      permission,
+      prompt: 'edit test',
+      emit: (e) => events.push(e),
+      approve: async () => {
+        approvals++
+        return false
+      },
+    })
+    const text = events
+      .filter((e) => e.type === 'text')
+      .map((e) => e.value)
+      .join('')
+    return { approvals, text }
+  }
+
+  // Workspace file edit in edits mode -> auto-allowed without approve()
+  const safeEdit = await runToolCheck('edits', 'Edit', {
+    file_path: path.join(workspaceDir, 'app.js'),
+  })
+  assert.equal(safeEdit.approvals, 0)
+  assert.equal(safeEdit.text, 'part1allow')
+
+  // .env secret file in edits mode -> still prompts approve()
+  const envEdit = await runToolCheck('edits', 'Write', {
+    file_path: path.join(workspaceDir, '.env.local'),
+  })
+  assert.equal(envEdit.approvals, 1)
+  assert.equal(envEdit.text, 'part1deny')
+
+  // Outside workspace file in edits mode -> still prompts approve()
+  const outsideEdit = await runToolCheck('edits', 'Edit', {
+    file_path: path.join(f.source, 'outside.js'),
+  })
+  assert.equal(outsideEdit.approvals, 1)
+  assert.equal(outsideEdit.text, 'part1deny')
+
+  // Plan mode -> auto-denies without prompting approve()
+  const planEdit = await runToolCheck('plan', 'Edit', {
+    file_path: path.join(workspaceDir, 'app.js'),
+  })
+  assert.equal(planEdit.approvals, 0)
+  assert.equal(planEdit.text, 'part1deny')
+})

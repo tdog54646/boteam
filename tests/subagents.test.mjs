@@ -175,3 +175,165 @@ test('Antigravity recovers only uniquely matched visible child archive messages 
   assert.equal(events.at(-1).agent.status, 'completed')
   assert.equal(events.at(-1).agent.model, 'gemini-flash')
 })
+
+test('Antigravity subagents prefer transcript_full.jsonl over truncated compact logs and repair truncated JSON fallbacks', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'boteam-agy-subagent-full-'))
+  const workspace = new Workspace({ root, adapters: {} })
+  t.after(async () => { await workspace.close(); await rm(root, { recursive: true, force: true }) })
+  const source = await workspace.accounts.privateDir()
+  const dir = join(source, '.gemini', 'antigravity-cli')
+  await mkdir(dir, { recursive: true })
+  const parent = 'e667bea9-e030-43b9-af79-0d0a0ff3d691'
+  const fullChild = 'bca5e37c-ba90-426b-beab-502c8e6c4cc2'
+  const fallbackChild = 'cfbb2a1a-d3d1-4de3-a3b3-0633d804e28d'
+  const fullAgentId = `agy:${parent}:call_full`
+  const fallbackAgentId = `agy:${parent}:call_fallback`
+  const fullPrompt = '专注整数分拆的数学规范性、工程标杆实现及优雅度评审维度。'
+  const fallbackPrompt = '专注迭代均摊算法与极简生成器验证。'
+
+  const native = new DatabaseSync(join(dir, 'conversation_summaries.db'))
+  try {
+    native.exec(`CREATE TABLE conversation_summaries(conversation_id TEXT, parent_conversation_id TEXT, status TEXT,
+      not_fully_idle INTEGER, killed INTEGER)`)
+    const add = native.prepare("INSERT INTO conversation_summaries VALUES(?,?,'CASCADE_RUN_STATUS_IDLE',0,0)")
+    add.run(fullChild, parent)
+    add.run(fallbackChild, parent)
+  } finally { native.close() }
+
+  const fullReport = [
+    '以下从**数学本质、精确剪枝**完成剖析。',
+    '',
+    '---',
+    '',
+    '### 一、数学建模',
+    '求正整数 $n$ 的所有真分拆（项数 $k \\ge 2$）：',
+    '$$1 \\le a_1 \\le a_2 \\le \\dots \\le a_k, \\quad \\sum_{i=1}^k a_i = n$$',
+  ].join('\n')
+
+  // 1) Child with truncated transcript.jsonl + complete transcript_full.jsonl + parent follow-up
+  const fullLogs = join(dir, 'brain', fullChild, '.system_generated', 'logs')
+  await mkdir(fullLogs, { recursive: true })
+  await writeFile(join(fullLogs, 'transcript.jsonl'), [
+    { type: 'SYSTEM_MESSAGE', source: 'SYSTEM', step_index: 0, status: 'DONE', content: fullPrompt },
+    {
+      type: 'PLANNER_RESPONSE',
+      source: 'MODEL',
+      step_index: 1,
+      status: 'DONE',
+      truncated_fields: ['tool_calls'],
+      tool_calls: [{ name: 'run_command', args: { CommandLine: '"python3 -c \'\\nprint(1)\\n<truncated 512 bytes>' } }],
+    },
+    { type: 'GENERIC', source: 'MODEL', step_index: 2, status: 'DONE', content: 'ok' },
+    {
+      type: 'PLANNER_RESPONSE',
+      source: 'MODEL',
+      step_index: 3,
+      status: 'DONE',
+      truncated_fields: ['tool_calls'],
+      tool_calls: [{
+        name: 'send_message',
+        args: {
+          Recipient: JSON.stringify(parent),
+          Message: JSON.stringify(fullReport).slice(0, 65) + '\n<truncated 7412 bytes>',
+        },
+      }],
+    },
+    { type: 'GENERIC', source: 'MODEL', step_index: 4, status: 'DONE', content: `Message sent to "${parent}".` },
+    { type: 'SYSTEM_MESSAGE', source: 'SYSTEM', step_index: 5, status: 'DONE', content: '<SYSTEM_MESSAGE>\nReminder: work efficiently.\n</SYSTEM_MESSAGE>' },
+    { type: 'PLANNER_RESPONSE', source: 'MODEL', step_index: 6, status: 'DONE', content: '已完成剖析并通过 `send_message` 发送给主调 Agent。' },
+  ].map(s => JSON.stringify(s)).join('\n'))
+
+  await writeFile(join(fullLogs, 'transcript_full.jsonl'), [
+    { type: 'SYSTEM_MESSAGE', source: 'SYSTEM', step_index: 0, status: 'DONE', content: fullPrompt },
+    {
+      type: 'PLANNER_RESPONSE',
+      source: 'MODEL',
+      step_index: 1,
+      status: 'DONE',
+      tool_calls: [{ name: 'run_command', args: { CommandLine: "python3 -c 'print(42)'", WaitMsBeforeAsync: 5000 } }],
+    },
+    { type: 'GENERIC', source: 'MODEL', step_index: 2, status: 'DONE', content: '42' },
+    {
+      type: 'PLANNER_RESPONSE',
+      source: 'MODEL',
+      step_index: 3,
+      status: 'DONE',
+      tool_calls: [{ name: 'send_message', args: { Recipient: parent, Message: fullReport } }],
+    },
+    { type: 'GENERIC', source: 'MODEL', step_index: 4, status: 'DONE', content: `Message sent to "${parent}".` },
+    { type: 'SYSTEM_MESSAGE', source: 'SYSTEM', step_index: 5, status: 'DONE', content: '<SYSTEM_MESSAGE>\nReminder: work efficiently.\n</SYSTEM_MESSAGE>' },
+    { type: 'PLANNER_RESPONSE', source: 'MODEL', step_index: 6, status: 'DONE', content: '已完成剖析并通过 `send_message` 发送给主调 Agent。' },
+    {
+      type: 'SYSTEM_MESSAGE',
+      source: 'SYSTEM',
+      step_index: 7,
+      status: 'DONE',
+      content: `<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-26T00:00:00Z sender=${parent} priority=HIGH content=请补充 n=5 的解数量\n</SYSTEM_MESSAGE>`,
+    },
+    {
+      type: 'PLANNER_RESPONSE',
+      source: 'MODEL',
+      step_index: 8,
+      status: 'DONE',
+      tool_calls: [{ name: 'send_message', args: { Recipient: parent, Message: '6' } }],
+    },
+    { type: 'GENERIC', source: 'MODEL', step_index: 9, status: 'DONE', content: `Message sent to "${parent}".` },
+  ].map(s => JSON.stringify(s)).join('\n'))
+
+  // 2) Child with ONLY compact truncated transcript.jsonl (missing transcript_full.jsonl)
+  const fallbackLogs = join(dir, 'brain', fallbackChild, '.system_generated', 'logs')
+  await mkdir(fallbackLogs, { recursive: true })
+  await writeFile(join(fallbackLogs, 'transcript.jsonl'), [
+    { type: 'SYSTEM_MESSAGE', source: 'SYSTEM', step_index: 0, status: 'DONE', content: fallbackPrompt },
+    {
+      type: 'PLANNER_RESPONSE',
+      source: 'MODEL',
+      step_index: 1,
+      status: 'DONE',
+      truncated_fields: ['tool_calls'],
+      tool_calls: [{
+        name: 'send_message',
+        args: {
+          Recipient: JSON.stringify(parent),
+          Message: '"### 方案结论\\n项数满足 $k \\\\ge 2$，总数为 $p(n)-1$。\\\n<truncated 3200 bytes>',
+        },
+      }],
+    },
+    { type: 'GENERIC', source: 'MODEL', step_index: 2, status: 'DONE', content: `Message sent to "${parent}".` },
+  ].map(s => JSON.stringify(s)).join('\n'))
+
+  const { db } = workspace
+  db.run('INSERT INTO accounts(id,provider,identity,info) VALUES(?,?,?,?)', 'account', 'antigravity', 'fixture',
+    JSON.stringify({ source, managed: true, status: 'ready' }))
+  db.run("INSERT INTO chats VALUES('chat','direct','Fixture','')")
+  db.run(`INSERT INTO messages(id,chatId,author,name,text,createdAt,recipients)
+    VALUES('message','chat','user','Fixture','request','','["bot"]')`)
+  db.run(`INSERT INTO tasks(id,chatId,botId,accountId,messageId,status,tool,createdAt)
+    VALUES('task','chat','bot','account','message','done','agy','')`)
+  db.run('INSERT INTO threads(chatId,botId,accountId,threadId,cwd) VALUES(?,?,?,?,?)', 'chat', 'bot', 'account', parent, root)
+
+  for (const [id, name, prompt] of [
+    [fullAgentId, 'Math Designer', fullPrompt],
+    [fallbackAgentId, 'Fallback Architect', fallbackPrompt],
+  ]) {
+    workspace.event('task', '子智能体 · 已派发', { agent: { id, name, status: 'dispatched' } })
+    saveAgentEntries(db, 'task', { agent: { id }, entries: [{ id: 'dispatch-prompt', role: 'user', text: prompt }] })
+  }
+
+  await workspace.handle('refreshSubagents', { chatId: 'chat' })
+
+  const fullEntries = await workspace.handle('agentTranscript', { chatId: 'chat', botId: 'bot', agentId: fullAgentId })
+  const reportEntry = fullEntries.find(e => e.id.includes(':3:report:0'))
+  assert.equal(reportEntry?.text, fullReport)
+  assert.doesNotMatch(reportEntry.text, /^"|<truncated|\\n/)
+  const cmdEntry = fullEntries.find(e => e.id.endsWith(':1:0'))
+  assert.equal(cmdEntry?.meta?.command, "python3 -c 'print(42)'")
+  const followupUser = fullEntries.find(e => e.id.endsWith(':7') && e.role === 'user')
+  assert.equal(followupUser?.text, '请补充 n=5 的解数量')
+  const numericReport = fullEntries.find(e => e.id.includes(':8:report:0'))
+  assert.equal(numericReport?.text, '6')
+
+  const fallbackEntries = await workspace.handle('agentTranscript', { chatId: 'chat', botId: 'bot', agentId: fallbackAgentId })
+  const repairedReport = fallbackEntries.find(e => e.id.includes(':1:report:0'))
+  assert.equal(repairedReport?.text, '### 方案结论\n项数满足 $k \\ge 2$，总数为 $p(n)-1$。')
+})

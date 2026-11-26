@@ -12,12 +12,14 @@ import { PanelTerminals } from './panel-terminals.mjs'
 import { chatText, linkedChatId, requireChat } from './chat-transfer.mjs'
 import { chatOpenTargets, openChatDirectory } from './chat-open-targets.mjs'
 import { installAntigravityCli } from './antigravity-install.mjs'
+import { clearHtmlPreviews, registerPreviewScheme, setupPreviewProtocol, stageHtmlPreview } from './preview-protocol.mjs'
 
 const dir = dirname(fileURLToPath(import.meta.url))
 const page = pathToFileURL(join(dir, '../dist/index.html')).href
 app.setName('BoTeam')
 if (!app.requestSingleInstanceLock()) app.quit()
 else {
+  registerPreviewScheme()
   let workspace, refresh
   const windows = new Map()
   const pendingLinks = []
@@ -104,6 +106,7 @@ else {
     else if (workspace) focus(currentWindow() || openWindow())
   })
   app.whenReady().then(async () => {
+    setupPreviewProtocol()
     const notify = () => {
       if (!refresh)
         refresh = setTimeout(() => {
@@ -121,8 +124,9 @@ else {
       locate: (provider, source) => locate(provider, source, { userData: app.getPath('userData') }),
       discoverySources,
       installAntigravityCli: signal => installAntigravityCli({ signal }),
-      async makeThumbnail(path) {
-        const size = { width: 240, height: 240 }
+      async makeThumbnail(path, maxDimension = 240) {
+        const dim = Number.isFinite(maxDimension) ? Math.max(32, Math.min(1600, Math.round(maxDimension))) : 240
+        const size = { width: dim, height: dim }
         const image = await nativeImage.createThumbnailFromPath(path, size).catch(() => null)
         return image && !image.isEmpty() ? image.toDataURL() : null
       },
@@ -180,6 +184,7 @@ else {
       }
     }
     ipcMain.handle('workspace:invoke', localHandler(async (context, method, payload = {}) => {
+      if (method === 'stageHtmlPreview') return stageHtmlPreview(payload.html)
       if (method === 'chatOpenTargets') return chatOpenTargets()
       if (method === 'openChatLink') return openLink(payload.url)
       if (!['openChatWindow', 'showChatDirectory', 'openChatDirectory', 'copyChat', 'shareChat'].includes(method))
@@ -252,6 +257,7 @@ else {
       if (readyToQuit) return
       event.preventDefault()
       clearTimeout(refresh)
+      clearHtmlPreviews()
       for (const context of windows.values()) context.terminals.close()
       if (!workspace.closed)
         workspace.close().finally(() => {
