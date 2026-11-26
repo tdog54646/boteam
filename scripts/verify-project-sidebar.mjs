@@ -84,6 +84,7 @@ try {
   const detail = () => dialog(projectName + ' 项目详情')
   const editor = () => dialog('编辑项目')
   const creation = dialog('新建对话')
+  const groupCreation = dialog('新建群聊')
   const finder = process.platform === 'darwin' ? '在 Finder 中显示' : '在文件管理器中显示'
   const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
   async function openProjectCreation() {
@@ -106,24 +107,31 @@ try {
     await item(projectMenu(), '分区').hover()
     await item(menu('分区'), name).click()
   }
-  async function assertCreationProject(value) {
-    await expect(creation.getByRole('button', { name: '私聊', exact: true })).toHaveAttribute('aria-pressed', 'true')
-    await expect(creation.getByRole('button', { name: '群聊', exact: true })).toBeVisible()
-    await expect(creation.getByRole('combobox', { name: '项目', exact: true })).toHaveValue(value)
-    await expect(creation.getByRole('combobox', { name: '工作目录' })).toHaveCount(0)
+  async function assertProjectDraftView() {
+    await expect(creation).toHaveCount(0)
+    await expect(groupCreation).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: '有什么需要帮忙？', exact: true })).toBeVisible()
+    await expect(projectChip).toHaveAccessibleDescription(projectName)
+    await expect(button('新建群聊')).toBeVisible()
   }
-  async function selectGroupCreation() {
-    await creation.getByRole('button', { name: '群聊', exact: true }).click()
-    await expect(creation.getByRole('textbox', { name: '群聊名称' })).toHaveCount(0)
-    await expect(creation.getByRole('combobox', { name: '工作目录' })).toHaveCount(0)
+  async function openGroupCreationModal() {
+    await button('新建群聊').click()
+    await expect(groupCreation).toBeVisible()
+    await expect(groupCreation.getByRole('heading', { name: '选择群成员', exact: true })).toBeVisible()
+    await expect(groupCreation.getByRole('button', { name: '私聊', exact: true })).toHaveCount(0)
+    await expect(groupCreation.getByRole('button', { name: '群聊', exact: true })).toHaveCount(0)
+    await expect(groupCreation.getByRole('combobox', { name: '项目', exact: true })).toHaveCount(0)
+    await expect(groupCreation.getByRole('textbox', { name: '群聊名称' })).toHaveCount(0)
+    await expect(groupCreation.getByRole('combobox', { name: '工作目录' })).toHaveCount(0)
   }
-  async function cancelProjectCreation(projectId) {
+  async function cancelProjectCreation() {
     const before = (await snapshot(page)).chats.map(c => c.id).sort()
     await openProjectCreation()
-    await assertCreationProject(projectId)
-    await selectGroupCreation()
-    await creation.getByRole('button', { name: '取消', exact: true }).click()
-    await expect(creation).toHaveCount(0)
+    await assertProjectDraftView()
+    await openGroupCreationModal()
+    await groupCreation.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(groupCreation).toHaveCount(0)
+    await expect(projectChip).toHaveAccessibleDescription(projectName)
     assert.deepEqual((await snapshot(page)).chats.map(c => c.id).sort(), before)
   }
   const menuChoice = name => page.getByRole('menuitemcheckbox', { name, exact: true })
@@ -335,21 +343,28 @@ try {
     await originalChat.click()
     await expect(originalChat).toHaveAttribute('aria-current', 'page')
     await expect(botSelector).toContainText(reviewerName)
+    if (index === 0) {
+      await draft.fill('原会话未发草稿')
+    } else {
+      await expect(draft).toHaveValue('原会话未发草稿')
+    }
     const before = await snapshot(page)
     await activate()
     await expect(originalChat).not.toHaveAttribute('aria-current', 'page')
     await expect(creation).toHaveCount(0)
-    await expect(draft).toHaveValue('')
+    await expect(draft).toHaveValue(index === 0 ? '' : '请整理本地草稿。')
     await expect(projectChip).toHaveAccessibleDescription('不在项目中工作')
-    await draft.fill('请整理本地草稿。')
+    if (index === 0) await draft.fill('请整理本地草稿。')
     await assertDraftOnly(before)
     if (index < newChatActions.length - 1) {
       await originalChat.click()
       await expect(originalChat).toHaveAttribute('aria-current', 'page')
+      await expect(draft).toHaveValue('原会话未发草稿')
       await assertDraftOnly(before)
       continue
     }
     // Two submissions in one tick exercise the interval before the send button disables.
+    await expect(button('发送消息')).toBeEnabled()
     await button('发送消息').evaluate(control => { control.click(); control.click() })
     await expect(page.locator('.window-title')).toContainText('整理本地草稿')
     const chat = await sentChat(before, '请整理本地草稿。')
@@ -358,16 +373,18 @@ try {
     assert.equal(chat.projectId, null)
     await expect(recently().locator(`[data-chat-id="${chat.id}"] .thread-row`)).toHaveAttribute('aria-current', 'page')
     globalChats.push(chat.id)
+    // After sending the global draft, clicking New Chat starts clean while originalChat still keeps its unsent draft.
+    await button('新建对话').click()
+    await expect(draft).toHaveValue('')
+    await originalChat.click()
+    await expect(draft).toHaveValue('原会话未发草稿')
+    await draft.fill('')
   }
 
   const beforeDirectDraft = await snapshot(page)
   await openProjectCreation()
-  await assertCreationProject(project.id)
-  // This Bot's own working directory differs from the project's primary source.
-  await creation.getByText(reviewerName, { exact: true }).click()
-  await creation.getByRole('button', { name: '开始私聊' }).click()
-  await expect(creation).toHaveCount(0)
-  await expect(projectChip).toHaveAccessibleDescription(projectName)
+  // Project new-chat reuses the Home draft view directly with the current default Bot (reviewerName) and projectName selected.
+  await assertProjectDraftView()
   await assertDraftOnly(beforeDirectDraft)
   await draft.fill(firstPrompt)
   await chooseFirstProject(reportsName, '周报')
@@ -405,13 +422,14 @@ try {
 
   const beforeGroupDraft = await snapshot(page)
   await openProjectCreation()
-  await assertCreationProject(project.id)
-  await selectGroupCreation()
+  await assertProjectDraftView()
+  await openGroupCreationModal()
   for (const name of [botName, reviewerName]) {
-    const member = creation.getByRole('button', { name: new RegExp(name) })
+    const member = groupCreation.getByRole('button', { name: new RegExp(name) })
     if (await member.getAttribute('aria-pressed') !== 'true') await member.click()
   }
-  await creation.getByRole('button', { name: '创建群聊' }).click()
+  await groupCreation.getByRole('button', { name: '创建群聊' }).click()
+  await expect(groupCreation).toHaveCount(0)
   await expect(projectChip).toHaveAccessibleDescription(projectName)
   await assertDraftOnly(beforeGroupDraft)
   const groupRequest = '@' + botName + ' 帮我整理部署记录。'

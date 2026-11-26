@@ -207,16 +207,18 @@ export function MemberList({
   selected,
   setSelected,
   multi = true,
+  autoFocusFirst = false,
 }) {
   return (
     <div className="member-list">
-      {bots.map((bot) => {
+      {bots.map((bot, index) => {
         const account = accounts.find((x) => x.id === bot.accountId);
         const active = selected.includes(bot.id);
         return (
           <button
             key={bot.id}
             type="button"
+            data-autofocus={(autoFocusFirst && index === 0) || undefined}
             aria-pressed={active}
             className={`member-row ${active ? "selected" : ""}`}
             onClick={() =>

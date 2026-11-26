@@ -184,6 +184,16 @@ try {
   await expect(page.locator('.window-title')).toHaveText(renamed)
   await expect(chatButton).toContainText(renamed)
 
+  // Composer input drafts follow per-session across windows in real time.
+  const firstInput = page.getByRole('textbox', { name: '消息内容' })
+  const secondInput = second.getByRole('textbox', { name: '消息内容' })
+  await firstInput.fill('跨窗口跟随草稿测试')
+  await expect(secondInput).toHaveValue('跨窗口跟随草稿测试')
+  await secondInput.fill('第二窗口修改后的草稿')
+  await expect(firstInput).toHaveValue('第二窗口修改后的草稿')
+  await firstInput.fill('')
+  await expect(secondInput).toHaveValue('')
+
   // A copied link inside a real message should return the second window to its original chat.
   await second.getByTitle(activeName, { exact: true }).click()
   await page.bringToFront()

@@ -244,13 +244,11 @@ export function BotList({ accounts, bots, open, startDirect }) {
   );
 }
 export function ChatDialog({
-  kind,
   chat,
   bots,
   accounts,
   projects = [],
   initialProjectId,
-  defaultBotId,
   invoke,
   onNewDraft,
   onEditDraft,
@@ -258,23 +256,20 @@ export function ChatDialog({
   onClose,
   newBot,
 }) {
-  const [type, setType] = useState(chat?.kind || kind || "direct");
   const [name, setName] = useState(chat?.name || "");
   const [originalName] = useState(chat?.name);
-  const [projectId, setProjectId] = useState(initialProjectId || "");
-  const project = projects.find(p => p.id === projectId);
+  const project = projects.find((p) => p.id === initialProjectId);
   const [selected, setSelected] = useState(
     chat?.members?.filter((id) =>
       bots.some((b) => b.id === id && !b.archived),
-    ) || (kind !== "group" && defaultBotId ? [defaultBotId] : []),
+    ) || [],
   );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const active = bots.filter((b) => !b.archived);
-  const group = type === "group";
   async function save(e) {
     e.preventDefault();
-    if (busy || !selected.length || (chat && !name.trim()) || (projectId && !project)) return;
+    if (busy || !selected.length || (chat && !name.trim())) return;
     setBusy(true);
     setError("");
     try {
@@ -286,7 +281,7 @@ export function ChatDialog({
           await onDone(chat.id);
         }
       } else {
-        onNewDraft({ kind: type, members: selected, ...(project && { projectId }) });
+        onNewDraft({ kind: "group", members: selected, ...(project && { projectId: project.id }) });
       }
     } catch (err) {
       setError(errorText(err));
@@ -295,36 +290,8 @@ export function ChatDialog({
     }
   }
   return (
-    <Modal title={chat ? "群聊设置" : "新建对话"} onClose={() => { if (!busy) onClose(); }}>
+    <Modal title={chat ? "群聊设置" : "新建群聊"} onClose={() => { if (!busy) onClose(); }}>
       <form onSubmit={save}>
-        {!chat && (
-          <div className="segmented" role="group" aria-label="对话类型">
-            {[
-              ["direct", "私聊"],
-              ["group", "群聊"],
-            ].map(([v, label]) => (
-              <button
-                type="button"
-                key={v}
-                data-autofocus={type === v || undefined}
-                aria-pressed={type === v}
-                onClick={() => {
-                  setType(v);
-                  setSelected((s) => (v === "direct" ? s.slice(0, 1) : s));
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
-        {!chat && (projects.length > 0 || projectId) && <Field label="项目">
-          <Select value={projectId} onChange={e => setProjectId(e.target.value)}>
-            <option value="">不加入项目</option>
-            {projectId && !project && <option value={projectId} disabled>项目已移除</option>}
-            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </Select>
-        </Field>}
         {chat && (
           <Field label="群聊名称">
             <input
@@ -336,20 +303,21 @@ export function ChatDialog({
           </Field>
         )}
         <div className="field">
-          <h3 className="field-label">{group ? "选择群成员" : "选择 Bot"}</h3>
+          <h3 className="field-label">选择群成员</h3>
           {active.length ? (
             <MemberList
               bots={active}
               accounts={accounts}
               selected={selected}
               setSelected={setSelected}
-              multi={group}
+              multi
+              autoFocusFirst={!chat}
             />
           ) : (
             <div className="settings-group">
               <div className="settings-row">
                 <p>先创建一个 Bot，即可开始对话。</p>
-                <Button icon={Plus} onClick={() => newBot({ kind: type, projectId })}>
+                <Button icon={Plus} onClick={() => newBot({ kind: "group", projectId: project?.id })}>
                   创建 Bot
                 </Button>
               </div>
@@ -362,10 +330,10 @@ export function ChatDialog({
           <Button
             type="submit"
             variant="primary"
-            disabled={!selected.length || (chat && !name.trim()) || (projectId && !project)}
+            disabled={!selected.length || (chat && !name.trim())}
             busy={busy}
           >
-            {chat ? "保存修改" : group ? "创建群聊" : "开始私聊"}
+            {chat ? "保存修改" : "创建群聊"}
           </Button>
         </div>
       </form>

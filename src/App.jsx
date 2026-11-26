@@ -19,6 +19,7 @@ import { Onboarding } from "./Onboarding";
 import { Sidebar, ChatSearch } from "./Sidebar";
 import { ProjectActionDialog, ProjectDialog } from "./ProjectDialog";
 import { Home } from "./Home";
+import { hasComposerDraft, pruneComposerDrafts } from "./composerDrafts";
 import { Button, errorText, IconButton, Modal, Notice, Spinner } from "./ui";
 
 const empty = {
@@ -46,7 +47,8 @@ function invokeWithDraft(draft, method, payload = {}) {
 }
 function readDrafts() {
   try {
-    const saved = JSON.parse(sessionStorage.getItem(draftStorageKey));
+    const raw = localStorage.getItem(draftStorageKey) ?? sessionStorage.getItem(draftStorageKey);
+    const saved = JSON.parse(raw);
     return Object.fromEntries(Object.entries(saved || {}).filter(([key, draft]) =>
       draft && typeof draft.id === "string" && ["direct", "group"].includes(draft.kind) &&
       Array.isArray(draft.members) && draft.members.length && draft.members.every(id => typeof id === "string") &&
@@ -77,7 +79,10 @@ export default function App() {
     else delete next[key];
     draftPages.current = next;
     setDrafts(next);
-    try { sessionStorage.setItem(draftStorageKey, JSON.stringify(next)); } catch {}
+    try {
+      localStorage.setItem(draftStorageKey, JSON.stringify(next));
+      sessionStorage.removeItem(draftStorageKey);
+    } catch {}
   }, []);
   const homeKey = homeBot && "home:" + homeBot.id;
   const draftKey = page === "home" ? homeKey : page;
@@ -97,6 +102,9 @@ export default function App() {
   function chooseHomeBot(id) {
     localStorage.setItem(defaultBotKey, id);
     setHomeSelection(id);
+    if (draft && !draft.legacyHome && draft.kind === "direct") {
+      updateDraft(draftKey, { ...draft, members: [id] });
+    }
   }
   useEffect(() => {
     if (page === "home" && homeKey && state.onboarded && !draftPages.current[homeKey])
@@ -104,8 +112,14 @@ export default function App() {
   }, [page, homeKey, homeBot?.id, state.onboarded, draft, updateDraft]);
   useEffect(() => {
     function syncSelection(event) {
-      if (event.storageArea === localStorage && (event.key === defaultBotKey || event.key === null))
+      if (event.storageArea !== localStorage) return;
+      if (event.key === defaultBotKey || event.key === null)
         setHomeSelection(localStorage.getItem(defaultBotKey) || "");
+      if (event.key === draftStorageKey || event.key === null) {
+        const next = readDrafts();
+        draftPages.current = next;
+        setDrafts(next);
+      }
     }
     window.addEventListener("storage", syncSelection);
     return () => window.removeEventListener("storage", syncSelection);
@@ -152,7 +166,10 @@ export default function App() {
           invoke("setChatUnread", { chatId: opened.id, unread: false }).catch(e => setError(errorText(e)));
         }
       }
-      const accessible = new Set([...builtInPages, ...Object.keys(draftPages.current), ...snapshot.chats.map(c => c.id)]);
+      const savedChatIds = new Set(snapshot.chats.map(c => c.id));
+      const draftKeys = new Set(Object.keys(draftPages.current));
+      pruneComposerDrafts(savedChatIds, draftKeys);
+      const accessible = new Set([...builtInPages, ...draftKeys, ...savedChatIds]);
       setDialog(current => (current?.type === "project" || current?.type === "projectAction") && current.id &&
         !snapshot.projects?.some(project => project.id === current.id) ? null : current);
       const retired = new Set(before.chats.filter(c => !accessible.has(c.id)).map(c => c.id));
@@ -249,13 +266,38 @@ export default function App() {
     setError("");
     select(key);
   }, [select, updateDraft]);
-  const startDirect = useCallback(botId => startDraft({ kind: "direct", members: [botId] }), [startDraft]);
+  const startDirect = useCallback(
+    (botId, projectId) => startDraft({ kind: "direct", members: [botId], ...(projectId && { projectId }) }),
+    [startDraft],
+  );
   const defaultBotId = homeBot?.id;
   const newChat = useCallback(projectId => {
-    if (projectId) setDialog({ type: "chat", projectId });
-    else if (defaultBotId) startDirect(defaultBotId);
-    else select("home");
-  }, [defaultBotId, startDirect, select]);
+    if (!defaultBotId) {
+      select("home");
+      return;
+    }
+    const targetProject = projectId || null;
+    const currentHomeKey = "home:" + defaultBotId;
+    const homeCandidate = draftPages.current[currentHomeKey];
+    if (homeCandidate && hasComposerDraft(currentHomeKey) && (homeCandidate.projectId || null) === targetProject) {
+      setError("");
+      select("home");
+      return;
+    }
+    const existing = Object.entries(draftPages.current)
+      .reverse()
+      .find(([k, d]) => k.startsWith("draft:") && d.kind === "direct" && !d.legacyHome && (d.projectId || null) === targetProject);
+    if (existing) {
+      const [existingKey, existingDraft] = existing;
+      if (existingDraft.members[0] !== defaultBotId) {
+        updateDraft(existingKey, { ...existingDraft, members: [defaultBotId] });
+      }
+      setError("");
+      select(existingKey);
+      return;
+    }
+    startDirect(defaultBotId, projectId);
+  }, [defaultBotId, startDirect, select, updateDraft]);
   async function finishWizard(botId) {
     setBusy(true);
     try {
@@ -480,6 +522,7 @@ export default function App() {
             onDraftFiles={setSourceDraft}
             onOpenChat={finishChat}
             onNewDraft={startDraft}
+            openWorkspace={showPanel}
             key={chat.id}
             chat={chat}
             firstProject={firstProject}
@@ -609,9 +652,7 @@ export default function App() {
       )}
       {(dialog?.type === "chat" || dialog?.type === "group" || dialog?.type === "draftGroup") && (
         <ChatDialog
-          kind={dialog.kind}
           initialProjectId={dialog.projectId}
-          defaultBotId={homeBot?.id}
           chat={
             dialog.type === "group"
               ? state.chats.find((c) => c.id === dialog.id)
