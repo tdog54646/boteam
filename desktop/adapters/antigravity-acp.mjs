@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -14,6 +14,7 @@ function rpcError(error, method) {
   if (error?.code === -32000 || /authenticat|unauthorized|sign in/i.test(error?.message))
     return Object.assign(new Error('Antigravity 原生登录已失效，请重新授权。'), {
       code: 'AGY_AUTH_REQUIRED',
+      authExpired: true,
     })
   if (/quota|limit|429|resource.exhausted/i.test(error?.message))
     return new Error('Antigravity 订阅额度或速率已达上限。')
@@ -26,15 +27,25 @@ function rpcError(error, method) {
   return new Error('Antigravity 原生请求失败，请检查 CLI 和账号状态。')
 }
 
-export async function withAcp(profile, signal, handle, work) {
+export async function withAcp(profile, signal, handle, work, options = {}) {
   signal?.throwIfAborted()
-  const [command, ...argv] = invocation(profile, [
+  const realCwd =
+    typeof options.cwd === 'string' && options.cwd
+      ? await realpath(options.cwd).catch(() => null)
+      : null
+  const skipPermissions = options.skipPermissions === true
+  const acpArgs = [
     'acp',
     '--include-default-customizations=false',
     '--disable-telemetry',
     '--log-file',
     '/dev/null',
-  ])
+    ...(realCwd && realCwd !== profile.home ? ['--add-dir', realCwd] : []),
+    ...(skipPermissions ? ['--dangerously-skip-permissions'] : []),
+  ]
+  const [command, ...argv] = invocation(profile, acpArgs, {
+    ...(skipPermissions && realCwd ? { workspaceWriteRoot: realCwd } : {}),
+  })
   const child = spawn(command, argv, {
     cwd: profile.home,
     env: profile.env,

@@ -6,6 +6,7 @@ import { constants } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  ensureActionableSettings,
   hasStagedLogin,
   initSettings,
   invocation,
@@ -19,10 +20,16 @@ import { authenticatePersonal, withAcp } from './antigravity-acp.mjs'
 import { cliPreferences, externalSource, hasCliLogin, installCliLogin, withCliLogin } from './antigravity-import.mjs'
 import { commandUpdates, sessionSkills, sessionSlashCommands } from './antigravity-actions.mjs'
 import { slashPrompt } from './native-slash.mjs'
+import { authExpiredError } from '../auth-errors.mjs'
 import { nativeEnv, redact } from '../native.mjs'
-import { agentActivity } from './chat-activity.mjs'
+import { agentActivity, commandActivity, fileActivity, toolCallActivity, webActivity } from './chat-activity.mjs'
 import { dispatchAgentName } from '../subagent-names.mjs'
 import { existingAntigravityChildren, waitForAntigravityChildren } from './antigravity-subagents.mjs'
+import {
+  readAntigravityStepWatermark,
+  readAntigravityTurnMetrics,
+  usageUpdateMetrics,
+} from './antigravity-metrics.mjs'
 
 import { contextUsage, inlineImages, quotaWindow } from './usage.mjs'
 
@@ -263,15 +270,68 @@ export async function login({ source, bin, signal, openUrl }) {
   }
 }
 
-async function verify(account, signal) {
-  if (!account?.managed) throw new Error('请先授权隔离的 Antigravity 账号身份。')
+const verifiedProfileCache = new Map()
+
+async function profileVerificationFingerprint(profile) {
+  const parts = []
+  for (const rel of [
+    'fixture',
+    '.boteam-oauth-completed',
+    '.gemini/antigravity-cli/antigravity-oauth-token',
+    '.gemini/antigravity-cli/settings.json',
+  ]) {
+    try {
+      const info = await lstat(path.join(profile.home, rel))
+      parts.push(`${rel}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`)
+    } catch {
+      parts.push(`${rel}:none`)
+    }
+  }
+  return parts.join('|')
+}
+
+async function verify(account, signal, { allowCache = false } = {}) {
+  if (!account?.managed) throw authExpiredError('请先授权隔离的 Antigravity 账号身份。')
   const profile = await subscriptionProfile(account.bin, account.source)
-  const found = await statusline(profile, signal)
+  await ensureActionableSettings(profile)
+  const fingerprint = await profileVerificationFingerprint(profile)
+  const cacheKey = JSON.stringify([
+    profile.home,
+    profile.bin,
+    account.identity,
+    account.plan || '',
+    fingerprint,
+  ])
+  if (allowCache) {
+    const cached = verifiedProfileCache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) {
+      return { profile, found: cached.found }
+    }
+  }
+  let found
+  try {
+    found = await statusline(profile, signal)
+  } catch (error) {
+    if (error?.code === 'AGY_SETUP_REQUIRED') {
+      await withAcp(profile, signal, null, async (request, capabilities) => {
+        const session = await request('session/new', { cwd: profile.home, mcpServers: [] })
+        if (capabilities?.sessionCapabilities?.close)
+          await request('session/close', { sessionId: session.sessionId })
+      }).catch(acpErr => {
+        if (acpErr?.code === 'AGY_AUTH_REQUIRED') throw acpErr
+      })
+    }
+    throw error
+  }
   if (
     found.identity !== account.identity ||
     (account.plan && paidTier(account.plan) !== found.plan)
   )
     throw new Error('当前 Antigravity 身份或订阅与 Bot 绑定不符。')
+  if (verifiedProfileCache.size >= 64) {
+    verifiedProfileCache.delete(verifiedProfileCache.keys().next().value)
+  }
+  verifiedProfileCache.set(cacheKey, { found, expiresAt: Date.now() + 60_000 })
   return { profile, found }
 }
 
@@ -324,7 +384,7 @@ async function withFreshSession(request, capabilities, profile, plan, read, cwd 
 }
 
 export async function composerActions({ account, cwd, signal }) {
-  const { profile, found } = await verify(account, signal)
+  const { profile, found } = await verify(account, signal, { allowCache: true })
   const updates = commandUpdates()
   return withAcp(profile, signal, updates.observe, (request, capabilities) =>
     withFreshSession(request, capabilities, profile, found.plan, async (id, configs) => {
@@ -338,11 +398,11 @@ export async function composerActions({ account, cwd, signal }) {
         slashCommands: sessionSlashCommands(commands, plan),
         ...(!commands && { note: '本次原生会话未返回可用命令列表。' }),
       }
-    }, cwd))
+    }, cwd), { cwd })
 }
 
 export async function options({ account, signal }) {
-  const { profile, found } = await verify(account, signal)
+  const { profile, found } = await verify(account, signal, { allowCache: true })
   return withAcp(profile, signal, null, (request, capabilities) =>
     withFreshSession(request, capabilities, profile, found.plan, async (id, initial) => {
       const picker = select(initial, 'model'),
@@ -420,7 +480,7 @@ async function readQuota(profile, picker, model, signal) {
 }
 
 export async function quota({ account, model, signal }) {
-  const { profile, found } = await verify(account, signal)
+  const { profile, found } = await verify(account, signal, { allowCache: true })
   return withAcp(profile, signal, null, (request, capabilities) =>
     withFreshSession(request, capabilities, profile, found.plan, async (_id, configs) => {
       const picker = select(configs, 'model')
@@ -450,6 +510,44 @@ export async function run({
     throw new Error('Antigravity 每条消息支持一个原生技能。')
   if (slashCommand && extensionIds.length) throw new Error('请选择一个 Antigravity 命令或技能。')
   const { profile, found } = await verify(account, signal)
+  await ensureActionableSettings(profile)
+  const resolvedCwd = cwd ? await realpath(cwd).catch(() => path.resolve(cwd)) : profile.home
+  const resolveRealTarget = async (targetPath) => {
+    const raw = path.isAbsolute(targetPath)
+      ? path.resolve(targetPath)
+      : path.resolve(resolvedCwd, targetPath)
+    let cur = raw
+    const tail = []
+    for (;;) {
+      try {
+        const real = await realpath(cur)
+        return tail.length ? path.join(real, ...tail.reverse()) : real
+      } catch {
+        const parent = path.dirname(cur)
+        if (parent === cur) return raw
+        tail.push(path.basename(cur))
+        cur = parent
+      }
+    }
+  }
+  const isWithinWorkspace = async (targetPath, guardSensitive = false) => {
+    if (typeof targetPath !== 'string' || !targetPath.trim()) return true
+    const abs = await resolveRealTarget(targetPath)
+    const inCwd = abs === resolvedCwd || abs.startsWith(resolvedCwd + path.sep)
+    const inProfile = abs === profile.home || abs.startsWith(profile.home + path.sep)
+    if (!inCwd && !inProfile) return false
+    if (guardSensitive) {
+      const root = inCwd ? resolvedCwd : profile.home
+      if (path.relative(root, abs).split(path.sep).includes('.git')) return false
+      const base = path.basename(abs)
+      if (/^(?:\.env(?:\..+)?|.*(?:credential|secret|token|private[_-]?key).*)$/i.test(base)) {
+        return false
+      }
+    }
+    return true
+  }
+  const isEditToolCall = (kind, title) =>
+    kind === 'edit' || /^(?:edit|write|create|replace)/i.test(String(kind || title || '').trim())
   const updates = commandUpdates()
   const dispatches = []
   const observeSubagent = subagentDispatches(emit, dispatches)
@@ -457,24 +555,75 @@ export async function run({
   let id,
     selectedModel,
     authorized = false,
-    parentActivity = 0
+    parentActivity = 0,
+    segmentSeq = 0,
+    emittedText = false,
+    turnHasTool = false,
+    baselineStepIdx = -1,
+    apiCallStartMs = null,
+    accumulatedApiMs = 0,
+    latestUsageUpdate = null,
+    autoApproveRecovery = false
+  const toolCalls = new Map()
+  const currentApiDurationMs = () =>
+    Math.max(
+      1,
+      Math.round(
+        accumulatedApiMs +
+          (apiCallStartMs !== null ? Math.max(0, performance.now() - apiCallStartMs) : 0),
+      ),
+    )
+  const syncTurnMetrics = async () => {
+    const durationMs = currentApiDurationMs()
+    const metrics =
+      (await readAntigravityTurnMetrics(
+        profile.home,
+        id,
+        baselineStepIdx,
+        durationMs,
+        selectedModel,
+      )) || usageUpdateMetrics(latestUsageUpdate, durationMs, selectedModel)
+    if (metrics) await emit({ type: 'metrics', value: metrics })
+  }
   const handle = async (msg) => {
     if (extensionIds.length || slashCommand) updates.observe(msg)
     const p = msg.params || {}
     if (msg.method === 'session/request_permission') {
       if (!authorized || p.sessionId !== id) return { outcome: { outcome: 'cancelled' } }
+      const allow = p.options?.find((o) => o.kind === 'allow_once'),
+        deny = p.options?.find((o) => o.kind === 'reject_once')
+      if (planMode || permission === 'plan') {
+        return {
+          outcome: deny ? { outcome: 'selected', optionId: deny.optionId } : { outcome: 'cancelled' },
+        }
+      }
       const { kind, title, locations } = p.toolCall || {}
       const paths = Array.isArray(locations)
         ? locations.map(location => location?.path).filter(path => typeof path === 'string').slice(0, 3) : []
+      if (allow) {
+        if (
+          (autoApproveRecovery || permission === 'workspace-auto') &&
+          (await Promise.all(paths.map((item) => isWithinWorkspace(item)))).every(Boolean)
+        ) {
+          return { outcome: { outcome: 'selected', optionId: allow.optionId } }
+        }
+        if (
+          permission === 'edits' &&
+          isEditToolCall(kind, title) &&
+          (await Promise.all(paths.map((item) => isWithinWorkspace(item, true)))).every(Boolean)
+        ) {
+          return { outcome: { outcome: 'selected', optionId: allow.optionId } }
+        }
+      }
+      const waitStart = performance.now()
       const action = paths.length ? [kind, title].filter(Boolean).join(' · ') : title || kind
-      const allow = p.options?.find((o) => o.kind === 'allow_once'),
-        deny = p.options?.find((o) => o.kind === 'reject_once')
       const ok =
         allow &&
         (await approve({
           title: 'Antigravity 工具授权',
           detail: [action || '原生工具请求', ...paths].join('\n').slice(0, 900),
         }))
+      if (apiCallStartMs !== null) apiCallStartMs += performance.now() - waitStart
       const choice = ok ? allow : deny
       return {
         outcome: choice
@@ -484,22 +633,61 @@ export async function run({
     }
     if (msg.method !== 'session/update' || !authorized || p.sessionId !== id) return
     if (['agent_message_chunk', 'tool_call', 'tool_call_update'].includes(p.update?.sessionUpdate)) parentActivity++
-    if (await observeSubagent(id, p.update)) return
+    if (await observeSubagent(id, p.update)) {
+      if (p.update?.sessionUpdate === 'tool_call') turnHasTool = true
+      return
+    }
     if (p.update?.sessionUpdate === 'session_info_update' && p.update.title && titleRequest?.())
       await emit({ type: 'title', value: p.update.title })
-    if (p.update?.sessionUpdate === 'agent_message_chunk' && p.update.content?.type === 'text')
-      await emit({ type: 'text', value: p.update.content.text })
+    if (p.update?.sessionUpdate === 'agent_message_chunk' && p.update.content?.type === 'text') {
+      if (apiCallStartMs === null) apiCallStartMs = performance.now()
+      if (emittedText && turnHasTool) {
+        segmentSeq++
+        turnHasTool = false
+      }
+      emittedText = true
+      await emit({ type: 'text', value: p.update.content.text, itemId: 'agy-seg-' + segmentSeq })
+    }
     if (p.update?.sessionUpdate === 'usage_update') {
+      latestUsageUpdate = p.update
       const value = contextUsage(p.update.used, p.update.size, selectedModel)
       if (value) await emit({ type: 'context', value })
+      await syncTurnMetrics()
     }
-    if (p.update?.sessionUpdate === 'tool_call')
-      await emit({
-        type: 'tool',
-        value: p.update.title || p.update.kind || 'Antigravity 工具',
-      })
+    if (p.update?.sessionUpdate === 'tool_call' || p.update?.sessionUpdate === 'tool_call_update') {
+      const update = p.update
+      const callId = typeof update.toolCallId === 'string' && /^[\w.-]{1,100}$/.test(update.toolCallId)
+        ? update.toolCallId
+        : undefined
+      if (update.sessionUpdate === 'tool_call_update' && (!callId || !toolCalls.has(callId))) return
+      const merged = { ...(callId && toolCalls.get(callId)), ...update }
+      if (callId) toolCalls.set(callId, merged)
+      const hasOpenTools = [...toolCalls.values()].some(
+        (saved) => !['completed', 'failed'].includes(saved.status),
+      )
+      if (hasOpenTools) {
+        if (apiCallStartMs !== null) {
+          accumulatedApiMs += Math.max(0, performance.now() - apiCallStartMs)
+          apiCallStartMs = null
+        }
+      } else if (apiCallStartMs === null) {
+        apiCallStartMs = performance.now()
+      }
+      if (update.sessionUpdate === 'tool_call') turnHasTool = true
+      await emit(agyToolActivity(merged, callId))
+    }
   }
-  return withAcp(profile, signal, handle, async (request, capabilities, drainEvents) => {
+  const effectiveMode = planMode ? 'plan' : permissions[permission]
+  const modeDisplayNames = {
+    plan: '计划模式',
+    'accept-edits': '自动接受编辑',
+    auto: '工作区自动执行',
+  }
+  return withAcp(
+    profile,
+    signal,
+    handle,
+    async (request, capabilities, drainEvents) => {
     let targetModel = bot.model || account.model,
       targetEffort = bot.effort
     // A resumed native session remembers the previous turn's selections. Read
@@ -543,34 +731,154 @@ export async function run({
       prompt = [selected.label, prompt].filter(Boolean).join(' ')
     }
     await emit({ type: 'identity', value: found.email, key: found.identity })
-    if (slashCommand) await emit({ type: 'tool', value: 'Antigravity 原生命令 · /' + slashCommand })
+    if (slashCommand) await emit({ type: 'tool', kind: 'meta', value: 'Antigravity 原生命令 · /' + slashCommand })
     const model = select(configs, 'model'),
       effort = select(configs, 'thought_level')
     const display = [model, effort]
       .map((p) => p.items.find((x) => x.id === p.current)?.label)
       .filter(Boolean)
+    if (modeDisplayNames[effectiveMode]) display.push(modeDisplayNames[effectiveMode])
     if (display.length)
       await emit({
         type: 'tool',
+        kind: 'meta',
         value: 'Antigravity 已采用 ' + display.join(' · '),
       })
     await emit({ type: 'session', value: id })
     selectedModel = model.current
     const images = capabilities?.promptCapabilities?.image ? await inlineImages(attachments) : []
     const existingChildren = threadId ? await existingAntigravityChildren(profile.home, id) : undefined
+    baselineStepIdx = await readAntigravityStepWatermark(profile.home, id)
     authorized = true
+    const settleOpenToolCalls = async () => {
+      for (const [callId, saved] of toolCalls) {
+        if (!['completed', 'failed'].includes(saved.status)) {
+          await emit(agyToolActivity({ ...saved, status: 'completed' }, callId))
+        }
+      }
+      toolCalls.clear()
+    }
+    apiCallStartMs = performance.now()
     const result = await request('session/prompt', {
       sessionId: id,
       prompt: [{ type: 'text', text: prompt }, ...images],
     })
     await drainEvents()
+    if (apiCallStartMs !== null) {
+      accumulatedApiMs += Math.max(0, performance.now() - apiCallStartMs)
+      apiCallStartMs = null
+    }
+    await settleOpenToolCalls()
+    await syncTurnMetrics()
     if (result?.stopReason === 'max_tokens')
       throw new Error('Antigravity 本轮达到 token 上限，请缩短输入或将任务分步执行。')
     if (result?.stopReason !== 'end_turn')
       throw new Error('Antigravity 在完成本轮前停止，请检查额度或重试。')
-    if (dispatches.length) await waitForAntigravityChildren(profile.home, id, dispatches, {
-      signal, existingChildren, drainEvents, parentActivity: () => parentActivity, publish: publishChildArchives(emit),
-    })
+    let recoveryAttempts = 0
+    let elevatedToAuto = false
+    const originalMode = planMode ? 'plan' : permissions[permission]
+    if (dispatches.length) {
+      try {
+        await waitForAntigravityChildren(profile.home, id, dispatches, {
+          signal,
+          existingChildren,
+          drainEvents,
+          parentActivity: () => parentActivity,
+          publish: publishChildArchives(emit),
+          recoverBlocked: async (blocked) => {
+            if (recoveryAttempts >= 2) return false
+            recoveryAttempts++
+            const editsOnlyInWorkspace = (
+              await Promise.all(
+                blocked.map(
+                  async (child) =>
+                    child.blockedKind === 'fileChange' &&
+                    (await isWithinWorkspace(child.blockedDetail || '', true)),
+                ),
+              )
+            ).every(Boolean)
+            let userApproved = false
+            if (!planMode && permission === 'workspace-auto') {
+              userApproved = true
+            } else if (!planMode && permission === 'edits' && editsOnlyInWorkspace) {
+              userApproved = true
+            } else if (
+              !planMode &&
+              (permission === 'default' || permission === 'edits') &&
+              typeof approve === 'function'
+            ) {
+              const detailBlocks = blocked.map((child) => {
+                const head = `${child.name || '子智能体'} · ${child.blockedTool || '工具调用'}`
+                return child.blockedDetail ? `${head}\n${child.blockedDetail.slice(0, 420)}` : head
+              })
+              const waitStart = performance.now()
+              userApproved = Boolean(
+                await approve({
+                  title: 'Antigravity 子智能体工具授权',
+                  detail: detailBlocks.join('\n\n').slice(0, 1800),
+                }),
+              )
+              if (apiCallStartMs !== null) apiCallStartMs += performance.now() - waitStart
+            }
+            const lines = blocked
+              .map((child) => {
+                const summary = `- ${child.name || '子智能体'}（conversationId: ${child.nativeThreadId}，请求「${child.blockedTool || '工具操作'}」）`
+                return child.blockedDetail ? `${summary}\n  待执行内容：${child.blockedDetail.slice(0, 500)}` : summary
+              })
+              .join('\n')
+
+            let recoveryPrompt
+            if (userApproved) {
+              if (!elevatedToAuto && select(configs, 'mode').items.some((m) => m.id === 'auto')) {
+                configs = await configure(request, id, configs, 'mode', 'auto')
+                elevatedToAuto = true
+              }
+              autoApproveRecovery = true
+              recoveryPrompt = [
+                '系统提示：以下后台子智能体在请求执行命令或写入文件时进入等待授权状态，用户刚刚已在界面点击「允许本次操作」批准执行：',
+                lines,
+                '请立即完成本轮任务：',
+                '1. 先调用 manage_subagents（Action: "kill"）终止上述已挂起的旧子智能体实例；',
+                '2. 当前会话已获得本次执行授权，你可以直接按上述待执行内容在主会话写入文件并运行验证命令，或重新派发子智能体执行；',
+                '3. 结合全部验证输出，给出完整最终回答。',
+              ].join('\n')
+            } else {
+              recoveryPrompt = [
+                '系统提示：以下后台子智能体因调用了需要交互授权的工具（如命令执行或文件写入）而挂起等待确认，且本次未获授权执行：',
+                lines,
+                '请立即接管并完成本轮回复：',
+                '1. 调用 manage_subagents（Action: "kill"）终止上述挂起的子智能体；',
+                '2. 不要执行被拒绝的终端命令或文件修改；如需补充信息，请仅使用只读工具（如 search_web、read_url_content、read_file）；',
+                '3. 结合已收到的其余子智能体结果或代码逻辑，直接输出完整最终回答。',
+              ].join('\n')
+            }
+
+            turnHasTool = true
+            apiCallStartMs = performance.now()
+            const followup = await request('session/prompt', {
+              sessionId: id,
+              prompt: [{ type: 'text', text: recoveryPrompt }],
+            })
+            await drainEvents()
+            if (apiCallStartMs !== null) {
+              accumulatedApiMs += Math.max(0, performance.now() - apiCallStartMs)
+              apiCallStartMs = null
+            }
+            await settleOpenToolCalls()
+            await syncTurnMetrics()
+            if (followup?.stopReason === 'max_tokens')
+              throw new Error('Antigravity 本轮达到 token 上限，请缩短输入或将任务分步执行。')
+            return followup?.stopReason === 'end_turn'
+          },
+        })
+      } finally {
+        autoApproveRecovery = false
+        if (elevatedToAuto && select(configs, 'mode').items.some((m) => m.id === originalMode)) {
+          configs = await configure(request, id, configs, 'mode', originalMode).catch(() => configs)
+        }
+      }
+    }
+    await syncTurnMetrics()
     const quota = await readQuota(profile, model, selectedModel, signal)
     if (quota) await emit({ type: 'quota', value: quota })
     if (titleRequest?.() && capabilities?.sessionCapabilities?.list) {
@@ -578,6 +886,69 @@ export async function run({
       const title = page?.sessions?.find(session => session.sessionId === id)?.title
       if (title) await emit({ type: 'title', value: title })
     }
+  },
+  { cwd: resolvedCwd, skipPermissions: !planMode && permission === 'workspace-auto' },
+  )
+}
+
+function agyToolActivity(update, callId) {
+  const status = update.status === 'failed'
+    ? 'failed'
+    : update.status === 'completed'
+      ? 'completed'
+      : 'running'
+  const args = (update.args && typeof update.args === 'object' ? update.args : null) ||
+    (update.rawInput && typeof update.rawInput === 'object' ? update.rawInput : {})
+  const locations = Array.isArray(update.locations) ? update.locations : []
+  const firstPath = locations.find(loc => typeof loc?.path === 'string')?.path ||
+    args.Path || args.TargetFile || args.DirectoryPath || args.SearchPath || args.SearchDirectory
+  const rawLine = locations.find(loc => Number.isInteger(loc?.line))?.line ?? args.StartLine
+  const firstLine = Number.isInteger(rawLine) ? rawLine : undefined
+  const name = typeof update.name === 'string' ? update.name : ''
+  const kind = typeof update.kind === 'string' ? update.kind : ''
+  const title = typeof update.title === 'string' ? update.title : ''
+
+  if (kind === 'execute' || name === 'run_command') {
+    return commandActivity({
+      callId,
+      command: args.CommandLine || title || '运行命令',
+      status,
+    })
+  }
+  if (kind === 'edit' || ['write_file', 'edit_file', 'create_file', 'replace_file_content', 'multi_replace_file_content'].includes(name)) {
+    const action = ['write_file', 'create_file'].includes(name) ? 'create' : 'edit'
+    const files = locations.length
+      ? locations.map(loc => ({ path: loc?.path, mode: action === 'create' ? 'add' : 'update' }))
+      : undefined
+    return fileActivity({ callId, action, status, path: firstPath, line: firstLine, files })
+  }
+  if (name === 'list_dir') {
+    return fileActivity({ callId, action: 'list', status, path: firstPath })
+  }
+  if (kind === 'read' || ['read_file', 'view_file', 'view_file_outline', 'view_code_item'].includes(name)) {
+    return fileActivity({ callId, action: 'read', status, path: firstPath, line: firstLine })
+  }
+  if (kind === 'search' || ['grep_search', 'find_by_name'].includes(name)) {
+    return fileActivity({
+      callId,
+      action: 'search',
+      status,
+      path: firstPath,
+      query: args.Query || args.Pattern || title,
+    })
+  }
+  if (kind === 'fetch' || ['search_web', 'read_url_content'].includes(name)) {
+    return callId
+      ? webActivity(args.Url || args.url, args.query || title, { callId, status })
+      : webActivity(args.Url || args.url, args.query || title)
+  }
+  return toolCallActivity({
+    callId,
+    kind: name.includes('skill') ? 'loadedTool' : 'tool',
+    status,
+    label: title || name || kind || 'Antigravity 工具',
+    path: firstPath,
+    line: firstLine,
   })
 }
 
@@ -610,7 +981,7 @@ function subagentDispatches(emit, dispatches) {
     if (typeof prompt === 'string' && prompt.trim()) {
       dispatches.push(child)
       await emit({ type: 'agentTranscript', agent: { id }, entries: [
-        { id: 'dispatch-prompt', role: 'user', text: redact(prompt).slice(0, 20000) },
+        { id: 'dispatch-prompt', role: 'user', text: redact(prompt).slice(0, 120_000) },
       ] })
     }
     return true
@@ -628,10 +999,11 @@ function publishChildArchives(emit) {
         await emit({ ...event, agent: { ...event.agent, nativeThreadId, model } })
       }
       const oldEntries = prior?.entries
-      const changed = entries.filter(entry => oldEntries?.get(entry.id) !== entry.text)
+      const entrySignature = entry => JSON.stringify([entry.text, entry.meta || null])
+      const changed = entries.filter(entry => oldEntries?.get(entry.id) !== entrySignature(entry))
       if (changed.length) await emit({ type: 'agentTranscript', agent: { id: agentId }, entries: changed })
       previous.set(agentId, { status: visibleStatus, nativeThreadId, model,
-        entries: new Map(entries.map(entry => [entry.id, entry.text])) })
+        entries: new Map(entries.map(entry => [entry.id, entrySignature(entry)])) })
     }
   }
 }

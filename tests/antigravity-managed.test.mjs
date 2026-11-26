@@ -465,6 +465,8 @@ test('ACP titles use scoped session info notifications or negotiated session met
 test('ACP drains batched dispatch updates before the prompt consumer continues', mac, async t => {
   const { account, cwd, state } = await setup(t)
   await state({
+    modes: ['default', 'plan', 'accept-edits', 'auto'],
+    recordModeChanges: true,
     batchPromptResult: true,
     promptUpdates: [
       { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Dispatched' } },
@@ -610,4 +612,342 @@ test('ACP keeps an idle-indexed child connected until the web search report wake
     assert.ok(events.some(event => event.type === 'agentTranscript' &&
       event.entries.some(entry => entry.role === 'assistant' && entry.text === 'Relevant source found')))
   } finally { await archive }
+})
+
+test('ACP detects a child subagent stuck in CORTEX_STEP_STATUS_WAITING and wakes the parent to recover', mac, async t => {
+  const { account, cwd, state, seen } = await setup(t)
+  Object.assign(account, await adapter.detect(account))
+  const directory = join(account.source, '.gemini', 'antigravity-cli')
+  const blockedChild = '30c5d45d-87d9-4a85-9f51-10bcc138787b'
+  const okChild = '342c8c58-7e79-4e94-a030-e0be2196ef97'
+  const blockedPrompt = '检索真实面经与面试轮次'
+  const okPrompt = '调研核心业务与技术栈'
+
+  await mkdir(join(directory, 'conversations'), { recursive: true })
+  for (const id of [blockedChild, okChild]) {
+    await mkdir(join(directory, 'brain', id, '.system_generated', 'logs'), { recursive: true })
+  }
+
+  await state({
+    modes: ['default', 'plan', 'accept-edits', 'auto'],
+    recordModeChanges: true,
+    batchPromptResult: true,
+    recoveryReply: '主会话已终止挂起的子智能体并完成完整面试题库汇总。',
+    promptUpdates: [
+      {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: '已派发 2 个并行子 Agent。' },
+      },
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call_blocked',
+        name: 'invoke_subagent',
+        status: 'completed',
+        args: { Role: '面经检索Agent', Prompt: blockedPrompt },
+      },
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call_ok',
+        name: 'invoke_subagent',
+        status: 'completed',
+        args: { Role: '技术栈调研Agent', Prompt: okPrompt },
+      },
+    ],
+  })
+
+  const events = []
+  let archive
+  const run = adapter.run({
+    account,
+    cwd,
+    threadId: sid,
+    bot: { model: 'gemini-flash', effort: 'low' },
+    prompt: '生成面经题库',
+    approve: () => false,
+    emit(event) {
+      events.push(event)
+      if (archive || event.agent?.id !== `agy:${sid}:call_ok` || event.agent?.status !== 'dispatched') return
+      archive = (async () => {
+        await new Promise(resolve => setTimeout(resolve, 350))
+        const index = new DatabaseSync(join(directory, 'conversation_summaries.db'))
+        try {
+          index.exec(`CREATE TABLE conversation_summaries(conversation_id TEXT,parent_conversation_id TEXT,status TEXT,
+            not_fully_idle INTEGER,killed INTEGER)`)
+          index.prepare("INSERT INTO conversation_summaries VALUES(?,?,'CASCADE_RUN_STATUS_IDLE',0,0)").run(blockedChild, sid)
+          index.prepare("INSERT INTO conversation_summaries VALUES(?,?,'CASCADE_RUN_STATUS_IDLE',0,0)").run(okChild, sid)
+          index.prepare("INSERT INTO conversation_summaries VALUES(?,NULL,'CASCADE_RUN_STATUS_IDLE',0,0)").run(sid)
+        } finally { index.close() }
+
+        // Blocked child called search_web then run_command, which entered CORTEX_STEP_STATUS_WAITING (status=9)
+        await writeFile(join(directory, 'brain', blockedChild, '.system_generated', 'logs', 'transcript.jsonl'), [
+          { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', status: 'DONE', content: blockedPrompt },
+          { step_index: 1, type: 'PLANNER_RESPONSE', source: 'MODEL', status: 'DONE', tool_calls: [{ name: 'search_web' }] },
+          { step_index: 2, type: 'GENERIC', source: 'MODEL', status: 'DONE', content: 'search summary' },
+          { step_index: 3, type: 'PLANNER_RESPONSE', source: 'MODEL', status: 'DONE', tool_calls: [{ name: 'run_command', args: { CommandLine: '"mkdir -p agents/cpp && clang++ solution.cpp"' } }] },
+        ].map(s => JSON.stringify(s)).join('\n'))
+        const blockedDb = new DatabaseSync(join(directory, 'conversations', blockedChild + '.db'))
+        try {
+          blockedDb.exec('CREATE TABLE steps(idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER)')
+          blockedDb.prepare('INSERT INTO steps VALUES(3, 15, 3), (4, 132, 9)').run()
+        } finally { blockedDb.close() }
+
+        // OK child completed and sent report to parent
+        await writeFile(join(directory, 'brain', okChild, '.system_generated', 'logs', 'transcript.jsonl'), [
+          { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', status: 'DONE', content: okPrompt },
+          {
+            step_index: 1,
+            type: 'PLANNER_RESPONSE',
+            source: 'MODEL',
+            status: 'DONE',
+            tool_calls: [{ name: 'send_message', args: { Recipient: JSON.stringify(sid), Message: '"技术栈报告已送达"' } }],
+          },
+          { step_index: 2, type: 'GENERIC', source: 'MODEL', status: 'DONE', content: `Message sent to "${sid}".` },
+        ].map(s => JSON.stringify(s)).join('\n'))
+        const okDb = new DatabaseSync(join(directory, 'conversations', okChild + '.db'))
+        try {
+          okDb.exec('CREATE TABLE steps(idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER)')
+          okDb.prepare('INSERT INTO steps VALUES(2, 132, 3)').run()
+        } finally { okDb.close() }
+      })()
+    },
+  })
+
+  try {
+    await run
+    const texts = events.filter(e => e.type === 'text')
+    assert.deepEqual(texts.map(e => e.value), [
+      '已派发 2 个并行子 Agent。',
+      '主会话已终止挂起的子智能体并完成完整面试题库汇总。',
+    ])
+    assert.notEqual(texts[0].itemId, texts[1].itemId)
+    assert.ok(events.some(e => e.agent?.nativeThreadId === blockedChild && e.agent?.status === 'interrupted'))
+    assert.ok(events.some(e => e.agent?.nativeThreadId === okChild && e.agent?.status === 'completed'))
+    assert.ok(events.some(e => e.type === 'agentTranscript' &&
+      e.entries.some(entry => entry.role === 'activity' && entry.text.includes('等待权限确认 · 运行命令'))))
+    const recordedCalls = (await seen()).trim().split('\n').map(line => JSON.parse(line))
+    const recoveryCall = recordedCalls.find(c => c.recovery)
+    assert.ok(recoveryCall)
+    assert.match(recoveryCall.params.prompt[0].text, new RegExp(blockedChild))
+    assert.match(recoveryCall.params.prompt[0].text, /manage_subagents/)
+  } finally {
+    await archive
+  }
+})
+
+test('ACP prompts user approval for CORTEX_STEP_STATUS_WAITING=9 subagents under default permission and elevates then restores mode when approved', mac, async t => {
+  const { account, cwd, state, seen } = await setup(t)
+  Object.assign(account, await adapter.detect(account))
+  const directory = join(account.source, '.gemini', 'antigravity-cli')
+  const blockedChild = 'bc65f2eb-906b-4f6d-9884-25441e01586c'
+  const blockedPrompt = '写出整数划分最优雅 C++ 解法并编译运行验证 n=1..8'
+
+  await mkdir(join(directory, 'conversations'), { recursive: true })
+  await mkdir(join(directory, 'brain', blockedChild, '.system_generated', 'logs'), { recursive: true })
+
+  await state({
+    modes: ['default', 'plan', 'accept-edits', 'auto'],
+    recordModeChanges: true,
+    batchPromptResult: true,
+    recoveryReply: '已在授权后完成全部编译验证并汇总最优雅解。',
+    promptUpdates: [
+      {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: '已派出子智能体并行求解。' },
+      },
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call_cpp',
+        name: 'invoke_subagent',
+        status: 'completed',
+        args: { Role: 'C++ Backtracking Solver', Prompt: blockedPrompt },
+      },
+    ],
+  })
+
+  const approvals = []
+  const events = []
+  let archive
+  const run = adapter.run({
+    account,
+    cwd,
+    threadId: sid,
+    permission: 'default',
+    bot: { model: 'gemini-flash', effort: 'low' },
+    prompt: '派发多agent生成该题目最优雅解',
+    approve: async (req) => {
+      approvals.push(req)
+      return true
+    },
+    emit(event) {
+      events.push(event)
+      if (archive || event.agent?.id !== `agy:${sid}:call_cpp` || event.agent?.status !== 'dispatched') return
+      archive = (async () => {
+        await new Promise(resolve => setTimeout(resolve, 250))
+        const index = new DatabaseSync(join(directory, 'conversation_summaries.db'))
+        try {
+          index.exec(`CREATE TABLE conversation_summaries(conversation_id TEXT,parent_conversation_id TEXT,status TEXT,
+            not_fully_idle INTEGER,killed INTEGER)`)
+          index.prepare("INSERT INTO conversation_summaries VALUES(?,?,'CASCADE_RUN_STATUS_IDLE',0,0)").run(blockedChild, sid)
+          index.prepare("INSERT INTO conversation_summaries VALUES(?,NULL,'CASCADE_RUN_STATUS_IDLE',0,0)").run(sid)
+        } finally { index.close() }
+
+        await writeFile(join(directory, 'brain', blockedChild, '.system_generated', 'logs', 'transcript.jsonl'), [
+          { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', status: 'DONE', content: blockedPrompt },
+          {
+            step_index: 1,
+            type: 'PLANNER_RESPONSE',
+            source: 'MODEL',
+            status: 'DONE',
+            tool_calls: [{ name: 'run_command', args: { CommandLine: '"mkdir -p agents/cpp && clang++ -std=c++17 -O2 -o sol solution.cpp"' } }],
+          },
+        ].map(s => JSON.stringify(s)).join('\n'))
+        const blockedDb = new DatabaseSync(join(directory, 'conversations', blockedChild + '.db'))
+        try {
+          blockedDb.exec('CREATE TABLE steps(idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER)')
+          blockedDb.prepare('INSERT INTO steps VALUES(1, 15, 3), (2, 132, 9)').run()
+        } finally { blockedDb.close() }
+      })()
+    },
+  })
+
+  try {
+    await run
+    assert.equal(approvals.length, 1)
+    assert.equal(approvals[0].title, 'Antigravity 子智能体工具授权')
+    assert.match(approvals[0].detail, /C\+\+ Backtracking Solver · 运行命令/)
+    assert.match(approvals[0].detail, /clang\+\+ -std=c\+\+17/)
+
+    const recordedCalls = (await seen()).trim().split('\n').map(line => JSON.parse(line))
+    const modeCalls = recordedCalls
+      .filter(c => c.method === 'session/set_config_option' && c.params?.configId === 'mode')
+      .map(c => c.params.value)
+    // Initial default -> elevated to auto for approved recovery -> restored back to default
+    assert.deepEqual(modeCalls.slice(-2), ['auto', 'default'])
+
+    const recoveryCall = recordedCalls.find(c => c.recovery)
+    assert.ok(recoveryCall)
+    assert.match(recoveryCall.params.prompt[0].text, /允许本次操作/)
+    assert.deepEqual(events.filter(e => e.type === 'text').map(e => e.value), [
+      '已派出子智能体并行求解。',
+      '已在授权后完成全部编译验证并汇总最优雅解。',
+    ])
+  } finally {
+    await archive
+  }
+})
+
+test('permission modes enforce distinct behavior, upgrade legacy strict settings, and contain workspace-auto writes via Seatbelt', mac, async t => {
+  const { account, cwd, state, seen } = await setup(t)
+  Object.assign(account, await adapter.detect(account))
+
+  // Write legacy "toolPermission": "strict" into settings.json and verify it upgrades to "request-review"
+  const settingsDir = join(account.source, '.gemini', 'antigravity-cli')
+  const settingsFile = join(settingsDir, 'settings.json')
+  await mkdir(settingsDir, { recursive: true })
+  await writeFile(
+    settingsFile,
+    JSON.stringify({ auth: { type: 'oauth-personal' }, toolPermission: 'strict' }),
+    { mode: 0o600 },
+  )
+
+  const homeOutsideTarget = join(
+    process.env.HOME,
+    `.boteam-seatbelt-probe-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`,
+  )
+  t.after(() => rm(homeOutsideTarget, { force: true }))
+  const workspaceInsideTarget = join(cwd, 'inside-workspace.txt')
+
+  // 1) edits mode: auto-approves workspace edit without calling approve(), upgrades strict -> request-review
+  await state({
+    modes: ['default', 'plan', 'accept-edits', 'auto'],
+    recordAcpArgs: true,
+    toolCall: {
+      title: 'Write solution.py',
+      kind: 'edit',
+      locations: [{ path: workspaceInsideTarget }],
+    },
+  })
+  let approveCalls = 0
+  const editEvents = []
+  await adapter.run({
+    account,
+    cwd,
+    permission: 'edits',
+    prompt: 'apply edit',
+    emit: (e) => editEvents.push(e),
+    approve: async () => {
+      approveCalls++
+      return false
+    },
+  })
+  assert.equal(approveCalls, 0)
+  const upgradedSettings = JSON.parse(await readFile(settingsFile, 'utf8'))
+  assert.equal(upgradedSettings.toolPermission, 'request-review')
+  assert.ok(
+    editEvents.some((e) => e.type === 'tool' && e.kind === 'meta' && e.value.includes('自动接受编辑')),
+  )
+
+  // 2) edits mode: still prompts approve() on execute command
+  await state({
+    modes: ['default', 'plan', 'accept-edits', 'auto'],
+    toolCall: {
+      title: 'python3 solution.py',
+      kind: 'execute',
+      locations: [{ path: cwd }],
+    },
+  })
+  await adapter.run({
+    account,
+    cwd,
+    permission: 'edits',
+    prompt: 'run script',
+    emit: () => {},
+    approve: async () => {
+      approveCalls++
+      return false
+    },
+  })
+  assert.equal(approveCalls, 1)
+
+  // 3) workspace-auto mode: passes --add-dir + --dangerously-skip-permissions inside Seatbelt workspaceWriteRoot
+  await rm(join(account.source, 'seen'), { force: true })
+  await state({
+    modes: ['default', 'plan', 'accept-edits', 'auto'],
+    recordAcpArgs: true,
+    sandboxProbe: {
+      insideWorkspace: workspaceInsideTarget,
+      outsideInUserHome: homeOutsideTarget,
+    },
+    toolCall: {
+      title: 'python3 solution.py',
+      kind: 'execute',
+      locations: [{ path: workspaceInsideTarget }],
+    },
+  })
+  approveCalls = 0
+  const autoEvents = []
+  await adapter.run({
+    account,
+    cwd,
+    permission: 'workspace-auto',
+    prompt: 'auto execute in workspace',
+    emit: (e) => autoEvents.push(e),
+    approve: async () => {
+      approveCalls++
+      return false
+    },
+  })
+  assert.equal(approveCalls, 0)
+  assert.ok(
+    autoEvents.some((e) => e.type === 'tool' && e.kind === 'meta' && e.value.includes('工作区自动执行')),
+  )
+  const autoRecords = (await seen()).trim().split('\n').map((line) => JSON.parse(line))
+  const promptRecord = autoRecords.find((r) => r.method === 'session/prompt')
+  assert.ok(promptRecord.acpArgs.includes('--add-dir'))
+  assert.ok(promptRecord.acpArgs.includes('--dangerously-skip-permissions'))
+  const probeRecord = autoRecords.find((r) => r.sandboxProbe)
+  assert.equal(probeRecord.sandboxProbe.insideWorkspace, 'written')
+  assert.equal(probeRecord.sandboxProbe.outsideInUserHome, 'EPERM')
+  const outcomeRecord = autoRecords.find((r) => r.outcome)
+  assert.deepEqual(outcomeRecord.outcome, { outcome: 'selected', optionId: 'one' })
 })

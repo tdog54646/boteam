@@ -11,7 +11,7 @@ export function nativeError(message, codexErrorInfo) {
   if (/quota|usage.limit|rate.limit|429|credits|usage_limit_reached/i.test(text))
     return new Error('Codex 订阅额度或速率已达上限，请稍后重试。')
   if (/unauthorized|401|authentication|re-?login|invalid.token|expired|refresh.token/i.test(text))
-    return new Error('Codex 登录已失效，请重新授权该账号。')
+    return Object.assign(new Error('Codex 登录已失效，请重新授权该账号。'), { authExpired: true })
   if (/model.+(not supported|not found|unavailable)|unsupported.model/i.test(text))
     return new Error('此订阅当前无法使用配置的 Codex 模型。')
   if (/network|connect|timeout|timed out|dns|disconnect/i.test(text))

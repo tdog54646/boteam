@@ -12,8 +12,8 @@ import {
 } from './codex-composer.mjs'
 import { stageFork, verifyFork } from './codex-fork.mjs'
 import { codexCommands, compactThread, installedMethods, mcpInfo } from './codex-slash.mjs'
-import { contextUsage, imageSnapshots, quotaWindow } from './usage.mjs'
-import { codexActivity } from './chat-activity.mjs'
+import { contextUsage, imageSnapshots, inclusiveTurnMetrics, quotaWindow } from './usage.mjs'
+import { codexActivity, commandActivity, fileActivity, toolCallActivity } from './chat-activity.mjs'
 import { codexSubagents } from './codex-subagents.mjs'
 
 export const permissionModes = [
@@ -42,6 +42,7 @@ class ProfileError extends Error {
   constructor(message, status = 'blocked') {
     super(message)
     this.status = status
+    if (status === 'login') this.authExpired = true
   }
 }
 
@@ -913,7 +914,7 @@ export async function run(scope) {
       if (bot?.model || bot?.effort) {
         const detail = ['模型 ' + opened.model]
         if (opened.reasoningEffort) detail.push('思考强度 ' + opened.reasoningEffort)
-        await scope.emit({ type: 'tool', value: detail.join(' · ') })
+        await scope.emit({ type: 'tool', kind: 'meta', value: detail.join(' · ') })
       }
       if (trackGoal || scope.permission === 'auto-review') {
         const features = await nativeFeatures(rpc, session)
@@ -1018,20 +1019,43 @@ async function runTurns(
     if (!turn) throw new Error('Codex 未返回原生任务标识。')
   }
   const sent = new Map()
+  const itemPhases = new Map()
   const changedFiles = new Map()
   const completedAgentItems = new Set()
-  const append = (id, delta) => {
+  const activeToolItems = new Set()
+  let modelCallStartMs = turn ? performance.now() : null
+  let accumulatedApiMs = 0
+  let baselineTotal = null
+  const resetTurnTelemetry = () => {
+    activeToolItems.clear()
+    modelCallStartMs = performance.now()
+    accumulatedApiMs = 0
+    baselineTotal = null
+  }
+  if (Array.isArray(extraInput) && extraInput.length) {
+    const names = extraInput.map((item) => item?.name).filter(Boolean)
+    if (names.length) {
+      await emit(toolCallActivity({ kind: 'loadedTool', status: 'completed', label: '加载了工具', detail: names.join('、') }))
+    }
+  }
+  const append = (id, delta, phase) => {
     // A group review publishes the native findings after the turn succeeds.
     if (!delta || publicReview) return
+    const resolvedPhase = phase || itemPhases.get(id)
+    if (phase) itemPhases.set(id, phase)
     sent.set(id, (sent.get(id) || '') + delta)
-    emit({ type: 'text', value: delta })
+    emit({ type: 'text', value: delta, itemId: turn ? `${turn}:${id}` : id, ...(resolvedPhase && { phase: resolvedPhase }) })
   }
   for (;;) {
     const msg = await rpc.next()
     const p = msg.params || {}
-    if (msg.method === 'boteam/refreshRejected')
-      throw new Error('Codex 请求刷新订阅凭据，请刷新原登录或重新授权后重试。')
+    if (msg.method === 'boteam/refreshRejected') {
+      const err = new Error('Codex 请求刷新订阅凭据，请刷新原登录或重新授权后重试。')
+      err.authExpired = true
+      throw err
+    }
     if (msg.id !== undefined) {
+      const waitStart = performance.now()
       if (!turn || p.threadId !== session || p.turnId !== turn) rpc.unsupported(msg.id)
       else if (msg.method === 'item/tool/requestUserInput')
         await respondToQuestions(rpc, msg, scope.ask)
@@ -1042,6 +1066,7 @@ async function runTurns(
           permission === 'default' || permission === 'auto-review' ? approve : () => false,
           changedFiles,
         )
+      if (modelCallStartMs !== null) modelCallStartMs += performance.now() - waitStart
       continue
     }
     if (msg.method === 'account/rateLimits/updated') {
@@ -1085,8 +1110,10 @@ async function runTurns(
       turn = p.turn.id
       usageModel = opened.model
       sent.clear()
+      itemPhases.clear()
       changedFiles.clear()
       completedAgentItems.clear()
+      resetTurnTelemetry()
       continue
     }
     if (!turn || (p.turnId || p.turn?.id) !== turn) continue
@@ -1118,6 +1145,80 @@ async function runTurns(
       const usage = p.tokenUsage
       const value = contextUsage(usage?.last?.totalTokens, usage?.modelContextWindow, usageModel)
       if (value) await emit({ type: 'context', value })
+      const now = performance.now()
+      if (modelCallStartMs !== null) {
+        accumulatedApiMs += Math.max(0, now - modelCallStartMs)
+        modelCallStartMs = activeToolItems.size === 0 ? now : null
+      }
+      const last = usage?.last
+      const total = usage?.total
+      const hasLastBreakdown =
+        last && (Number.isSafeInteger(last.inputTokens) || Number.isSafeInteger(last.outputTokens))
+      const hasTotalBreakdown =
+        total && (Number.isSafeInteger(total.inputTokens) || Number.isSafeInteger(total.outputTokens))
+      if (hasLastBreakdown && hasTotalBreakdown && baselineTotal === null) {
+        baselineTotal = {
+          inputTokens: Math.max(0, (total.inputTokens || 0) - (last.inputTokens || 0)),
+          cachedInputTokens: Math.max(0, (total.cachedInputTokens || 0) - (last.cachedInputTokens || 0)),
+          cacheWriteInputTokens: Math.max(
+            0,
+            (total.cacheWriteInputTokens || 0) - (last.cacheWriteInputTokens || 0),
+          ),
+          outputTokens: Math.max(0, (total.outputTokens || 0) - (last.outputTokens || 0)),
+          reasoningOutputTokens: Math.max(
+            0,
+            (total.reasoningOutputTokens || 0) - (last.reasoningOutputTokens || 0),
+          ),
+          totalTokens: Math.max(0, (total.totalTokens || 0) - (last.totalTokens || 0)),
+        }
+      }
+      const turnBreakdown =
+        baselineTotal && hasTotalBreakdown
+          ? {
+              inputTokens: Math.max(0, (total.inputTokens || 0) - baselineTotal.inputTokens),
+              cachedInputTokens: Math.max(0, (total.cachedInputTokens || 0) - baselineTotal.cachedInputTokens),
+              cacheWriteInputTokens: Math.max(
+                0,
+                (total.cacheWriteInputTokens || 0) - baselineTotal.cacheWriteInputTokens,
+              ),
+              outputTokens: Math.max(0, (total.outputTokens || 0) - baselineTotal.outputTokens),
+              reasoningOutputTokens: Math.max(
+                0,
+                (total.reasoningOutputTokens || 0) - baselineTotal.reasoningOutputTokens,
+              ),
+              totalTokens: Math.max(0, (total.totalTokens || 0) - baselineTotal.totalTokens),
+            }
+          : last
+      const metrics = inclusiveTurnMetrics(
+        turnBreakdown,
+        Math.max(1, Math.round(accumulatedApiMs)),
+        usageModel,
+      )
+      if (metrics) await emit({ type: 'metrics', value: metrics })
+    }
+    if (msg.method === 'item/started' || msg.method === 'item/completed') {
+      const itemType = p.item?.type
+      const itemId = typeof p.item?.id === 'string' ? p.item.id : null
+      if (
+        itemId &&
+        ['commandExecution', 'mcpToolCall', 'webSearch', 'subAgentActivity', 'collabAgentToolCall', 'fileChange', 'imageView'].includes(itemType)
+      ) {
+        if (msg.method === 'item/started') {
+          if (modelCallStartMs !== null) {
+            accumulatedApiMs += Math.max(0, performance.now() - modelCallStartMs)
+            modelCallStartMs = null
+          }
+          activeToolItems.add(itemId)
+        } else {
+          activeToolItems.delete(itemId)
+          if (activeToolItems.size === 0 && modelCallStartMs === null) {
+            modelCallStartMs = performance.now()
+          }
+        }
+      }
+    }
+    if (msg.method === 'item/started' && p.item?.type === 'agentMessage' && p.item.id && p.item.phase) {
+      itemPhases.set(p.item.id, p.item.phase)
     }
     if (msg.method === 'item/agentMessage/delta' && typeof p.delta === 'string')
       append(p.itemId, p.delta)
@@ -1125,26 +1226,79 @@ async function runTurns(
       const full = p.item.text
       const previous = sent.get(p.item.id) || ''
       if (typeof full === 'string' && full.startsWith(previous))
-        append(p.item.id, full.slice(previous.length))
+        append(p.item.id, full.slice(previous.length), p.item.phase)
     }
     if (msg.method === 'item/started' || msg.method === 'item/completed') {
+      const completed = msg.method === 'item/completed'
       if (['subAgentActivity', 'collabAgentToolCall'].includes(p.item?.type)) {
-        if (msg.method === 'item/completed' && typeof p.item.id === 'string') completedAgentItems.add(p.item.id)
+        if (completed && typeof p.item.id === 'string') completedAgentItems.add(p.item.id)
         await subagents.parentItem(p.item)
       } else {
-        for (const activity of codexActivity(p.item, msg.method === 'item/completed')) await emit(activity)
+        if (p.item?.type === 'webSearch' && !completed && p.item.id) {
+          await emit({
+            type: 'tool',
+            kind: 'webSearch',
+            callId: redact(String(p.item.id)).slice(0, 160),
+            status: 'running',
+            value: '搜索网页',
+            source: { title: redact(String(p.item.query || p.item.action?.query || '')).slice(0, 200) },
+          })
+        }
+        for (const activity of codexActivity(p.item, completed)) await emit(activity)
       }
-    }
-    if (msg.method === 'item/started' && Object.hasOwn(toolNames, p.item?.type)) {
-      const item = p.item
-      let summary = toolNames[item.type]
-      if (item.type === 'commandExecution') summary += ' · ' + commandSummary(item.command)
-      if (item.type === 'fileChange' && Array.isArray(item.changes)) {
-        const files = item.changes.slice(0, 15).map((c) => shownPath(c.path))
-        changedFiles.set(item.id, files)
-        if (files.length) summary += ' · ' + files.join('、')
+      if (Object.hasOwn(toolNames, p.item?.type)) {
+        const item = p.item
+        const status = !completed
+          ? 'running'
+          : item.status === 'failed' || (Number.isInteger(item.exitCode) && item.exitCode !== 0) || Boolean(item.error)
+            ? 'failed'
+            : 'completed'
+        if (item.type === 'commandExecution') {
+          await emit(commandActivity({
+            callId: item.id,
+            command: item.command,
+            status,
+            exitCode: item.exitCode,
+            output: completed ? item.aggregatedOutput : undefined,
+          }))
+        } else if (item.type === 'fileChange') {
+          if (Array.isArray(item.changes)) {
+            const files = item.changes.slice(0, 15).map((c) => shownPath(c.path))
+            changedFiles.set(item.id, files)
+          }
+          await emit(fileActivity({
+            callId: item.id,
+            action: 'edit',
+            status,
+            files: item.changes,
+          }))
+        } else if (item.type === 'mcpToolCall') {
+          await emit(toolCallActivity({
+            callId: item.id,
+            kind: 'mcp',
+            status,
+            label: toolNames.mcpToolCall,
+            detail: [item.server, item.tool].filter(Boolean).join(' · '),
+          }))
+        } else if (item.type === 'imageView') {
+          await emit(toolCallActivity({
+            callId: item.id,
+            kind: 'image',
+            status,
+            label: toolNames.imageView,
+            detail: item.path ? shownPath(item.path) : '',
+            path: item.path,
+          }))
+        } else {
+          await emit(toolCallActivity({
+            callId: item.id,
+            kind: 'tool',
+            status,
+            label: toolNames[item.type],
+            detail: item.tool || item.name || '',
+          }))
+        }
       }
-      emit({ type: 'tool', value: summary })
     }
     if (msg.method === 'turn/completed') {
       for (const item of Array.isArray(p.turn.items) ? p.turn.items : []) {

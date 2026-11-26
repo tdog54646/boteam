@@ -5,7 +5,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { nativeEnv, redact } from '../native.mjs'
 import { nativeError } from './codex-rpc.mjs'
-import { contextUsage } from './usage.mjs'
+import { contextUsage, inclusiveTurnMetrics } from './usage.mjs'
 
 const execute = promisify(execFile)
 const schemas = new Map()
@@ -109,12 +109,13 @@ export async function compactThread(rpc, scope, opened) {
   // The start response has no turn ID. A contextCompaction item (or the
   // native legacy notification) ties the subsequent completion to this task.
   await rpc.request('thread/compact/start', { threadId: session })
+  const compactStartedMs = performance.now()
   let turn, compacted = false, usageModel = opened.model
   for (;;) {
     const message = await rpc.next()
     const p = message.params || {}
     if (message.method === 'boteam/refreshRejected')
-      throw new Error('Codex 请求刷新订阅凭据，请刷新原登录或重新授权后重试。')
+      throw Object.assign(new Error('Codex 请求刷新订阅凭据，请刷新原登录或重新授权后重试。'), { authExpired: true })
     if (message.id !== undefined) {
       rpc.unsupported(message.id)
       continue
@@ -130,6 +131,12 @@ export async function compactThread(rpc, scope, opened) {
       const { last, modelContextWindow } = p.tokenUsage || {}
       const value = contextUsage(last?.totalTokens, modelContextWindow, usageModel)
       if (value) await scope.emit({ type: 'context', value })
+      const metrics = inclusiveTurnMetrics(
+        last,
+        Math.max(1, Math.round(performance.now() - compactStartedMs)),
+        usageModel,
+      )
+      if (metrics) await scope.emit({ type: 'metrics', value: metrics })
     }
     if (message.method !== 'turn/completed') continue
     if (p.turn.status === 'interrupted') throw new Error('Codex 上下文压缩已停止。')

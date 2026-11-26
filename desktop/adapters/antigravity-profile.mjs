@@ -34,8 +34,7 @@ export async function privateProfile(bin, source) {
     home.startsWith(sharedGemini + '/')
   )
     throw new Error('请选择 BoTeam 创建的隔离账号目录。')
-  const shield = [
-    '(version 1)(allow default)',
+  const credentialDenies = [
     // The macOS keyring backend uses /usr/bin/security. Deny direct Security.framework
     // lookups and reads as well. The native CLI handles its own file fallback.
     '(deny process-exec (literal "/usr/bin/security"))',
@@ -48,13 +47,14 @@ export async function privateProfile(bin, source) {
   // Sibling managed homes may contain another account's native file-backed login.
   if (/^profile-[A-Za-z0-9]{6}$/.test(path.basename(home))) {
     const parent = JSON.stringify(path.dirname(home))
-    shield.push(
+    credentialDenies.push(
       `(deny file-read* file-write* (require-all (subpath ${parent}) (require-not (subpath ${JSON.stringify(home)}))))`,
       // The native SQLite VFS stats every ancestor while opening its backing DB.
       // Only the parent inode's metadata is needed. Listing it or reading a sibling stays denied.
       `(allow file-read-metadata (literal ${parent}))`,
     )
   }
+  const shield = ['(version 1)(allow default)', ...credentialDenies].join('')
   const env = nativeEnv({
     HOME: home,
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin:' + nativeEnv().PATH,
@@ -62,11 +62,24 @@ export async function privateProfile(bin, source) {
     TERM: 'xterm-256color',
   })
   delete env.SSH_AUTH_SOCK
-  return { bin, home, env, shield: shield.join('') }
+  return { bin, home, env, shield, credentialDenies: credentialDenies.join('') }
 }
 
-export function invocation(profile, args) {
-  const policy = profile.shield + '(deny process-exec (literal "/usr/bin/open"))'
+export function invocation(profile, args, options = {}) {
+  const { workspaceWriteRoot } = options
+  const userHome = homedir()
+  const writeGuard =
+    workspaceWriteRoot &&
+    path.isAbsolute(workspaceWriteRoot) &&
+    workspaceWriteRoot !== '/' &&
+    workspaceWriteRoot !== userHome &&
+    profile.credentialDenies
+      ? `(deny file-write* (subpath ${JSON.stringify(userHome)}))(allow file-write* (subpath ${JSON.stringify(profile.home)}) (subpath ${JSON.stringify(workspaceWriteRoot)}))`
+      : ''
+  const basePolicy = writeGuard
+    ? `(version 1)(allow default)${writeGuard}${profile.credentialDenies}`
+    : profile.shield
+  const policy = basePolicy + '(deny process-exec (literal "/usr/bin/open"))'
   return ['/usr/bin/sandbox-exec', '-p', policy, profile.bin, ...args]
 }
 
@@ -201,11 +214,26 @@ export async function initSettings(profile) {
       path.join(dir, 'settings.json'),
       JSON.stringify({
         auth: { type: 'oauth-personal' },
-        toolPermission: 'strict',
+        toolPermission: 'request-review',
       }),
       { flag: 'wx', mode: 0o600 },
     )
   } catch (e) {
     if (e.code !== 'EEXIST') throw e
+  }
+}
+
+export async function ensureActionableSettings(profile) {
+  const settingsPath = path.join(profile.home, '.gemini', 'antigravity-cli', 'settings.json')
+  try {
+    const info = await lstat(settingsPath)
+    if (!info.isFile() || info.nlink !== 1 || info.size > 1024 * 1024) return
+    const parsed = JSON.parse(await readFile(settingsPath, 'utf8'))
+    if (parsed && typeof parsed === 'object' && parsed.toolPermission === 'strict') {
+      parsed.toolPermission = 'request-review'
+      await writeFile(settingsPath, JSON.stringify(parsed, null, 2), { mode: 0o600 })
+    }
+  } catch {
+    // Missing or custom settings are validated separately by subscriptionProfile.
   }
 }

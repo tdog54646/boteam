@@ -44,7 +44,7 @@ if (args.includes('/usage')) {
 } else {
   const sessions = new Map()
   const send = (frame) => console.log(JSON.stringify({ jsonrpc: '2.0', ...frame }))
-  let promptId
+  let promptId, promptCalls = 0
   function config(s) {
     return [
       {
@@ -169,7 +169,10 @@ if (args.includes('/usage')) {
       if (params.configId === 'model') {
         session.model = params.value
         session.effort = 'low'
-      } else if (params.configId === 'mode') session.mode = params.value
+      } else if (params.configId === 'mode') {
+        session.mode = params.value
+        if (state.recordModeChanges) save({ method, params })
+      }
       else session.effort = params.value
       reply = { configOptions: config(session) }
     }
@@ -178,6 +181,22 @@ if (args.includes('/usage')) {
         ...Array.from(sessions.keys(), sessionId => ({ sessionId, title: state.listTitle }))] }
     }
     if (method === 'session/prompt') {
+      promptCalls++
+      if (promptCalls > 1 && state.recoveryReply) {
+        save({ method, params, recovery: true })
+        send({
+          method: 'session/update',
+          params: {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: state.recoveryReply },
+            },
+          },
+        })
+        send({ id, result: { stopReason: 'end_turn' } })
+        return
+      }
       if (state.batchPromptResult) {
         const updates = (state.promptUpdates || []).map(({ sessionId = params.sessionId, ...update }) =>
           ({ method: 'session/update', params: { sessionId, update } }))
@@ -190,7 +209,19 @@ if (args.includes('/usage')) {
       for (const { sessionId = params.sessionId, ...update } of state.promptUpdates || [])
         send({ method: 'session/update', params: { sessionId, update } })
       promptId = id
-      save({ method, params, ...session })
+      save({ method, params, ...(state.recordAcpArgs ? { acpArgs: args } : {}), ...session })
+      if (state.sandboxProbe) {
+        const probeResults = {}
+        for (const [key, target] of Object.entries(state.sandboxProbe)) {
+          try {
+            fs.writeFileSync(target, 'probe')
+            probeResults[key] = 'written'
+          } catch (err) {
+            probeResults[key] = err.code || 'blocked'
+          }
+        }
+        save({ sandboxProbe: probeResults })
+      }
       if (state.promptError || state.stopReason) {
         send(state.promptError ? { id, error: state.promptError } : { id, result: { stopReason: state.stopReason } })
         return
@@ -217,7 +248,7 @@ if (args.includes('/usage')) {
         method: 'session/request_permission',
         params: {
           sessionId: params.sessionId,
-          toolCall: { title: 'Edit file', kind: 'edit' },
+          toolCall: state.toolCall || { title: 'Edit file', kind: 'edit' },
           options: [
             { optionId: 'one', kind: 'allow_once', name: 'Allow' },
             { optionId: 'no', kind: 'reject_once', name: 'Deny' },

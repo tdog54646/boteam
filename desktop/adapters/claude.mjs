@@ -1,4 +1,4 @@
-import { webActivity } from './chat-activity.mjs'
+import { commandActivity, fileActivity, toolCallActivity, webActivity } from './chat-activity.mjs'
 import { claudeSubagents } from './claude-subagents.mjs'
 import { execFile, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -19,7 +19,13 @@ import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { nativeEnv, redact } from '../native.mjs'
 
-import { contextUsage, inlineImages, inputWindowError, quotaWindow } from './usage.mjs'
+import {
+  contextUsage,
+  disjointTurnMetrics,
+  inlineImages,
+  inputWindowError,
+  quotaWindow,
+} from './usage.mjs'
 import { nativeSlashCatalog, slashPrompt } from './native-slash.mjs'
 
 const permissions = { default: 'default', plan: 'plan', edits: 'acceptEdits' }
@@ -291,7 +297,7 @@ function failResult(result) {
   if (/rate.?limit|usage.?limit|quota|exhausted|overload|429/i.test(details))
     return new Error('Claude 订阅额度已用尽或服务繁忙，请稍后重试。')
   if (/auth|login|log in|sign.?in|token|401|403/i.test(details))
-    return new Error('Claude 订阅授权已失效，请重新授权。')
+    return Object.assign(new Error('Claude 订阅授权已失效，请重新授权。'), { authExpired: true })
   if (/session|conversation|resume/i.test(details))
     return new Error('无法恢复此 Claude 原生会话，请检查账号及会话历史。')
   return new Error('Claude Code 未能完成本次任务。')
@@ -312,8 +318,50 @@ const builtins = new Set([
   'AskUserQuestion',
   'ExitPlanMode',
 ])
-function toolName(name) {
-  return builtins.has(name) ? name : '原生工具'
+function claudeToolEvent(block, status = 'running') {
+  const name = block?.name
+  const input = block?.input || {}
+  const callId = typeof block?.id === 'string' ? block.id : undefined
+  if (name === 'Bash') {
+    return commandActivity({ callId, command: input.command || input.description || '', status })
+  }
+  if (name === 'Read') {
+    return fileActivity({
+      callId,
+      action: 'read',
+      status,
+      path: input.file_path,
+      line: Number.isInteger(input.offset) ? input.offset : undefined,
+    })
+  }
+  if (name === 'Write') {
+    return fileActivity({ callId, action: 'create', status, path: input.file_path })
+  }
+  if (['Edit', 'MultiEdit', 'NotebookEdit'].includes(name)) {
+    return fileActivity({ callId, action: 'edit', status, path: input.file_path || input.notebook_path })
+  }
+  if (['Glob', 'Grep'].includes(name)) {
+    return fileActivity({ callId, action: 'search', status, path: input.path, query: input.pattern })
+  }
+  if (name === 'LS') {
+    return fileActivity({ callId, action: 'list', status, path: input.path })
+  }
+  if (['WebFetch', 'WebSearch'].includes(name)) {
+    return callId
+      ? webActivity(input.url, input.query, { callId, status })
+      : webActivity(input.url, input.query)
+  }
+  if (name === 'Skill') {
+    return toolCallActivity({ callId, kind: 'loadedTool', status, label: '加载技能', detail: input.skill })
+  }
+  const isMcp = typeof name === 'string' && name.startsWith('mcp__')
+  return toolCallActivity({
+    callId,
+    kind: isMcp ? 'mcp' : 'tool',
+    status,
+    label: isMcp ? '调用 MCP 工具' : toolName(name),
+    detail: isMcp ? name.slice(5).replace(/__/g, ' · ') : '',
+  })
 }
 function actionDetail(request) {
   const input = request.input || {}
@@ -488,6 +536,34 @@ async function nativeSession(
   if (verified.identity !== account.identity)
     throw new Error('当前 Claude 身份与 Bot 绑定的账号不匹配。')
   const id = threadId || randomUUID()
+  const resolvedCwd = cwd ? await realpath(cwd).catch(() => path.resolve(cwd)) : undefined
+  const resolveRealTarget = async (targetPath) => {
+    const raw = path.isAbsolute(targetPath)
+      ? path.resolve(targetPath)
+      : path.resolve(resolvedCwd, targetPath)
+    let cur = raw
+    const tail = []
+    for (;;) {
+      try {
+        const real = await realpath(cur)
+        return tail.length ? path.join(real, ...tail.reverse()) : real
+      } catch {
+        const parent = path.dirname(cur)
+        if (parent === cur) return raw
+        tail.push(path.basename(cur))
+        cur = parent
+      }
+    }
+  }
+  const isWorkspaceEditFile = async (targetPath) => {
+    if (typeof targetPath !== 'string' || !targetPath.trim() || !resolvedCwd) return false
+    const abs = await resolveRealTarget(targetPath)
+    if (abs !== resolvedCwd && !abs.startsWith(resolvedCwd + path.sep)) return false
+    const relSegments = path.relative(resolvedCwd, abs).split(path.sep)
+    if (relSegments.includes('.git')) return false
+    const base = path.basename(abs)
+    return !/^(?:\.env(?:\..+)?|.*(?:credential|secret|token|private[_-]?key).*)$/i.test(base)
+  }
   const args = [
     ...defaults,
     '-p',
@@ -502,6 +578,7 @@ async function nativeSession(
     '--permission-prompt-tool',
     'stdio',
     '--strict-mcp-config',
+    ...(operation === 'run' && resolvedCwd ? ['--add-dir', resolvedCwd] : []),
   ]
   if (operation !== 'actions' && !extensionIds.length && !slashCommand) args.push('--disable-slash-commands')
   if (operation !== 'run') args.push('--no-session-persistence')
@@ -619,10 +696,10 @@ async function nativeSession(
       await control({ subtype: 'set_model', model: choice.id }, 'Claude Code 未能启用所选模型。')
     }
     await emit({ type: 'identity', value: verified.email, key: verified.identity })
-    if (slashCommand) await emit({ type: 'tool', value: 'Claude 原生命令 · /' + slashCommand })
+    if (slashCommand) await emit({ type: 'tool', kind: 'meta', value: 'Claude 原生命令 · /' + slashCommand })
     if (command) {
       prompt = [command.label, prompt].filter(Boolean).join(' ')
-      await emit({ type: 'tool', value: 'Claude 原生技能 · ' + command.label })
+      await emit({ type: 'tool', kind: 'loadedTool', status: 'completed', label: '加载了工具', detail: command.label, value: 'Claude 原生技能 · ' + command.label })
     }
     if (bot?.model || bot?.effort) {
       const failure = 'Claude Code 未确认所选模型或推理强度，请检查 CLI 版本或重新选择。'
@@ -636,7 +713,7 @@ async function nativeSession(
         throw new Error(failure)
       const detail = ['模型 ' + applied.model]
       if (applied.effort) detail.push('思考强度 ' + applied.effort)
-      await emit({ type: 'tool', value: detail.join(' · ') })
+      await emit({ type: 'tool', kind: 'meta', value: detail.join(' · ') })
     }
     clearTimeout(timer)
     const images = (await inlineImages(attachments)).map(({ data, mimeType }) => ({
@@ -654,6 +731,69 @@ async function nativeSession(
     })
     const agents = claudeSubagents({ source: account.source, cwd, session: id, emit })
     observeAgents = agents.handle
+    let segmentSeq = 0
+    let turnHasTool = false
+    const pendingTools = new Map()
+    let activeModel = choice?.id || verified.model || catalog.defaultModel || ''
+    const stepUsageByMsgId = new Map()
+    let currentMsgId = null
+    let apiCallStartMs = performance.now()
+    let accumulatedApiMs = 0
+    const currentApiDurationMs = () =>
+      Math.max(
+        1,
+        Math.round(
+          accumulatedApiMs +
+            (apiCallStartMs !== null ? Math.max(0, performance.now() - apiCallStartMs) : 0),
+        ),
+      )
+    const noteStepUsage = (msgKey, usage, modelName) => {
+      if (typeof modelName === 'string' && modelName) activeModel = modelName
+      if (!usage || typeof usage !== 'object') return false
+      const hasAny = [
+        usage.input_tokens,
+        usage.cache_read_input_tokens,
+        usage.cache_creation_input_tokens,
+        usage.output_tokens,
+      ].some((v) => Number.isSafeInteger(v) && v >= 0)
+      if (!hasAny) return false
+      const key = msgKey || 'step-' + stepUsageByMsgId.size
+      const prev = stepUsageByMsgId.get(key) || { input: 0, cached: 0, created: 0, output: 0 }
+      stepUsageByMsgId.set(key, {
+        input: Number.isSafeInteger(usage.input_tokens) && usage.input_tokens >= 0 ? usage.input_tokens : prev.input,
+        cached:
+          Number.isSafeInteger(usage.cache_read_input_tokens) && usage.cache_read_input_tokens >= 0
+            ? usage.cache_read_input_tokens
+            : prev.cached,
+        created:
+          Number.isSafeInteger(usage.cache_creation_input_tokens) && usage.cache_creation_input_tokens >= 0
+            ? usage.cache_creation_input_tokens
+            : prev.created,
+        output: Number.isSafeInteger(usage.output_tokens) && usage.output_tokens >= 0 ? usage.output_tokens : prev.output,
+      })
+      return true
+    }
+    const emitAggregatedMetrics = async (durationOverrideMs) => {
+      let uncachedInputTokens = 0
+      let cachedInputTokens = 0
+      let cacheCreationTokens = 0
+      let outputTokens = 0
+      for (const step of stepUsageByMsgId.values()) {
+        uncachedInputTokens += step.input
+        cachedInputTokens += step.cached
+        cacheCreationTokens += step.created
+        outputTokens += step.output
+      }
+      const metrics = disjointTurnMetrics({
+        uncachedInputTokens,
+        cachedInputTokens,
+        cacheCreationTokens,
+        outputTokens,
+        durationMs: durationOverrideMs > 0 ? durationOverrideMs : currentApiDurationMs(),
+        model: activeModel,
+      })
+      if (metrics) await emit({ type: 'metrics', value: metrics })
+    }
     for await (const message of messages) {
       if (message.session_id && message.session_id !== id)
         throw new Error('Claude 返回了不匹配的原生会话。')
@@ -665,39 +805,90 @@ async function nativeSession(
       if (message.type === 'control_request') {
         const req = message.request || {}
         const detail = actionDetail(req)
-        const ok =
-          req.subtype === 'can_use_tool' &&
-          detail !== null &&
-          (await Promise.race([
-            Promise.resolve(approve({ title: toolName(req.tool_name), detail })),
-            onClose,
-          ]))
+        const label = builtins.has(req.tool_name) ? req.tool_name : '原生工具'
+        let ok = false
+        if (req.subtype === 'can_use_tool') {
+          if (
+            permission === 'plan' &&
+            ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(req.tool_name)
+          ) {
+            ok = false
+          } else if (
+            permission === 'edits' &&
+            ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(req.tool_name) &&
+            (await isWorkspaceEditFile(req.input?.file_path || req.input?.notebook_path))
+          ) {
+            ok = true
+          } else if (detail !== null) {
+            const waitStart = performance.now()
+            ok = Boolean(
+              await Promise.race([
+                Promise.resolve(approve({ title: label, detail })),
+                onClose,
+              ]),
+            )
+            if (apiCallStartMs !== null) apiCallStartMs += performance.now() - waitStart
+          }
+        }
         if (child.exitCode !== null || child.signalCode || signal?.aborted) break
         const response = ok
           ? { behavior: 'allow', updatedInput: req.input }
-          : { behavior: 'deny', message: '用户未授权此操作。' }
+          : {
+              behavior: 'deny',
+              message: permission === 'plan' ? '计划模式下仅允许只读分析。' : '用户未授权此操作。',
+            }
         send({
           type: 'control_response',
           response: { subtype: 'success', request_id: message.request_id, response },
         })
       } else if (message.type === 'stream_event' && !message.parent_tool_use_id) {
         const event = message.event
-        if (event?.type === 'message_start') streamed = false
+        if (event?.type === 'message_start') {
+          if (apiCallStartMs === null) apiCallStartMs = performance.now()
+          currentMsgId = event.message?.id || 'stream-' + stepUsageByMsgId.size
+          if (noteStepUsage(currentMsgId, event.message?.usage, event.message?.model)) {
+            await emitAggregatedMetrics()
+          }
+          streamed = false
+          if (emittedText && turnHasTool) {
+            segmentSeq++
+            turnHasTool = false
+          }
+        }
+        if (event?.type === 'message_delta') {
+          if (noteStepUsage(currentMsgId || 'stream-0', event.usage)) {
+            await emitAggregatedMetrics()
+          }
+        }
+        if (event?.type === 'message_stop' && apiCallStartMs !== null) {
+          accumulatedApiMs += Math.max(0, performance.now() - apiCallStartMs)
+          apiCallStartMs = null
+        }
         if (
           event?.type === 'content_block_delta' &&
           event.delta?.type === 'text_delta' &&
           typeof event.delta.text === 'string'
         ) {
-          await emit({ type: 'text', value: event.delta.text })
+          if (emittedText && turnHasTool) {
+            segmentSeq++
+            turnHasTool = false
+          }
+          await emit({ type: 'text', value: event.delta.text, itemId: 'claude-seg-' + segmentSeq })
           emittedText = streamed = true
         }
       } else if (message.type === 'assistant' && !message.parent_tool_use_id && !message.error) {
+        const msgKey = message.message?.id || currentMsgId || 'assistant-' + stepUsageByMsgId.size
+        const updatedUsage = noteStepUsage(msgKey, message.message?.usage, message.message?.model)
         for (const block of Array.isArray(message.message?.content) ? message.message.content : []) {
           if (block?.type === 'tool_use') {
+            turnHasTool = true
+            if (apiCallStartMs !== null) {
+              accumulatedApiMs += Math.max(0, performance.now() - apiCallStartMs)
+              apiCallStartMs = null
+            }
             if (message.session_id === id && await agents.noteCall(block)) continue
-            const event = ['WebFetch', 'WebSearch'].includes(block.name)
-              ? webActivity(block.input?.url, block.input?.query)
-              : { type: 'tool', value: toolName(block.name) }
+            const event = claudeToolEvent(block, 'running')
+            if (event.callId) pendingTools.set(event.callId, event)
             await emit(event)
           }
           if (
@@ -705,16 +896,89 @@ async function nativeSession(
             !streamed &&
             typeof block.text === 'string'
           ) {
-            await emit({ type: 'text', value: block.text })
+            if (emittedText && turnHasTool) {
+              segmentSeq++
+              turnHasTool = false
+            }
+            await emit({ type: 'text', value: block.text, itemId: 'claude-seg-' + segmentSeq })
             emittedText = true
           }
         }
+        if (updatedUsage) await emitAggregatedMetrics()
         streamed = false
+      } else if (message.type === 'user' && !message.parent_tool_use_id && Array.isArray(message.message?.content)) {
+        for (const block of message.message.content) {
+          if (block?.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue
+          const prior = pendingTools.get(block.tool_use_id)
+          if (!prior) continue
+          pendingTools.delete(block.tool_use_id)
+          await emit({ ...prior, status: block.is_error ? 'failed' : 'completed' })
+        }
+        if (pendingTools.size === 0 && apiCallStartMs === null) {
+          apiCallStartMs = performance.now()
+        }
       } else if (message.type === 'result') {
+        if (apiCallStartMs !== null) {
+          accumulatedApiMs += Math.max(0, performance.now() - apiCallStartMs)
+          apiCallStartMs = null
+        }
+        for (const prior of pendingTools.values()) {
+          await emit({ ...prior, status: 'completed' })
+        }
+        pendingTools.clear()
         if (message.is_error || message.subtype !== 'success') throw failResult(message)
         if (!seenSession) throw new Error('Claude 未返回可恢复的原生会话。')
         if (!emittedText && typeof message.result === 'string')
-          await emit({ type: 'text', value: message.result })
+          await emit({ type: 'text', value: message.result, itemId: 'claude-seg-' + segmentSeq })
+        const apiDurationMs =
+          Number.isFinite(message.duration_api_ms) && message.duration_api_ms > 0
+            ? Math.round(message.duration_api_ms)
+            : accumulatedApiMs > 0
+              ? Math.round(accumulatedApiMs)
+              : Number.isFinite(message.duration_ms) && message.duration_ms > 0
+                ? Math.round(message.duration_ms)
+                : currentApiDurationMs()
+        const u = message.usage
+        const hasResultUsage =
+          u &&
+          [u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens, u.output_tokens].some(
+            (v) => Number.isSafeInteger(v) && v >= 0,
+          )
+        if (hasResultUsage) {
+          const modelNames = message.modelUsage && typeof message.modelUsage === 'object'
+            ? Object.keys(message.modelUsage)
+            : []
+          const metrics = disjointTurnMetrics({
+            uncachedInputTokens: u.input_tokens || 0,
+            cachedInputTokens: u.cache_read_input_tokens || 0,
+            cacheCreationTokens: u.cache_creation_input_tokens || 0,
+            outputTokens: u.output_tokens || 0,
+            durationMs: apiDurationMs,
+            model: activeModel || modelNames[0] || '',
+          })
+          if (metrics) await emit({ type: 'metrics', value: metrics })
+        } else if (message.modelUsage && typeof message.modelUsage === 'object') {
+          const entries = Object.entries(message.modelUsage)
+          let uncached = 0, cached = 0, created = 0, out = 0
+          for (const [, mu] of entries) {
+            if (!mu || typeof mu !== 'object') continue
+            uncached += Number.isSafeInteger(mu.inputTokens) ? mu.inputTokens : 0
+            cached += Number.isSafeInteger(mu.cacheReadInputTokens) ? mu.cacheReadInputTokens : 0
+            created += Number.isSafeInteger(mu.cacheCreationInputTokens) ? mu.cacheCreationInputTokens : 0
+            out += Number.isSafeInteger(mu.outputTokens) ? mu.outputTokens : 0
+          }
+          const metrics = disjointTurnMetrics({
+            uncachedInputTokens: uncached,
+            cachedInputTokens: cached,
+            cacheCreationTokens: created,
+            outputTokens: out,
+            durationMs: apiDurationMs,
+            model: activeModel || entries[0]?.[0] || '',
+          })
+          if (metrics) await emit({ type: 'metrics', value: metrics })
+        } else if (stepUsageByMsgId.size > 0) {
+          await emitAggregatedMetrics(apiDurationMs)
+        }
         // Older CLIs may lack the metrics controls. A completed native turn
         // stays successful if either optional status request fails or stalls.
         const deadline = setTimeout(() => stop('SIGKILL'), 4000)
