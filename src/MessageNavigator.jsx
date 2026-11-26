@@ -74,7 +74,8 @@ function TurnRail({ turns, scrollRef, onNavigate }) {
   const reply = shown?.reply;
 
   useLayoutEffect(() => {
-    const text = reply && document.getElementById(`message-${reply.id}`)?.querySelector(".markdown")?.innerText;
+    const nodes = reply && document.getElementById(`message-${reply.id}`)?.querySelectorAll(".markdown");
+    const text = nodes?.length ? nodes[nodes.length - 1].innerText : "";
     setAnswer(excerpt(text || reply?.text || "", 320));
   }, [reply]);
 

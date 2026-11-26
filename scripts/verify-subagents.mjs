@@ -28,6 +28,59 @@ try {
     workspace.event('task', '子智能体 · 运行中', { agent: { id: 'worker', name: '正在整理', status: 'running' } })
     workspace.db.run(`INSERT INTO subagent_entries(taskId,agentId,entryId,role,text)
       VALUES('task','reader','reply','assistant','**子任务已核对**。')`)
+    workspace.db.run(`INSERT INTO tasks(id,chatId,botId,accountId,messageId,status,tool,createdAt)
+      VALUES('task-math',?,'bot','fixture','prompt','done','fixture',?)`, chat, now)
+    workspace.event('task-math', '子智能体 · 已完成', {
+      agent: { id: 'math-designer', name: 'Math & Clean-Code Designer', status: 'completed', model: 'gemini-4-neon-high' },
+    })
+    workspace.db.run(
+      "UPDATE tasks SET events=json_set(events,'$[0].observedAt',5) WHERE id='task-math'",
+    )
+    const insertMath = workspace.db.db.prepare(
+      'INSERT INTO subagent_entries(taskId,agentId,entryId,role,text,meta) VALUES(?,?,?,?,?,?)',
+    )
+    insertMath.run('task-math', 'math-designer', 'dispatch-prompt', 'user', '给定正整数 n，输出所有由正整数组成的无序、不重复和式。', null)
+    insertMath.run(
+      'task-math',
+      'math-designer',
+      'agy-math:1:0',
+      'activity',
+      '运行命令',
+      JSON.stringify({ kind: 'command', category: 'command', status: 'completed', command: "python3 -c 'print(1+4)'", title: "python3 -c 'print(1+4)'" }),
+    )
+    insertMath.run(
+      'task-math',
+      'math-designer',
+      'agy-math:3:0',
+      'activity',
+      '发送消息',
+      JSON.stringify({ kind: 'tool', category: 'mcp', status: 'completed', title: '发送消息' }),
+    )
+    insertMath.run(
+      'task-math',
+      'math-designer',
+      'agy-math:3:report:0',
+      'assistant',
+      [
+        '### 一、数学建模',
+        '求正整数 $n$ 的所有真分拆（项数 $k \\ge 2$，亦写作 \\(p(n)-1\\)）：',
+        '$$1 \\le a_1 \\le a_2 \\le \\dots \\le a_k, \\quad \\sum_{i=1}^k a_i = n$$',
+        '\\[x \\le \\lfloor \\text{rem}/2 \\rfloor\\]',
+        '```python',
+        'def proper_partitions(n: int):',
+        '    return n',
+        '```',
+      ].join('\n'),
+      null,
+    )
+    insertMath.run(
+      'task-math',
+      'math-designer',
+      'agy-math:6',
+      'assistant',
+      '已完成剖析、标杆实现（Python 与 C++）并通过 `send_message` 发送给主调 Agent。',
+      null,
+    )
     workspace.db.run(`INSERT INTO messages(id,chatId,author,name,text,createdAt,recipients,taskId)
       VALUES('primary-reply',?,'bot','验收 Bot',?,?,'[]','task')`, chat,
       '1. **前端与 MES 开发检索员**：整理前端资料。\n2. **后端面经检索员**：整理后端资料。', now)
@@ -62,10 +115,10 @@ try {
   await page.getByRole('button', { name: '聊天概览', exact: true }).click()
   const overview = page.getByRole('dialog', { name: '聊天概览' })
   const glyph = element => element.locator('.subagent-glyph')
-  const summary = overview.getByRole('button', { name: /3 个子智能体.*1 个已完成/ })
+  const summary = overview.getByRole('button', { name: /3 个子智能体.*2 个已完成/ })
   await summary.click()
   const variants = await glyph(summary).evaluateAll(elements => elements.map(element => element.dataset.variant))
-  expect(variants).toEqual(['15', '4', '1'])
+  expect(variants.slice(0, 3)).toEqual(['15', '4', '1'])
   const icon = glyph(summary).first().locator('img')
   const iconSource = () => icon.evaluate(element => element.complete && element.naturalWidth ? element.currentSrc : '')
   await page.emulateMedia({ colorScheme: 'light' })
@@ -111,6 +164,16 @@ try {
   await panel.getByRole('button', { name: /正在整理/ }).click()
   await expect(panel).toContainText('主任务已结束，暂未收到子智能体回复。')
   await expect(panel).toContainText('状态待确认')
+  await panel.getByRole('button', { name: '返回子智能体列表' }).click()
+  await panel.getByRole('button', { name: /Math & Clean-Code Designer/ }).click()
+  await expect(panel.locator('.turn-duration-toggle')).toContainText('执行过程 · 1 项操作')
+  await expect(panel.locator('.turn-steps-inner')).not.toContainText('发送消息')
+  await expect(panel.locator('.turn-final-answer h3')).toHaveText('一、数学建模')
+  await expect(panel.locator('.turn-final-answer .katex-display')).toHaveCount(2)
+  await expect(panel.locator('.turn-final-answer .md-codeblock')).toContainText('def proper_partitions')
+  await expect(panel.locator('.turn-final-answer')).not.toContainText('并通过 send_message 发送给主调 Agent')
+  const scrollTop = await panel.getByRole('region', { name: '子智能体会话' }).evaluate(el => el.scrollTop)
+  expect(scrollTop).toBe(0)
   console.log('通过：聊天概览打开子智能体预览、实时更新、返回列表和无输出状态。')
 } finally {
   await app?.close().catch(() => {})
