@@ -1,5 +1,5 @@
 import { redact } from '../native.mjs'
-import { agentActivity } from './chat-activity.mjs'
+import { agentActivity, fileActivity, safeActivityPath, webActivity } from './chat-activity.mjs'
 
 const activityLabels = {
   commandExecution: '运行命令',
@@ -19,7 +19,7 @@ const modelLabel = (value) => typeof value === 'string' && /^[a-z\d][a-z\d._-]{0
   ? value : undefined
 const agentLimit = 100
 const entryLimit = 200
-const textLimit = 20_000
+const textLimit = 120_000
 const turnLimit = 25
 const readTimeout = 1200
 
@@ -30,16 +30,55 @@ function spawnedBy(thread, id, parent) {
   return parents.length > 0 && parents.every((id) => id === parent)
 }
 
-function visibleItem(item) {
+function codexChildMeta(item, final = false) {
+  const status = !final
+    ? 'running'
+    : item.status === 'failed' || (Number.isInteger(item.exitCode) && item.exitCode !== 0) || Boolean(item.error)
+      ? 'failed'
+      : 'completed'
+  if (item.type === 'commandExecution') {
+    return { kind: 'command', category: 'command', status }
+  }
+  if (item.type === 'webSearch') {
+    const w = webActivity(item.action?.url, item.query || item.action?.query)
+    return {
+      kind: 'webSearch',
+      category: 'web',
+      status,
+      ...(w.source?.url && { url: w.source.url }),
+      ...(w.source?.title && { query: w.source.title, title: '已搜索网页：' + w.source.title }),
+    }
+  }
+  if (item.type === 'fileChange') {
+    const f = fileActivity({ action: 'edit', status, files: item.changes })
+    return {
+      kind: 'fileChange',
+      category: 'edit',
+      status,
+      ...(f.path && { path: f.path }),
+      ...(f.files && { files: f.files }),
+      title: f.value,
+    }
+  }
+  if (item.type === 'imageView') {
+    const p = safeActivityPath(item.path)
+    return { kind: 'read', category: 'read', status, ...(p && { path: p }) }
+  }
+  return { kind: 'mcp', category: 'mcp', status }
+}
+
+function visibleItem(item, final = false) {
   if (!item) return
   if (item.type === 'userMessage' && Array.isArray(item.content)) {
     return ['user', item.content.flatMap((part) =>
-      part?.type === 'text' && typeof part.text === 'string' ? [part.text] : []).join('\n')]
+      part?.type === 'text' && typeof part.text === 'string' ? [part.text] : []).join('\n'), null]
   }
   if (['agentMessage', 'plan'].includes(item.type) && typeof item.text === 'string') {
-    return ['assistant', item.text]
+    return ['assistant', item.text, null]
   }
-  if (Object.hasOwn(activityLabels, item.type)) return ['activity', activityLabels[item.type]]
+  if (Object.hasOwn(activityLabels, item.type)) {
+    return ['activity', activityLabels[item.type], codexChildMeta(item, final)]
+  }
 }
 
 async function childHistory(rpc, id, parentId) {
@@ -88,7 +127,7 @@ export function codexSubagents({ emit, parentId, rpc }) {
     await emit(event)
   }
 
-  async function entry(agent, turnId, itemId, role, text, { delta = false, final = false, batch } = {}) {
+  async function entry(agent, turnId, itemId, role, text, { delta = false, final = false, batch, meta = null } = {}) {
     if (agent.blocked || !nativeId(turnId) || !nativeId(itemId) || !text) return
     const id = turnId + ':' + itemId
     const previous = agent.entries.get(id)
@@ -96,18 +135,22 @@ export function codexSubagents({ emit, parentId, rpc }) {
     const raw = (delta ? (previous?.raw || '') + text : text).slice(0, textLimit)
     const safe = redact(raw).slice(0, textLimit)
     if (!safe.trim()) return
+    const metaKey = meta ? JSON.stringify(meta) : ''
     if (!previous && agent.entries.size >= entryLimit) agent.entries.delete(agent.entries.keys().next().value)
-    agent.entries.set(id, { raw, safe, final: final || previous?.final })
-    if (previous?.safe !== safe) {
-      const value = { id, role, text: safe }
+    agent.entries.set(id, { raw, safe, metaKey, final: final || previous?.final })
+    if (previous?.safe !== safe || (metaKey && previous?.metaKey !== metaKey)) {
+      const value = meta ? { id, role, text: safe, meta } : { id, role, text: safe }
       if (batch) batch.push(value)
       else await emit({ type: 'agentTranscript', agent: { id: agent.id }, entries: [value] })
     }
   }
 
   async function item(agent, turnId, data, options) {
-    const visible = visibleItem(data)
-    if (visible) await entry(agent, turnId, data.id, ...visible, options)
+    const visible = visibleItem(data, Boolean(options?.final))
+    if (visible) {
+      const [role, text, meta] = visible
+      await entry(agent, turnId, data.id, role, text, { ...options, meta })
+    }
   }
 
   async function parentItem(data) {

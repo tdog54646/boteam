@@ -2,7 +2,7 @@ import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { redact } from '../native.mjs'
-import { agentActivity } from './chat-activity.mjs'
+import { agentActivity, commandActivity, fileActivity, toolCallActivity, webActivity } from './chat-activity.mjs'
 
 const nativeId = /^[a-z\d_-]{1,128}$/i
 const transcriptLimit = 4 * 1024 * 1024
@@ -45,15 +45,110 @@ function visibleText(content) {
       .map(block => block.text).join('\n\n')
     : ''
   return redact(text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, ''))
-    .trim().slice(0, 20_000)
+    .trim().slice(0, 120_000)
 }
 
-function visibleEntry(frame) {
+function claudeChildToolEntry(frameUuid, block, index) {
+  if (block?.type !== 'tool_use' || typeof block.name !== 'string' || ['Agent', 'Task'].includes(block.name)) {
+    return null
+  }
+  const name = block.name
+  const input = block.input && typeof block.input === 'object' ? block.input : {}
+  const id = `${frameUuid}:tool:${index}`
+  if (name === 'Bash') {
+    const c = commandActivity({ command: input.command || input.description || '', status: 'completed' })
+    return {
+      id,
+      role: 'activity',
+      text: '运行命令',
+      meta: { kind: 'command', category: 'command', status: 'completed', command: c.command, commandKind: c.commandKind, title: c.command },
+    }
+  }
+  if (name === 'Read') {
+    const f = fileActivity({
+      action: 'read',
+      status: 'completed',
+      path: input.file_path,
+      line: Number.isInteger(input.offset) ? input.offset : undefined,
+    })
+    return {
+      id,
+      role: 'activity',
+      text: '读取文件',
+      meta: { kind: 'read', category: 'read', status: 'completed', ...(f.path && { path: f.path }), ...(f.line && { line: f.line }), title: f.value },
+    }
+  }
+  if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(name)) {
+    const f = fileActivity({
+      action: name === 'Write' ? 'create' : 'edit',
+      status: 'completed',
+      path: input.file_path || input.notebook_path,
+    })
+    return {
+      id,
+      role: 'activity',
+      text: name === 'Write' ? '写入文件' : '编辑文件',
+      meta: { kind: 'fileChange', category: 'edit', status: 'completed', ...(f.path && { path: f.path }), ...(f.files && { files: f.files }), title: f.value },
+    }
+  }
+  if (['Glob', 'Grep', 'LS'].includes(name)) {
+    const f = fileActivity({
+      action: name === 'LS' ? 'list' : 'search',
+      status: 'completed',
+      path: input.path,
+      query: input.pattern,
+    })
+    return {
+      id,
+      role: 'activity',
+      text: name === 'LS' ? '列出目录' : '搜索内容',
+      meta: { kind: name === 'LS' ? 'list' : 'search', category: name === 'LS' ? 'read' : 'search', status: 'completed', ...(f.path && { path: f.path }), ...(f.query && { query: f.query }), title: f.value },
+    }
+  }
+  if (['WebFetch', 'WebSearch'].includes(name)) {
+    const w = webActivity(input.url, input.query)
+    return {
+      id,
+      role: 'activity',
+      text: name === 'WebFetch' ? '读取网页' : '搜索网页',
+      meta: {
+        kind: 'webSearch',
+        category: 'web',
+        status: 'completed',
+        ...(w.source?.url && { url: w.source.url }),
+        ...(w.source?.title && { query: w.source.title, title: '已搜索网页：' + w.source.title }),
+      },
+    }
+  }
+  const isMcp = name.startsWith('mcp__')
+  const t = toolCallActivity({
+    kind: isMcp ? 'mcp' : 'tool',
+    status: 'completed',
+    label: isMcp ? '调用 MCP 工具' : '调用工具',
+    detail: isMcp ? name.slice(5).replace(/__/g, ' · ') : name,
+  })
+  return {
+    id,
+    role: 'activity',
+    text: t.label,
+    meta: { kind: isMcp ? 'mcp' : 'tool', category: 'mcp', status: 'completed', title: t.value },
+  }
+}
+
+function visibleEntries(frame) {
   if (!['assistant', 'user'].includes(frame.type) || frame.message?.role !== frame.type ||
       frame.error || frame.isMeta || frame.isSynthetic || frame.isReplay || frame.origin ||
-      typeof frame.uuid !== 'string' || !nativeId.test(frame.uuid)) return null
+      typeof frame.uuid !== 'string' || !nativeId.test(frame.uuid)) return []
+  const out = []
   const text = visibleText(frame.message.content)
-  return text ? { id: frame.uuid, role: frame.type, text } : null
+  if (text) out.push({ id: frame.uuid, role: frame.type, text })
+  if (frame.type === 'assistant' && Array.isArray(frame.message.content)) {
+    for (const [index, block] of frame.message.content.entries()) {
+      const toolEntry = claudeChildToolEntry(frame.uuid, block, index)
+      if (toolEntry) out.push(toolEntry)
+    }
+  }
+  return out
 }
 
 export function claudeSubagents({ source, cwd, session, emit }) {
@@ -112,8 +207,9 @@ export function claudeSubagents({ source, cwd, session, emit }) {
         if (!agent.nativePromptId && entry.text === agent.prompt) agent.nativePromptId = entry.id
         if (entry.id === agent.nativePromptId) entry = { ...entry, id: agent.dispatchId }
       }
-      if (agent.rows.get(entry.id) === entry.text) continue
-      agent.rows.set(entry.id, entry.text)
+      const sig = JSON.stringify([entry.text, entry.meta || null])
+      if (agent.rows.get(entry.id) === sig) continue
+      agent.rows.set(entry.id, sig)
       if (entry.role === 'assistant') agent.hasReply = true
       changed.push(entry)
     }
@@ -137,7 +233,7 @@ export function claudeSubagents({ source, cwd, session, emit }) {
       .catch(() => null)
     const folder = await directory
     if (folder) {
-      const entries = (await readTranscript(folder, session, agent.taskId)).map(visibleEntry).filter(Boolean)
+      const entries = (await readTranscript(folder, session, agent.taskId)).flatMap(visibleEntries)
       await publish(agent, entries.slice(-200))
     }
   }
@@ -176,9 +272,9 @@ export function claudeSubagents({ source, cwd, session, emit }) {
     const parent = frame.parent_tool_use_id
     const agent = parent && (calls.get(parent) || tasks.get(frame.agent_id))
     if (agent && ['assistant', 'user'].includes(frame.type)) {
-      const entry = visibleEntry(frame)
-      if (entry?.role === 'assistant') agent.forwardedReply = true
-      await publish(agent, [entry])
+      const entries = visibleEntries(frame)
+      if (entries.some(entry => entry.role === 'assistant')) agent.forwardedReply = true
+      await publish(agent, entries)
       if (frame.type === 'assistant' && !frame.error && Array.isArray(frame.message?.content)) {
         for (const block of frame.message.content) await noteCall(block)
       }
