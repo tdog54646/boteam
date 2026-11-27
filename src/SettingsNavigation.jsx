@@ -1,5 +1,8 @@
 import React, { useRef, useState } from "react";
-import { Archive, Bell, Bot, Search, Settings, Sun, WalletCards, ScanLine, X } from "lucide-react";
+import {
+  Archive, Bell, Blocks, Bot, Cable, Gauge, MessagesSquare, Search, Settings,
+  Sun, WalletCards, ScanLine, X,
+} from "lucide-react";
 import { ShortcutSymbol } from "./ui";
 import { useLanguage } from "./preferences";
 
@@ -10,6 +13,7 @@ const groups = [
   { title: ["账号管理", "Accounts"], items: [
     ["accounts", WalletCards, "订阅账号", "Subscription accounts", "订阅账号 添加 搜索 账号维护 备注 状态 绑定 Bot 重新授权 移除 CLI 登录 sign in subscription reauthorize"],
     ["local-accounts", ScanLine, "本机配置", "Local configurations", "检测 导入本机账号 订阅账号来源 授权 原生 CLI 登录 Codex Claude Code Antigravity import local accounts scan profiles"],
+    ["usage", Gauge, "使用情况", "Usage", "套餐 订阅额度 剩余额度 模型限额 重置时间 多账号 quota limits subscription plan reset"],
   ] },
   { title: ["应用", "App"], items: [
     ["general", Settings, "常规", "General", "界面语言 简体中文 英文 英语 English language"],
@@ -19,6 +23,11 @@ const groups = [
   ] },
   { title: ["数据与隐私", "Data & privacy"], items: [
     ["archived", Archive, "已归档会话", "Archived chats", "聊天 恢复 取消归档 永久删除 archive restore delete"],
+  ] },
+  { title: ["集成", "Integrations"], items: [
+    ["integrations-channels", MessagesSquare, "频道配置", "Channels setup", "接入 访问控制 投递设置 配对 飞书 钉钉 企业微信 微信 Discord Telegram WeCom WeChat WhatsApp Feishu Lark QQ DingTalk"],
+    ["extensions", Blocks, "插件与技能", "Plugins & skills", "扩展 应用 已安装 plugin skills apps extensions"],
+    ["mcp", Cable, "MCP 服务器", "MCP servers", "工具 连接状态 认证 MCP servers tools status"],
   ] },
 ];
 export const settingsPages = groups.flatMap(group => group.items.map(([id]) => id));

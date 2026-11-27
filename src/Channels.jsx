@@ -123,7 +123,7 @@ export function ChannelNavigation({ state, activeChatId, onOverview, onOpenChat,
   </>;
 }
 
-export function Channels({ select, state, invoke, refreshSnapshot }) {
+export function Channels({ select, state, invoke, refreshSnapshot, inSettings = false }) {
   const t = useLanguage();
   const [dialogId, setDialogId] = useState("");
   const [query, setQuery] = useState("");
@@ -140,11 +140,15 @@ export function Channels({ select, state, invoke, refreshSnapshot }) {
     catch (e) { setError(errorText(e)); }
     finally { setBusy(false); }
   }
-  return <div className="page-scroll channel-page">
-    <section className="channel-directory">
-      <header className="channel-toolbar">
+  return <div className={inSettings ? "page-scroll" : "page-scroll channel-page"}>
+    <section className={inSettings ? "settings-page" : "channel-directory"}>
+      {inSettings && <header className="settings-heading">
+        <h1>{t("频道配置", "Channel configuration")}</h1>
+        <p>{t("连接聊天应用，管理接收消息的 Bot 和访问权限。", "Connect messaging apps and manage receiving bots and access.")}</p>
+      </header>}
+      <header className={inSettings ? "settings-section-heading" : "channel-toolbar"}>
         <div><h2>{t("平台配置", "Platform connections")}</h2>
-          <p>{t("连接聊天应用，在 BoTeam 中接收和回复消息。", "Connect your messaging apps to receive and reply to messages in BoTeam.")}</p></div>
+          {!inSettings && <p>{t("连接聊天应用，在 BoTeam 中接收和回复消息。", "Connect your messaging apps to receive and reply to messages in BoTeam.")}</p>}</div>
         <div className="channel-tools">
           <label className="channel-search"><Search size={15}/><input type="search" aria-label={t("搜索频道", "Search channels")}
             placeholder={t("搜索平台", "Search platforms")} value={query} onChange={e => setQuery(e.target.value)}/></label>
@@ -152,12 +156,14 @@ export function Channels({ select, state, invoke, refreshSnapshot }) {
         </div>
       </header>
       <Notice>{error}</Notice>
-      <div className="channel-grid">
+      <div className={inSettings ? "settings-group" : "channel-grid"}>
         {cards.map(p => {
           const config = configs.get(p.id);
-          return <article key={p.id} className="channel-card" data-channel={p.id}>
+          return <article key={p.id} className={inSettings ? "settings-row" : "channel-card"} data-channel={p.id}>
             <PlatformIcon id={p.id}/>
-            <div className="channel-card-info"><h2>{p.name}</h2><p>{t(...p.description)}</p>
+            <div className={inSettings ? "row-copy" : "channel-card-info"}>{inSettings
+              ? <><strong>{p.name}</strong><small>{t(...p.description)}</small></>
+              : <><h2>{p.name}</h2><p>{t(...p.description)}</p></>}
               {config?.configured && <small className={"channel-status " + config.status}>{statusLabel(config.status, t)}</small>}
             </div>
             <Button aria-label={t("配置 ", "Configure ") + p.name} onClick={() => setDialogId(p.id)}>

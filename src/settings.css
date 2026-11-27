@@ -523,6 +523,25 @@ body:has(> #root > .settings-shell) *,
   font-weight: 400 !important;
 }
 
+.quota-windows { container-type: inline-size; }
+.quota-window {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding-block: 2px;
+}
+.quota-remaining { display: flex; align-items: center; gap: 8px; }
+.quota-remaining small { min-width: 72px; text-align: end; font-variant-numeric: tabular-nums; }
+.quota-remaining progress { appearance: none; width: 96px; height: 6px; overflow: hidden; border: 0; border-radius: 3px; }
+.quota-remaining progress::-webkit-progress-bar { background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.quota-remaining progress::-webkit-progress-value { background: var(--solid); border-radius: inherit; }
+@container (max-width: 380px) {
+  .quota-window { grid-template-columns: minmax(0, 1fr); }
+  .quota-remaining progress { flex: 1; min-width: 0; }
+  .quota-remaining progress[data-low]::-webkit-progress-value { background: var(--warning); }
+}
+
 .archive-page { container-type: inline-size; }
 .archive-page .archived-chat-row { display: grid; grid-template-columns: 17px minmax(0, 1fr) auto; }
 .archived-chat-row > svg { color: var(--subtle); }

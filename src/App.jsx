@@ -24,6 +24,7 @@ import { ScheduleNavigation, SchedulesPage, scheduleCreatePages } from "./Schedu
 import { ArchivedChats, HistoryButtons, SidebarTitlebar, WorkspaceNavigation } from "./WorkspaceNavigation";
 import { SettingsNavigation, settingsPages } from "./SettingsNavigation";
 import { AppSettings } from "./AppSettings";
+import { IntegrationSettings } from "./IntegrationSettings";
 import { usePreferences } from "./preferences";
 import { shortcutFromEvent } from "./shortcuts";
 import { hasComposerDraft, pruneComposerDrafts } from "./composerDrafts";
@@ -630,6 +631,8 @@ export default function App() {
           <SchedulesPage state={state} page={page} invoke={invoke} select={select} refresh={refresh} open={setDialog}/>
         ) : ["general", "appearance", "notifications", "shortcuts"].includes(page) ? (
           <AppSettings key={page} page={page} state={state} invoke={invoke} refresh={refresh}/>
+        ) : ["usage", "integrations-channels", "extensions", "mcp"].includes(page) ? (
+          <IntegrationSettings key={page} page={page} state={state} invoke={invoke} refresh={refresh} open={setDialog} select={select}/>
         ) : page === "archived" ? (
           <ArchivedChats state={state} select={select} action={actions.act}/>
         ) : page === "local-accounts" ? (
