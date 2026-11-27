@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
 
+import { defaultShortcuts, readShortcuts } from "./shortcuts";
+
 const storageKey = "boteam.user-preferences.v1";
 export const choices = {
   theme: ["system", "light", "dark"],
@@ -18,7 +20,7 @@ export function preferenceLabels(t) {
     en: "English",
   };
 }
-const defaults = { theme: "system", fontSize: "standard", language: "zh-CN" };
+const defaults = { theme: "system", fontSize: "standard", language: "zh-CN", shortcuts: defaultShortcuts };
 const fontScales = { small: 0.92, standard: 1, large: 1.15 };
 const chinese = (zh) => zh;
 const english = (zh, en) => en ?? zh;
@@ -27,8 +29,11 @@ const Preferences = createContext({ ...defaults, appearance: "light", fontScale:
 function readPreferences() {
   try {
     const stored = JSON.parse(localStorage.getItem(storageKey)) || {};
-    return Object.fromEntries(Object.entries(choices).map(([key, options]) =>
-      [key, options.includes(stored[key]) ? stored[key] : defaults[key]]));
+    return {
+      ...Object.fromEntries(Object.entries(choices).map(([key, options]) =>
+        [key, options.includes(stored[key]) ? stored[key] : defaults[key]])),
+      shortcuts: readShortcuts(stored.shortcuts),
+    };
   } catch { return defaults; }
 }
 
@@ -58,13 +63,24 @@ export function PreferencesProvider({ children }) {
     window.addEventListener("storage", reload);
     return () => window.removeEventListener("storage", reload);
   }, []);
-  function update(key, value) {
-    if (!choices[key]?.includes(value)) return;
-    const next = { ...prefs, [key]: value };
+  function persist(next) {
     try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch {}
     setPrefs(next);
   }
-  return <Preferences.Provider value={{ ...prefs, appearance, fontScale, t, update }}>{children}</Preferences.Provider>;
+  function update(key, value) {
+    if (choices[key]?.includes(value)) persist({ ...readPreferences(), [key]: value });
+  }
+  function setShortcut(id, value) {
+    const next = readPreferences();
+    const conflict = value && Object.entries(next.shortcuts).find(([other, key]) => other !== id && key === value);
+    if (conflict) return conflict[0];
+    persist({ ...next, shortcuts: { ...next.shortcuts, [id]: value } });
+    return null;
+  }
+  function resetShortcuts() {
+    persist({ ...readPreferences(), shortcuts: { ...defaultShortcuts } });
+  }
+  return <Preferences.Provider value={{ ...prefs, appearance, fontScale, t, update, setShortcut, resetShortcuts }}>{children}</Preferences.Provider>;
 }
 
 export const usePreferences = () => useContext(Preferences);

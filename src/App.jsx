@@ -24,7 +24,8 @@ import { ScheduleNavigation, SchedulesPage, scheduleCreatePages } from "./Schedu
 import { ArchivedChats, HistoryButtons, SidebarTitlebar, WorkspaceNavigation } from "./WorkspaceNavigation";
 import { SettingsNavigation, settingsPages } from "./SettingsNavigation";
 import { AppSettings } from "./AppSettings";
-import { useLanguage } from "./preferences";
+import { usePreferences } from "./preferences";
+import { shortcutFromEvent } from "./shortcuts";
 import { hasComposerDraft, pruneComposerDrafts } from "./composerDrafts";
 import {
   PANEL_MAX_WIDTH,
@@ -77,7 +78,7 @@ function readDrafts() {
   } catch { return {}; }
 }
 export default function App() {
-  const t = useLanguage();
+  const { t, shortcuts } = usePreferences();
   const lastSettingsPage = useRef("bots");
   const settingsSearch = useRef(null);
   const [state, setState] = useState(empty);
@@ -359,26 +360,24 @@ export default function App() {
   }
   useEffect(() => {
     function key(e) {
-      if (e.defaultPrevented || e.repeat || e.shiftKey || e.altKey ||
-          !(e.metaKey || e.ctrlKey) || !ready || !state.onboarded || dialog || document.querySelector('[aria-modal="true"], dialog[open]'))
-        return;
-      const key = e.key.toLowerCase();
-      if (key === "f" && settingsPages.includes(page) && (/Mac/i.test(navigator.platform) ? e.metaKey : e.ctrlKey)) {
-        e.preventDefault();
+      if (e.defaultPrevented || e.repeat || !ready || !state.onboarded || dialog ||
+          document.querySelector('[aria-modal="true"], dialog[open]')) return;
+      const binding = shortcutFromEvent(e);
+      if (!binding) return;
+      if (binding === shortcuts.toggleSidebar) setCollapsed(value => !value);
+      else if (binding === shortcuts.newChat) newChat();
+      else if (binding === shortcuts.searchChats) setDialog({ type: "search" });
+      else if (binding === "Mod+F" && settingsPages.includes(page) && (/Mac/i.test(navigator.platform) ? e.metaKey : e.ctrlKey)) {
         setCollapsed(false);
         settingsSearch.current?.focus();
         settingsSearch.current?.select();
-        return;
       }
-      if (!["b", "k", "n"].includes(key)) return;
+      else return;
       e.preventDefault();
-      if (key === "b") setCollapsed((value) => !value);
-      if (key === "n") newChat();
-      if (key === "k") setDialog({ type: "search" });
     }
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
-  }, [ready, state.onboarded, dialog, newChat, page]);
+  }, [ready, state.onboarded, dialog, newChat, shortcuts, page]);
   const language = t("zh-CN", "en");
   useEffect(() => {
     if (ready && state.desktopNotificationsSupported)
@@ -629,7 +628,7 @@ export default function App() {
           <Channels state={state} invoke={invoke} refreshSnapshot={refresh} select={select}/>
         ) : schedulePage ? (
           <SchedulesPage state={state} page={page} invoke={invoke} select={select} refresh={refresh} open={setDialog}/>
-        ) : ["general", "appearance", "notifications"].includes(page) ? (
+        ) : ["general", "appearance", "notifications", "shortcuts"].includes(page) ? (
           <AppSettings key={page} page={page} state={state} invoke={invoke} refresh={refresh}/>
         ) : page === "archived" ? (
           <ArchivedChats state={state} select={select} action={actions.act}/>

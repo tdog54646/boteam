@@ -7,7 +7,8 @@ import {
 import { IconButton, Notice, ProviderIcon, accountLabel, errorText, identityLabel, providerName } from "./ui";
 import { ChatRows, MenuItem, SidebarPopup, SidebarSection, shortDate } from "./SidebarParts";
 import { SidebarTitlebar } from "./WorkspaceNavigation";
-import { useLanguage } from "./preferences";
+import { useLanguage, usePreferences } from "./preferences";
+import { shortcutLabel } from "./shortcuts";
 import { ProjectMenu } from "./ProjectMenu";
 import { ChatRowTitle } from "./ChatRowTitle";
 import "./project-sidebar.css";
@@ -21,7 +22,7 @@ function preferences() {
 
 export function Sidebar({ state, page, select, open, disabled, collapse, history, onChatMenu, onChatAction,
   menuChatId, invoke, refresh, onNewChat, homeBot, onSelectBot, dialogOpen }) {
-  const t = useLanguage();
+  const { t, shortcuts } = usePreferences();
   const filters = [["all", t("全部", "All")], ["unread", t("未读", "Unread")], ["running", t("进行中", "Running")]];
   const [prefs, setPrefs] = useState(preferences);
   const [popup, setPopup] = useState(null);
@@ -160,7 +161,7 @@ export function Sidebar({ state, page, select, open, disabled, collapse, history
         <IconButton label={t("搜索对话", "Search chats")} icon={Search} disabled={disabled} onClick={() => choose(() => open({ type: "search" }))}/>
       </div>
       <button className="rail-row" aria-label={t("新建对话", "New chat")} disabled={disabled} onClick={() => choose(() => onNewChat())}>
-        <SquarePen/><span>{t("新建对话", "New chat")}</span><kbd>⌘ N</kbd>
+        <SquarePen/><span>{t("新建对话", "New chat")}</span>{shortcuts.newChat && <kbd>{shortcutLabel(shortcuts.newChat)}</kbd>}
       </button>
       {homeBot && <button type="button" className="rail-row sidebar-quick-bot" aria-label={t("选择默认 Bot", "Select default bot")}
         aria-description={homeBot.name} title={t("选择默认 Bot", "Select default bot") + " · " + homeBot.name}

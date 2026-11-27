@@ -1,5 +1,6 @@
 import React, { useRef, useState } from "react";
 import { Archive, Bell, Bot, Search, Settings, Sun, WalletCards, ScanLine, X } from "lucide-react";
+import { ShortcutSymbol } from "./ui";
 import { useLanguage } from "./preferences";
 
 const groups = [
@@ -14,6 +15,7 @@ const groups = [
     ["general", Settings, "常规", "General", "界面语言 简体中文 英文 英语 English language"],
     ["appearance", Sun, "外观", "Appearance", "视觉样式 配色模式 主题 字号 字体大小 浅色 深色 暗色 夜间 跟随系统 visual style color mode theme font size light dark system"],
     ["notifications", Bell, "通知", "Notifications", "任务完成 运行失败 等待审批 定时任务 桌面提醒 approval failed complete schedule alerts"],
+    ["shortcuts", ShortcutSymbol, "键盘快捷键", "Keyboard shortcuts", "新建对话 搜索聊天 展开 收起 侧栏 键位 热键 shortcuts hotkeys sidebar search chat"],
   ] },
   { title: ["数据与隐私", "Data & privacy"], items: [
     ["archived", Archive, "已归档会话", "Archived chats", "聊天 恢复 取消归档 永久删除 archive restore delete"],

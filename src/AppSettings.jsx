@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { choices, preferenceLabels, usePreferences } from "./preferences";
 import { Select, Notice, errorText } from "./ui";
+import { KeyboardShortcuts } from "./KeyboardShortcuts";
 
 const headings = {
   general: ["常规", "General", "设置工作台的显示语言。", "Choose the language for your workspace."],
@@ -41,6 +42,7 @@ export function AppSettings({ page, state, invoke, refresh }) {
   const { t } = prefs;
   const [pending, setPending] = useState({});
   const [error, setError] = useState("");
+  if (page === "shortcuts") return <KeyboardShortcuts/>;
   const [zh, en, zhDescription, enDescription] = headings[page];
   const labels = preferenceLabels(t);
 

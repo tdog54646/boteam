@@ -44,6 +44,13 @@ const statusNames = {
   blocked: ["执行受限", "Restricted"],
 };
 
+export function ShortcutSymbol({ size = 16, ...props }) {
+  return <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true" {...props}>
+    <rect x="2.15" y="2.65" width="11.7" height="10.7" rx="2.3" stroke="currentColor" strokeWidth="1.35"/>
+    <path d="M9.1 4.65 5.65 8.45h2.12l-.85 2.9 3.47-4.17H8.35l.75-2.53Z" fill="currentColor"/>
+  </svg>;
+}
+
 export function Brand() {
   return (
     <span className="brand">
