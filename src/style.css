@@ -370,7 +370,7 @@ body.is-resizing-pane webview {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.rail-row:hover:not(:disabled),
+.rail-row:enabled:hover:not([aria-current="page"]),
 .search-results button:hover {
   background: var(--hover);
 }
