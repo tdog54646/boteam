@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useLayoutEffect, useRef } from "react";
 import {
   Check,
@@ -18,48 +19,48 @@ import {
   Eye,
 } from "lucide-react";
 
-const permissions = {
+const permissions = (tr) => ({
   default: {
-    title: "默认权限",
-    detail: "由原生工具在需要时请求批准",
+    title: tr("默认权限", "Default permissions"),
+    detail: tr("由原生工具在需要时请求批准", "Let the CLI request approval when needed"),
     icon: Hand,
   },
   "auto-review": {
-    title: "帮我批准",
-    detail: "仅对检测到的风险操作请求批准",
+    title: tr("帮我批准", "Auto-review"),
+    detail: tr("仅对检测到的风险操作请求批准", "Ask for approval for detected risks"),
     icon: ShieldEllipsis,
   },
   full: {
-    title: "完全访问权限",
-    detail: "可不受限制地访问互联网和你电脑上的任何文件",
+    title: tr("完全访问权限", "Full access"),
+    detail: tr("可不受限制地访问互联网和你电脑上的任何文件", "Allow unrestricted internet and file access"),
     icon: ShieldAlert,
   },
-  "read-only": { title: "只读", detail: "允许查看文件并分析内容", icon: Eye },
-  plan: { title: "计划模式", detail: "先分析并制定计划", icon: Lightbulb },
+  "read-only": { title: tr("只读", "Read-only"), detail: tr("允许查看文件并分析内容", "Read and analyze files"), icon: Eye },
+  plan: { title: tr("计划模式", "Plan mode"), detail: tr("先分析并制定计划", "Analyze and plan first"), icon: Lightbulb },
   edits: {
-    title: "自动接受编辑",
-    detail: "允许原生工具自动应用文件编辑",
+    title: tr("自动接受编辑", "Accept edits"),
+    detail: tr("允许原生工具自动应用文件编辑", "Let the CLI apply file edits automatically"),
     icon: SquarePen,
   },
   "workspace-auto": {
-    title: "工作区自动执行",
-    detail: "允许在工作区内自动执行操作",
+    title: tr("工作区自动执行", "Workspace auto"),
+    detail: tr("允许在工作区内自动执行操作", "Allow automatic actions in the workspace"),
     icon: ShieldCheck,
   },
-};
+});
 
-function permissionInfo(id, provider) {
+export function permissionInfo(id, provider, tr) {
   if (id === "default" && provider === "codex")
     return {
-      title: "请求批准",
-      detail: "编辑外部文件和使用互联网时始终询问",
+      title: tr("请求批准", "Ask for approval"),
+      detail: tr("编辑外部文件和使用互联网时始终询问", "Ask before editing external files or using the internet"),
       icon: Hand,
     };
-  return permissions[id] || { title: id, icon: ShieldCheck };
+  return permissions(tr)[id] || { title: id, icon: ShieldCheck };
 }
 
-export function permissionLabel(id, provider) {
-  return id === "full" ? "完全访问" : permissionInfo(id, provider).title;
+export function permissionLabel(id, provider, tr) {
+  return id === "full" ? tr("完全访问", "Full access") : permissionInfo(id, provider, tr).title;
 }
 
 function moveBetweenRows(event) {
@@ -113,6 +114,7 @@ export function ApprovalMenu({
   catalogError,
   retry,
 }) {
+  const tr = useLanguage();
   const ref = useCommandFocus();
   return (
     <div
@@ -124,22 +126,22 @@ export function ApprovalMenu({
     >
       <div className="approval-heading">
         <span>
-          应如何批准{" "}
+          {tr("应如何批准", "How should")}{" "}
           {provider === "codex"
             ? "ChatGPT"
             : provider === "claude"
               ? "Claude"
               : "Antigravity"}{" "}
-          操作？
+          {tr("操作？", "actions be approved?")}
         </span>
         <button type="button" onClick={onLearn}>
-          了解更多
+          {tr("了解更多", "Learn more")}
         </button>
       </div>
       {memberPicker}
-      <div role="menu" aria-label="批准方式">
+      <div role="menu" aria-label={tr("批准方式", "Approval mode")}>
         {modes.map((id) => {
-          const { title, detail, icon: Icon } = permissionInfo(id, provider);
+          const { title, detail, icon: Icon } = permissionInfo(id, provider, tr);
           return (
             <button
               type="button"
@@ -173,7 +175,7 @@ export function ApprovalMenu({
         <p className="catalog-state">
           {catalogError}{" "}
           {retry && <button className="text-btn" type="button" onClick={retry}>
-            重试
+            {tr("重试", "Retry")}
           </button>}
         </p>
       )}
@@ -182,16 +184,17 @@ export function ApprovalMenu({
 }
 
 export function ApprovalDetails({ modes, provider, onReadOnly, busy }) {
+  const tr = useLanguage();
   return (
     <div className="approval-details">
       {modes.map((mode) => {
-        const { title, detail } = permissionInfo(mode, provider);
+        const { title, detail } = permissionInfo(mode, provider, tr);
         return (
           <section key={mode}>
             <h3>{title}</h3>
             <p>
               {mode === "full"
-                ? "允许原生工具在工作区外读写文件并使用网络。BoTeam 仍隔离订阅账号的登录凭据。"
+                ? tr("允许原生工具在工作区外读写文件并使用网络。BoTeam 仍隔离订阅账号的登录凭据。", "Allow the CLI to use the network and read or write files outside the workspace. BoTeam keeps subscription credentials isolated.")
                 : detail + "。"}
             </p>
           </section>
@@ -199,7 +202,7 @@ export function ApprovalDetails({ modes, provider, onReadOnly, busy }) {
       })}
       {onReadOnly && (
         <button disabled={busy} className="text-btn" onClick={onReadOnly}>
-          使用只读模式
+          {tr("使用只读模式", "Use read-only mode")}
         </button>
       )}
     </div>
@@ -249,18 +252,19 @@ export function AddMenu({
   selected,
   onNative,
 }) {
+  const tr = useLanguage();
   const ref = useCommandFocus();
   const extensions = (actions?.extensions || []).filter(
     (item) => !skillsOnly || item.kind === "skill",
   );
   const groups = [
     [
-      "插件",
+      tr("插件", "Plugins"),
       extensions.filter(
         (item) => item.kind === "plugin" || item.kind === "app",
       ),
     ],
-    ["技能", extensions.filter((item) => item.kind === "skill")],
+    [tr("技能", "Skills"), extensions.filter((item) => item.kind === "skill")],
   ];
   return (
     <div
@@ -271,49 +275,49 @@ export function AddMenu({
       onPointerMove={focusHoveredRow}
     >
       {memberPicker}
-      <div role="menu" aria-label="添加">
+      <div role="menu" aria-label={tr("添加", "Add")}>
         {!skillsOnly && (
-          <div role="group" aria-label="添加">
-            <h3>添加</h3>
+          <div role="group" aria-label={tr("添加", "Add")}>
+            <h3>{tr("添加", "Add")}</h3>
             <CommandRow
               icon={Paperclip}
-              label="文件和文件夹"
+              label={tr("文件和文件夹", "Files and folders")}
               onClick={onFiles}
             />
             <CommandRow
               icon={Braces}
-              label="附加编辑器选区"
-              detail="粘贴选中的代码"
+              label={tr("附加编辑器选区", "Attach editor selection")}
+              detail={tr("粘贴选中的代码", "Paste selected code")}
               onClick={onEditor}
             />
             {actions?.goal && (
               <CommandRow
                 icon={Target}
-                label="目标"
-                detail="设置要持续追求的目标"
+                label={tr("目标", "Goal")}
+                detail={tr("设置要持续追求的目标", "Set an ongoing goal")}
                 onClick={onGoal}
               />
             )}
             {actions?.plan && (
               <CommandRow
                 icon={Lightbulb}
-                label="计划模式"
-                detail={planActive ? "关闭计划模式" : "开启计划模式"}
+                label={tr("计划模式", "Plan mode")}
+                detail={planActive ? tr("关闭计划模式", "Disable plan mode") : tr("开启计划模式", "Enable plan mode")}
                 selected={planActive}
                 onClick={onPlan}
               />
             )}
             <CommandRow
               icon={Text}
-              label="添加文本"
-              detail="粘贴文字片段"
+              label={tr("添加文本", "Add text")}
+              detail={tr("粘贴文字片段", "Paste a text snippet")}
               onClick={onSnippet}
             />
             <CommandRow
               icon={Spline}
               accent="light-dark(#00aa9d, #53d8c9)"
-              label="绘图"
-              detail="绘制草图"
+              label={tr("绘图", "Draw")}
+              detail={tr("绘制草图", "Draw a sketch")}
               onClick={onSketch}
             />
           </div>
@@ -346,17 +350,17 @@ export function AddMenu({
       </div>
       {loading && (
         <p role="status" className="catalog-state">
-          正在读取原生操作…
+          {tr("正在读取原生操作…", "Loading CLI actions…")}
         </p>
       )}
       {actions && !extensions.length && !loading && !loadError && (
-        <p className="catalog-state">此成员没有可添加的插件或技能。</p>
+        <p className="catalog-state">{tr("此成员没有可添加的插件或技能。", "No plugins or skills are available for this member.")}</p>
       )}
       {loadError && (
         <p className="catalog-state">
           {loadError}{" "}
           {retry && <button type="button" className="text-btn" onClick={retry}>
-            重试
+            {tr("重试", "Retry")}
           </button>}
         </p>
       )}

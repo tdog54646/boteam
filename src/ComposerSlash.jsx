@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, {
   useId,
   useLayoutEffect,
@@ -132,6 +133,7 @@ export function ComposerSlashMenu({
   onChoose,
   root,
 }) {
+  const tr = useLanguage();
   const box = useRef(null);
   const [placement, setPlacement] = useState({});
   useLayoutEffect(() => {
@@ -181,22 +183,22 @@ export function ComposerSlashMenu({
   };
   const message = slash.note ||
     (!slash.ready
-      ? "正在读取原生命令…"
+      ? tr("正在读取原生命令…", "Loading CLI commands…")
       : slash.rows.length
         ? ""
-        : slash.name ? "没有匹配的命令" : "当前原生工具未提供快捷命令");
+        : slash.name ? tr("没有匹配的命令", "No matching commands") : tr("当前原生工具未提供快捷命令", "This CLI did not provide any shortcuts"));
   return (
     <div
       ref={box}
       className="slash-menu"
       style={placement}
-      aria-label="原生快捷命令"
+      aria-label={tr("原生快捷命令", "CLI shortcuts")}
     >
       {isGroup && target && (
         <label className="slash-member-select">
           <CircleUserRound size={14} />
           <select
-            aria-label="命令接收人"
+            aria-label={tr("命令接收人", "Command recipient")}
             value={target.id}
             onChange={(e) => onTarget(e.target.value)}
           >
@@ -208,10 +210,10 @@ export function ComposerSlashMenu({
           </select>
         </label>
       )}
-      {!target && <div className="slash-caption">选择执行命令的群成员</div>}
+      {!target && <div className="slash-caption">{tr("选择执行命令的群成员", "Choose a group member to run the command")}</div>}
       <div
         role="listbox"
-        aria-label={target ? "快捷命令" : "命令接收人"}
+        aria-label={target ? tr("快捷命令", "Shortcuts") : tr("命令接收人", "Command recipient")}
         id={slash.listId}
       >
         {!target &&
@@ -271,7 +273,7 @@ export function ComposerSlashMenu({
           {message}
           {slash.note && slash.retry && (
             <button type="button" onClick={slash.retry}>
-              重试
+              {tr("重试", "Retry")}
             </button>
           )}
         </div>

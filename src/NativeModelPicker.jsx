@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useId, useLayoutEffect, useRef, useState } from "react";
 import { Check, ChevronRight, RotateCcw, Zap } from "lucide-react";
 import "./model-picker.css";
@@ -23,16 +24,16 @@ const codexEfforts = {
   xhigh: "极高", max: "Max", ultra: "Ultra",
 };
 
-function effortName(value, provider) {
+function effortName(value, provider, tr) {
   if (provider === "codex" && Object.hasOwn(codexEfforts, value?.toLowerCase()))
-    return codexEfforts[value.toLowerCase()];
+    return tr(codexEfforts[value.toLowerCase()], value === "xhigh" ? "Extra high" : value[0].toUpperCase() + value.slice(1));
   if (value === "xhigh") return "Extra high";
   return /^[a-z]+$/.test(value || "")
     ? value[0].toUpperCase() + value.slice(1)
     : value;
 }
 
-export function describeModel(catalog, model, effort, provider) {
+export function describeModel(catalog, model, effort, provider, tr = (zh) => zh) {
   const modelId = model || catalog?.defaultModel;
   const entry = catalog?.models?.find((item) => item.id === modelId);
   const levels =
@@ -46,13 +47,14 @@ export function describeModel(catalog, model, effort, provider) {
     modelId,
     levels,
     effortId,
-    modelLabel: modelName(entry || { id: modelId }) || "原生默认",
-    effortLabel: effortName(level?.label || effortId, provider),
+    modelLabel: modelName(entry || { id: modelId }) || tr("原生默认", "CLI default"),
+    effortLabel: effortName(level?.label || effortId, provider, tr),
     maximum: levels.length > 1 && level === levels.at(-1),
   };
 }
 
 function ModelMenu({ catalog, model, provider, busy, loading, status, onChoose, onBack }) {
+  const tr = useLanguage();
   const menu = useRef(null);
   const items = catalog?.models || [];
   const currentMissing = model && !items.some((item) => item.id === model);
@@ -90,7 +92,7 @@ function ModelMenu({ catalog, model, provider, busy, loading, status, onChoose, 
         type="button"
         role="menuitemradio"
         aria-checked={checkedId === id}
-        aria-label={id ? label : "原生默认"}
+        aria-label={id ? label : tr("原生默认", "CLI default")}
         aria-disabled={busy || disabled}
         disabled={disabled}
         className="native-model-row"
@@ -113,19 +115,19 @@ function ModelMenu({ catalog, model, provider, busy, loading, status, onChoose, 
     <div
       className="native-model-menu"
       role="menu"
-      aria-label="模型"
+      aria-label={tr("模型", "Model")}
       tabIndex={-1}
       ref={menu}
       onKeyDownCapture={navigate}
     >
       {!loading && row(
         "",
-        "默认",
-        provider === "codex" ? "推荐模型集" : modelName(defaultEntry),
+        tr("默认", "Default"),
+        provider === "codex" ? tr("推荐模型集", "Recommended models") : modelName(defaultEntry),
       )}
       {!loading && items.map((item) => row(item.id, modelName(item)))}
       {!loading && currentMissing &&
-        row(model, modelName({ id: model }), "已保存，当前未列出", true)}
+        row(model, modelName({ id: model }), tr("已保存，当前未列出", "Saved, currently unlisted"), true)}
       {status}
     </div>
   );
@@ -141,9 +143,10 @@ export function NativeModelPicker({
   refresh,
   onChange,
   onReset,
-  resetLabel = "恢复 Bot 默认设置",
+  resetLabel,
   resetDisabled = false,
 }) {
+  const tr = useLanguage();
   const [showModels, setShowModels] = useState(false);
   const [preview, setPreview] = useState(null);
   const switchButton = useRef(null);
@@ -154,21 +157,21 @@ export function NativeModelPicker({
     catalog,
     model,
     effort,
-    provider,
+    provider, tr,
   );
   const selected = levels.findIndex((level) => level.id === effortId);
   const index = preview ?? selected;
   const level = levels[index];
   const caption =
-    effortName(level?.label || level?.id, provider) || effortLabel || "原生默认";
+    effortName(level?.label || level?.id, provider, tr) || effortLabel || tr("原生默认", "CLI default");
   const single = levels.length === 1;
   const locked = busy || loading;
-  const reason = catalog?.reason || (catalog && !catalog.models?.length && "原生工具未返回可选模型。");
+  const reason = catalog?.reason || (catalog && !catalog.models?.length && tr("原生工具未返回可选模型。", "The CLI did not return any model options."));
   const status = (loading || reason) && (
     <p className="native-model-status" role="status">
-      {loading ? "正在读取原生模型…" : reason}
+      {loading ? tr("正在读取原生模型…", "Loading CLI models…") : reason}
       {!loading && refresh && (
-        <button type="button" className="text-btn" onClick={refresh}>重新读取</button>
+        <button type="button" className="text-btn" onClick={refresh}>{tr("重新读取", "Reload")}</button>
       )}
     </p>
   );
@@ -225,8 +228,8 @@ export function NativeModelPicker({
             <button
               type="button"
               className="model-icon"
-              title="使用模型默认思考强度"
-              aria-label="使用模型默认思考强度"
+              title={tr("使用模型默认思考强度", "Use model default reasoning effort")}
+              aria-label={tr("使用模型默认思考强度", "Use model default reasoning effort")}
               disabled={locked || !effort}
               onClick={() => onChange({ effort: "" })}
             >
@@ -236,7 +239,7 @@ export function NativeModelPicker({
               type="button"
               ref={switchButton}
               className="native-model-switch"
-              aria-label="选择模型"
+              aria-label={tr("选择模型", "Choose model")}
               data-popover-focus
               aria-describedby={selectionId}
               aria-haspopup="menu"
@@ -259,8 +262,8 @@ export function NativeModelPicker({
             <button
               type="button"
               className="model-icon"
-              title={resetLabel}
-              aria-label={resetLabel}
+              title={resetLabel ?? tr("恢复 Bot 默认设置", "Restore bot defaults")}
+              aria-label={resetLabel ?? tr("恢复 Bot 默认设置", "Restore bot defaults")}
               disabled={locked || resetDisabled}
               onClick={onReset}
             >
@@ -284,7 +287,7 @@ export function NativeModelPicker({
                 max={levels.length - 1}
                 step={1}
                 value={Math.max(0, index)}
-                aria-label="思考强度"
+                aria-label={tr("思考强度", "Reasoning effort")}
                 aria-valuetext={caption}
                 aria-disabled={locked}
                 onKeyDown={step}
@@ -322,14 +325,14 @@ export function NativeModelPicker({
               disabled={locked}
               onClick={() => commit(0)}
             >
-              {effortName(levels[0].label || levels[0].id, provider)}
+              {effortName(levels[0].label || levels[0].id, provider, tr)}
               {selected === 0 && <Check size={13} aria-hidden="true" />}
             </button>
           )}
           {status}
           {effort && selected < 0 && catalog && !loading && !reason && (
             <p className="native-model-status">
-              已保存的强度 {effortName(effort, provider)} 当前未列出。
+              {tr("已保存的强度", "Saved reasoning effort")} {effortName(effort, provider, tr)} {tr("当前未列出。", " is currently unlisted.")}
             </p>
           )}
         </div>

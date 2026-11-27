@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, {
   useEffect,
   useId,
@@ -309,10 +310,10 @@ function CacheRing({ value }) {
 }
 
 const number = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 });
-const displayTime = (date) => {
+const displayTime = (date, tr) => {
   const time = new Date(date);
   return date != null && Number.isFinite(+time)
-    ? time.toLocaleString("zh-CN", {
+    ? time.toLocaleString(tr("zh-CN", "en"), {
         month: "numeric",
         day: "numeric",
         hour: "2-digit",
@@ -327,19 +328,20 @@ function contextPercent(usage) {
 }
 
 function ContextReading({ usage }) {
+  const tr = useLanguage();
   const percentage = contextPercent(usage);
   return (
     <>
       <div className="usage-line">
-        <span>已使用</span>
-        <strong>{percentage == null ? "占比未知" : `${number.format(percentage)}%`}</strong>
+        <span>{tr("已使用", "Used")}</span>
+        <strong>{percentage == null ? tr("占比未知", "Percentage unknown") : `${number.format(percentage)}%`}</strong>
       </div>
       <p>
-        {Number.isFinite(usage.used) ? number.format(usage.used) : "未知"}
+        {Number.isFinite(usage.used) ? number.format(usage.used) : tr("未知", "Unknown")}
         {" / "}
-        {Number.isFinite(usage.limit) ? number.format(usage.limit) : "未知"} tokens
+        {Number.isFinite(usage.limit) ? number.format(usage.limit) : tr("未知", "Unknown")} tokens
       </p>
-      {usage.updatedAt && <p>更新于 {displayTime(usage.updatedAt)}</p>}
+      {usage.updatedAt && <p>{tr("更新于", "Updated")} {displayTime(usage.updatedAt, tr)}</p>}
     </>
   );
 }
@@ -362,6 +364,7 @@ function matchesMetricModel(modelId, metricModel) {
 }
 
 function SpeedReading({ metrics }) {
+  const tr = useLanguage();
   const speed = Number.isFinite(metrics?.tokensPerSecond) ? metrics.tokensPerSecond : null;
   const sessionSpeed = Number.isFinite(metrics?.sessionTokensPerSecond)
     ? metrics.sessionTokensPerSecond
@@ -370,26 +373,27 @@ function SpeedReading({ metrics }) {
   return (
     <>
       <div className="usage-line">
-        <span>本轮速度</span>
-        <strong>{speed == null ? "等待输出读数" : `${number.format(speed)} tok/s`}</strong>
+        <span>{tr("本轮速度", "Turn speed")}</span>
+        <strong>{speed == null ? tr("等待输出读数", "Waiting for output metrics") : `${number.format(speed)} tok/s`}</strong>
       </div>
       <p>
-        本轮输出 {number.format(metrics?.outputTokens || 0)} tokens
-        {metrics?.reasoningTokens > 0 ? `（含思考 ${number.format(metrics.reasoningTokens)}）` : ""}
-        {durationLabel ? ` · 耗时 ${durationLabel}` : ""}
+        {tr("本轮输出", "Turn output")} {number.format(metrics?.outputTokens || 0)} tokens
+        {metrics?.reasoningTokens > 0 ? tr(`（含思考 ${number.format(metrics.reasoningTokens)}）`, ` (including ${number.format(metrics.reasoningTokens)} reasoning)`) : ""}
+        {durationLabel ? tr(` · 耗时 ${durationLabel}`, ` · Took ${durationLabel}`) : ""}
       </p>
       {metrics?.turnCount > 1 && sessionSpeed != null && (
         <div className="usage-line">
-          <span>会话均速（{metrics.turnCount} 轮）</span>
+          <span>{tr("会话均速（", "Chat average (")}{metrics.turnCount} {tr("轮）", " turns)")}</span>
           <strong>{number.format(sessionSpeed)} tok/s</strong>
         </div>
       )}
-      {metrics?.updatedAt && <p>更新于 {displayTime(metrics.updatedAt)}</p>}
+      {metrics?.updatedAt && <p>{tr("更新于", "Updated")} {displayTime(metrics.updatedAt, tr)}</p>}
     </>
   );
 }
 
 function CacheReading({ metrics }) {
+  const tr = useLanguage();
   const hit = Number.isFinite(metrics?.cacheHitPercent) ? metrics.cacheHitPercent : null;
   const sessionHit = Number.isFinite(metrics?.sessionCacheHitPercent)
     ? metrics.sessionCacheHitPercent
@@ -397,22 +401,22 @@ function CacheReading({ metrics }) {
   return (
     <>
       <div className="usage-line">
-        <span>本轮命中率</span>
-        <strong>{hit == null ? "暂无输入读数" : `${number.format(hit)}%`}</strong>
+        <span>{tr("本轮命中率", "Turn cache hit rate")}</span>
+        <strong>{hit == null ? tr("暂无输入读数", "No input metrics yet") : `${number.format(hit)}%`}</strong>
       </div>
       <p>
-        命中 {number.format(metrics?.cachedInputTokens || 0)} / {number.format(metrics?.inputTokens || 0)} 输入 tokens
+        {tr("命中", "Hits")} {number.format(metrics?.cachedInputTokens || 0)} / {number.format(metrics?.inputTokens || 0)} {tr("输入 tokens", " input tokens")}
         {metrics?.cacheCreationTokens > 0
-          ? ` · 新建缓存 ${number.format(metrics.cacheCreationTokens)}`
+          ? tr(` · 新建缓存 ${number.format(metrics.cacheCreationTokens)}`, ` · New cache ${number.format(metrics.cacheCreationTokens)}`)
           : ""}
       </p>
       {metrics?.turnCount > 1 && sessionHit != null && (
         <div className="usage-line">
-          <span>会话累计（{metrics.turnCount} 轮）</span>
+          <span>{tr("会话累计（", "Chat total (")}{metrics.turnCount} {tr("轮）", " turns)")}</span>
           <strong>{number.format(sessionHit)}%</strong>
         </div>
       )}
-      {metrics?.updatedAt && <p>更新于 {displayTime(metrics.updatedAt)}</p>}
+      {metrics?.updatedAt && <p>{tr("更新于", "Updated")} {displayTime(metrics.updatedAt, tr)}</p>}
     </>
   );
 }
@@ -422,10 +426,10 @@ function remaining(window) {
     ? window.remainingPercent
     : null;
 }
-function windowLabel(minutes) {
-  if (minutes === 10080) return "每周";
-  if (minutes === 300) return "5 小时";
-  return minutes % 60 ? `${minutes} 分钟` : `${minutes / 60} 小时`;
+function windowLabel(minutes, tr) {
+  if (minutes === 10080) return tr("每周", "Weekly");
+  if (minutes === 300) return tr("5 小时", "5 hours");
+  return minutes % 60 ? tr(`${minutes} 分钟`, `${minutes} min`) : tr(`${minutes / 60} 小时`, `${minutes / 60} hours`);
 }
 
 export function ComposerTools({
@@ -454,6 +458,7 @@ export function ComposerTools({
   selectedExtensions,
   filesDisabled,
 }) {
+  const tr = useLanguage();
   const account = state.accounts.find((a) => a.id === bot?.accountId);
   const { catalog, loading, refresh } = useModelCatalog(account, invoke, { refreshOnEntry: true });
   const [pending, setPending] = useState(null);
@@ -483,7 +488,7 @@ export function ComposerTools({
     catalog,
     model,
     effort,
-    account?.provider,
+    account?.provider, tr,
   );
   const permission = settings.permission || "default";
   const providerModes = state.permissionModes?.[account?.provider] || [
@@ -586,9 +591,9 @@ export function ComposerTools({
   if (!bot) return children;
   const groupPicker = isGroup && (
     <label className="inspect-member">
-      <span>群成员</span>
+      <span>{tr("群成员", "Group members")}</span>
       <Select
-        aria-label="查看群成员设置与用量"
+        aria-label={tr("查看群成员设置与用量", "View member settings and usage")}
         value={bot.id}
         disabled={busy}
         onChange={e => onInspect(e.target.value)}
@@ -638,7 +643,7 @@ export function ComposerTools({
       <ToolPopover
         {...shared}
         id="add"
-        label="添加文件或内容"
+        label={tr("添加文件或内容", "Add files or content")}
         placement="composer"
         className="add-tool"
         trigger={<Plus size={19} strokeWidth={1.8} />}
@@ -678,10 +683,10 @@ export function ComposerTools({
       <ToolPopover
         {...shared}
         id="permission"
-        label="更改权限"
+        label={tr("更改权限", "Change permissions")}
         placement="permission"
         className={`permission-tool mode-${permission}`}
-        trigger={permissionLabel(permission, account?.provider)}
+        trigger={permissionLabel(permission, account?.provider, tr)}
       >
         <ApprovalMenu
           modes={menuModes}
@@ -700,7 +705,7 @@ export function ComposerTools({
       </ToolPopover>
       {detail === "permissions" &&
         createPortal(
-          <Modal title="操作批准" onClose={() => setDetail(null)}>
+          <Modal title={tr("操作批准", "Approval mode")} onClose={() => setDetail(null)}>
             <ApprovalDetails
               modes={modes}
               provider={account?.provider}
@@ -722,31 +727,31 @@ export function ComposerTools({
         <ToolPopover
           {...shared}
           id="speed"
-          label="Token 输出速度"
+          label={tr("Token 输出速度", "Token output speed")}
           inspect
           trailing
           className="ring-tool speed-tool"
           trigger={<SpeedGauge value={metrics?.tokensPerSecond ?? null} />}
         >
-          <h3>Token 输出速度</h3>
+          <h3>{tr("Token 输出速度", "Token output speed")}</h3>
           {groupPicker}
-          <p title={modelId}>当前模型 · {modelLabel}</p>
+          <p title={modelId}>{tr("当前模型 ·", "Current model ·")} {modelLabel}</p>
           {metrics ? (
             <SpeedReading metrics={metrics} />
           ) : (
             <p>
               {modelId
-                ? "发送消息后自动统计当前模型的输出速度。"
+                ? tr("发送消息后自动统计当前模型的输出速度。", "Send a message to see this model’s output speed.")
                 : loading
-                  ? "正在读取原生模型…"
-                  : "当前原生模型尚未确认。"}
+                  ? tr("正在读取原生模型…", "Loading CLI models…")
+                  : tr("当前原生模型尚未确认。", "The current CLI model is unverified.")}
             </p>
           )}
           {!metrics && lastMetrics && (
             <details className="previous-context" key={bot.id}>
-              <summary>上次原生读数</summary>
+              <summary>{tr("上次原生读数", "Last CLI reading")}</summary>
               <p title={lastMetrics.model}>
-                {modelLabelFor(catalog, lastMetrics.model) || lastMetrics.model || "原生工具未报告模型"}
+                {modelLabelFor(catalog, lastMetrics.model) || lastMetrics.model || tr("原生工具未报告模型", "The CLI did not report a model")}
               </p>
               <SpeedReading metrics={lastMetrics} />
             </details>
@@ -755,31 +760,31 @@ export function ComposerTools({
         <ToolPopover
           {...shared}
           id="cache"
-          label="缓存命中率"
+          label={tr("缓存命中率", "Cache hit rate")}
           inspect
           trailing
           className="ring-tool cache-tool"
           trigger={<CacheRing value={metrics?.cacheHitPercent ?? null} />}
         >
-          <h3>缓存命中率</h3>
+          <h3>{tr("缓存命中率", "Cache hit rate")}</h3>
           {groupPicker}
-          <p title={modelId}>当前模型 · {modelLabel}</p>
+          <p title={modelId}>{tr("当前模型 ·", "Current model ·")} {modelLabel}</p>
           {metrics ? (
             <CacheReading metrics={metrics} />
           ) : (
             <p>
               {modelId
-                ? "发送消息后自动统计当前模型的缓存命中率。"
+                ? tr("发送消息后自动统计当前模型的缓存命中率。", "Send a message to see this model’s cache hit rate.")
                 : loading
-                  ? "正在读取原生模型…"
-                  : "当前原生模型尚未确认。"}
+                  ? tr("正在读取原生模型…", "Loading CLI models…")
+                  : tr("当前原生模型尚未确认。", "The current CLI model is unverified.")}
             </p>
           )}
           {!metrics && lastMetrics && (
             <details className="previous-context" key={bot.id}>
-              <summary>上次原生读数</summary>
+              <summary>{tr("上次原生读数", "Last CLI reading")}</summary>
               <p title={lastMetrics.model}>
-                {modelLabelFor(catalog, lastMetrics.model) || lastMetrics.model || "原生工具未报告模型"}
+                {modelLabelFor(catalog, lastMetrics.model) || lastMetrics.model || tr("原生工具未报告模型", "The CLI did not report a model")}
               </p>
               <CacheReading metrics={lastMetrics} />
             </details>
@@ -788,24 +793,24 @@ export function ComposerTools({
         <ToolPopover
           {...shared}
           id="context"
-          label="上下文使用情况"
+          label={tr("上下文使用情况", "Context usage")}
           inspect
           trailing
           className="ring-tool"
           trigger={<Ring values={[contextPercent(usage)]} />}
         >
-          <h3>上下文使用情况</h3>
+          <h3>{tr("上下文使用情况", "Context usage")}</h3>
           {groupPicker}
-          <p title={modelId}>当前模型 · {modelLabel}</p>
+          <p title={modelId}>{tr("当前模型 ·", "Current model ·")} {modelLabel}</p>
           {usage ? (
             <ContextReading usage={usage} />
           ) : (
-            <p>{modelId ? "等待当前模型的原生用量。" : loading ? "正在读取原生模型…" : "当前原生模型尚未确认。"}</p>
+            <p>{modelId ? tr("等待当前模型的原生用量。", "Waiting for usage data from the CLI.") : loading ? tr("正在读取原生模型…", "Loading CLI models…") : tr("当前原生模型尚未确认。", "The current CLI model is unverified.")}</p>
           )}
           {!usage && lastUsage && (
             <details className="previous-context" key={bot.id}>
-              <summary>上次原生读数</summary>
-              <p title={lastUsage.model}>{modelLabelFor(catalog, lastUsage.model) || "原生工具未报告模型"}</p>
+              <summary>{tr("上次原生读数", "Last CLI reading")}</summary>
+              <p title={lastUsage.model}>{modelLabelFor(catalog, lastUsage.model) || tr("原生工具未报告模型", "The CLI did not report a model")}</p>
               <ContextReading usage={lastUsage} />
             </details>
           )}
@@ -813,44 +818,44 @@ export function ComposerTools({
         <ToolPopover
           {...shared}
           id="quota"
-          label="模型剩余额度"
+          label={tr("模型剩余额度", "Remaining model quota")}
           inspect
           trailing
           className="ring-tool quota-tool"
           trigger={<Ring values={ringValues.length ? ringValues : [null]} />}
         >
-          <h3>模型剩余额度</h3>
+          <h3>{tr("模型剩余额度", "Remaining model quota")}</h3>
           {groupPicker}
           <p className="quota-scope">
             {modelLabel} · {accountLabel(account)}
           </p>
-          {quota?.scope === "account" && <p>账号共享额度</p>}
+          {quota?.scope === "account" && <p>{tr("账号共享额度", "Shared account quota")}</p>}
           {windows.map((w, index) => {
             const value = remaining(w);
             return (
               <div className="quota-window" key={`${w.minutes}-${index}`}>
                 <div className="usage-line">
-                  <span>{windowLabel(w.minutes)}</span>
+                  <span>{windowLabel(w.minutes, tr)}</span>
                   <strong>
                     {value == null
-                      ? "剩余未知"
-                      : `剩余 ${number.format(value)}%`}
+                      ? tr("剩余未知", "Remaining quota unknown")
+                      : tr(`剩余 ${number.format(value)}%`, `${number.format(value)}% remaining`)}
                   </strong>
                 </div>
-                {w.shared && <p>账号共享额度</p>}
-                {w.group && <p>{w.group} 模型组共享额度</p>}
-                {w.resetsAt != null && <p>重置于 {displayTime(w.resetsAt)}</p>}
+                {w.shared && <p>{tr("账号共享额度", "Shared account quota")}</p>}
+                {w.group && <p>{w.group} {tr("模型组共享额度", "Shared model group quota")}</p>}
+                {w.resetsAt != null && <p>{tr("重置于", "Resets at")} {displayTime(w.resetsAt, tr)}</p>}
               </div>
             );
           })}
           {!windows.length && (
             <p>
               {quotaRequest?.key === requestKey && quotaRequest.loading
-                ? "正在读取额度…"
-                : "剩余额度未知。原生工具尚未提供此模型的额度。"}
+                ? tr("正在读取额度…", "Loading quota…")
+                : tr("剩余额度未知。原生工具尚未提供此模型的额度。", "The CLI has not provided a quota for this model.")}
             </p>
           )}
-          {quota?.updatedAt && <p>更新于 {displayTime(quota.updatedAt)}</p>}
+          {quota?.updatedAt && <p>{tr("更新于", "Updated")} {displayTime(quota.updatedAt, tr)}</p>}
           {quotaRequest?.key === requestKey && quotaRequest.error && (
             <p>{quotaRequest.error}</p>
           )}
@@ -858,7 +863,7 @@ export function ComposerTools({
         <ToolPopover
           {...shared}
           id="model"
-          label="更换模型和思考强度"
+          label={tr("更换模型和思考强度", "Change model and reasoning effort")}
           trailing
           alignToTrigger
           className="model-tool"

@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -59,6 +60,7 @@ export function Composer({
   publicMessages,
   firstProject,
 }) {
+  const tr = useLanguage();
   const { accounts } = state;
   const scope = draft ? (draft.legacyHome ? `home:${draft.members[0]}` : `draft:${draft.id}`) : chat.id;
   const projectCwd = chat ? chat.initialProjectCwd ?? null : draft?.folder ??
@@ -257,7 +259,7 @@ export function Composer({
       removeExtension(bot.id, item.id);
     else {
       if (maxExtensions > 1 && list.length >= maxExtensions) {
-        setError(`每条消息最多为此成员选择 ${maxExtensions} 项扩展。`);
+        setError(tr(`每条消息最多为此成员选择 ${maxExtensions} 项扩展。`, `Choose up to ${maxExtensions} extensions per message for this member.`));
         return;
       }
       if (isGroup && singleRecipient) setSelected([bot.id]);
@@ -289,6 +291,7 @@ export function Composer({
     );
   }
   const query = mention?.term?.toLowerCase() || "";
+  const matchesEveryone = tr("全体成员", "Everyone").toLowerCase().includes(query);
   const shown = members.filter((b) => {
     const a = accounts.find((x) => x.id === b.accountId);
     return [b.name, a?.note, a?.email, a?.identity].some((s) =>
@@ -397,13 +400,13 @@ export function Composer({
         }
       }
       if (hasFolder)
-        throw new Error("请通过加号菜单的「文件和文件夹」选择要附加的文件夹。");
+        throw new Error(tr("请通过加号菜单的「文件和文件夹」选择要附加的文件夹。", "Choose Files and folders in the plus menu to attach a folder."));
       const mib = 1024 * 1024;
       if (
         incoming.some((f) => f.size > 32 * mib) ||
         incoming.reduce((sum, f) => sum + f.size, 0) > 64 * mib
       )
-        throw new Error("文件较大，请使用加号菜单中的「添加文件」选择。");
+        throw new Error(tr("文件较大，请使用加号菜单中的「添加文件」选择。", "Choose this large file using Add files in the plus menu."));
       const files = await Promise.all(
         incoming.map(async (file) => ({
           name: file.name,
@@ -439,7 +442,7 @@ export function Composer({
   function chooseSlash(command, fromSend = false) {
     if (busy || firstProject?.disabled || !slashTarget || !command) return;
     if (replyToMessageId) {
-      setError("请先移除引用，再执行快捷命令。");
+      setError(tr("请先移除引用，再执行快捷命令。", "Remove the quote before running a shortcut."));
       return;
     }
     const { action, name } = command;
@@ -449,7 +452,7 @@ export function Composer({
     if (["prompt", "compact", "review", "extension"].includes(action)) {
       if (fromSend || (slash.exact && slash.hasArguments)) {
         if (Object.values(extensions).some((items) => items.length)) {
-          setError("请移除已选插件与技能，再单独发送这条快捷命令。");
+          setError(tr("请移除已选插件与技能，再单独发送这条快捷命令。", "Remove the selected plugins and skills before sending this shortcut."));
           return;
         }
         sendMessage({ botId, name, arguments: args });
@@ -462,11 +465,11 @@ export function Composer({
       return;
     }
     if (action === "unavailable") {
-      setError(command.reason || "此命令需要在原生工具中使用。");
+      setError(command.reason || tr("此命令需要在原生工具中使用。", "Run this command in the native CLI."));
       return;
     }
     if (args && action !== "goal") {
-      setError("此快捷方式在面板中操作，请移除命令后的参数。");
+      setError(tr("此快捷方式在面板中操作，请移除命令后的参数。", "This shortcut opens a panel. Remove the arguments after the command."));
       return;
     }
     async function runControl() {
@@ -496,8 +499,8 @@ export function Composer({
           setSlashDialog({
             action,
             bot: slashTarget,
-            title: "计划模式",
-            lines: [planMode ? "已开启计划模式" : "已关闭计划模式"],
+            title: tr("计划模式", "Plan mode"),
+            lines: [planMode ? tr("已开启计划模式", "Plan mode enabled") : tr("已关闭计划模式", "Plan mode disabled")],
           });
         } else if (action === "mcp") {
           const info = await invoke("slashInfo", {
@@ -509,7 +512,7 @@ export function Composer({
           setSlashDialog({ ...info, action, bot: slashTarget });
         } else if (action === "new" || action === "fork") {
           if (action === "fork" && !chat?.id)
-            throw new Error("请先在此聊天中完成一次原生对话，再创建分支。");
+            throw new Error(tr("请先在此聊天中完成一次原生对话，再创建分支。", "Finish a native turn in this chat before creating a branch."));
           if (action === "fork") {
             await onOpenChat(await invoke("forkChat", { chatId: chat.id, botId }));
           } else {
@@ -518,7 +521,7 @@ export function Composer({
           suppressDraftSave.current = true;
           setComposerDraft(scope, { ...getComposerDraft(scope), text: "" });
         } else {
-          throw new Error("此快捷命令尚未接入。");
+          throw new Error(tr("此快捷命令尚未接入。", "This shortcut is unavailable."));
         }
         setText("");
         suppressDraftSave.current = false;
@@ -546,7 +549,7 @@ export function Composer({
       if (slashOpen && slash.rows.length)
         return chooseSlash(slash.rows[slash.index]);
       if (text === "/") return slash.reveal();
-      setError("当前成员的原生工具未提供 /" + slash.name + "。");
+      setError(tr("当前成员的原生工具未提供 /", "This member’s CLI does not provide /") + slash.name + "。");
       return;
     }
     sendMessage();
@@ -702,29 +705,29 @@ export function Composer({
             ref={menu}
             id={menuId}
             role="group"
-            aria-label="选择接收人"
+            aria-label={tr("选择接收人", "Choose recipients")}
             onKeyDown={moveInMenu}
           >
             <div className="recipient-menu-header">
-              <strong>选择接收人</strong>
+              <strong>{tr("选择接收人", "Choose recipients")}</strong>
               <IconButton
                 icon={X}
-                label="关闭接收人列表"
+                label={tr("关闭接收人列表", "Close recipients")}
                 onClick={() => {
                   closeMenu();
                   ref.current?.focus();
                 }}
               />
             </div>
-            {"全体成员".includes(query) && members.length > 0 && (
+            {matchesEveryone && members.length > 0 && (
               <button
                 type="button"
                 className="recipient-option"
                 onClick={() => select(members.map((b) => b.id))}
               >
                 <UsersRound size={16} />
-                <span>全体成员</span>
-                <small>{members.length} 位</small>
+                <span>{tr("全体成员", "Everyone")}</span>
+                <small>{members.length} {tr("位", " members")}</small>
               </button>
             )}
             {shown.map((b) => {
@@ -750,8 +753,8 @@ export function Composer({
               );
             })}
             {!shown.length &&
-              (!members.length || !"全体成员".includes(query)) && (
-                <p className="menu-empty">没有匹配的群成员</p>
+              (!members.length || !matchesEveryone) && (
+                <p className="menu-empty">{tr("没有匹配的群成员", "No matching members")}</p>
               )}
           </div>
         )}
@@ -795,12 +798,12 @@ export function Composer({
           }}
         >
           {replyToMessageId && (
-            <div className="quote-card draft-quote" role="group" aria-label="待发送引用">
+            <div className="quote-card draft-quote" role="group" aria-label={tr("待发送引用", "Quote to send")}>
               {quotedMessage ? <MessageQuote message={quotedMessage} descriptionId={quoteDescriptionId} /> :
-                <span id={quoteDescriptionId}>原消息已不可用，请重新选择引用。</span>}
+                <span id={quoteDescriptionId}>{tr("原消息已不可用，请重新选择引用。", "The original message is unavailable. Choose another quote.")}</span>}
               <IconButton
                 icon={X}
-                label="移除引用"
+                label={tr("移除引用", "Remove quote")}
                 disabled={busy}
                 onClick={() => {
                   setReplyToMessageId(null);
@@ -811,7 +814,7 @@ export function Composer({
             </div>
           )}
           {files.length > 0 && (
-            <div className="attachment-chips" aria-label="待发送附件">
+            <div className="attachment-chips" aria-label={tr("待发送附件", "Attachments to send")}>
               {files.map((file) => {
                 const Icon =
                   file.kind === "folder"
@@ -829,16 +832,16 @@ export function Composer({
                     {file.kind === "folder" &&
                       Number.isInteger(file.fileCount) && (
                         <small>
-                          {file.fileCount} 个文件
+                          {file.fileCount} {tr("个文件", " files")}
                           {file.skippedCount > 0
-                            ? ` · 已跳过 ${file.skippedCount} 项`
+                            ? tr(` · 已跳过 ${file.skippedCount} 项`, ` · Skipped ${file.skippedCount}`)
                             : ""}
                         </small>
                       )}
                     <button
                       type="button"
                       disabled={workingFiles || busy}
-                      aria-label={`移除附件 ${file.name}`}
+                      aria-label={tr(`移除附件 ${file.name}`, `Remove attachment ${file.name}`)}
                       onClick={() =>
                         modifyFiles(async () => {
                           await invoke("removeAttachment", {
@@ -859,7 +862,7 @@ export function Composer({
             </div>
           )}
           {recipients.some((id) => extensions[id]?.length) && (
-            <div className="attachment-chips" aria-label="已选插件与技能">
+            <div className="attachment-chips" aria-label={tr("已选插件与技能", "Selected plugins and skills")}>
               {recipients.flatMap((id) =>
                 (extensions[id] || []).map((item) => (
                   <span key={id + item.id}>
@@ -872,7 +875,7 @@ export function Composer({
                     <button
                       type="button"
                       disabled={busy}
-                      aria-label={`移除 ${item.label}`}
+                      aria-label={tr(`移除 ${item.label}`, `Remove ${item.label}`)}
                       onClick={() => removeExtension(id, item.id)}
                     >
                       <X size={12} />
@@ -902,8 +905,8 @@ export function Composer({
                 <button
                   type="button"
                   key={id}
-                  aria-label={`移除接收人 ${members.find((b) => b.id === id)?.name}`}
-                  title="移除接收人"
+                  aria-label={tr(`移除接收人 ${members.find((b) => b.id === id)?.name}`, `Remove recipient ${members.find((b) => b.id === id)?.name}`)}
+                  title={tr("移除接收人", "Remove recipient")}
                   onClick={() => removeRecipient(id)}
                 >
                   @{members.find((b) => b.id === id)?.name}
@@ -918,16 +921,16 @@ export function Composer({
             rows={1}
             placeholder={
               !members.length
-                ? "此对话的 Bot 已归档"
+                ? tr("此对话的 Bot 已归档", "The bot in this chat is archived")
                 : isGroup
-                  ? "输入消息，使用 @ 选择接收人…"
-                  : `和 ${members[0].name} 一起工作`
+                  ? tr("输入消息，使用 @ 选择接收人…", "Write a message, use @ to choose recipients…")
+                  : tr(`和 ${members[0].name} 一起工作`, `Work with ${members[0].name}`)
             }
             disabled={!members.length}
             readOnly={busy}
             autoFocus
             maxLength={200000}
-            aria-label={draft ? "新对话消息" : "消息内容"}
+            aria-label={draft ? tr("新对话消息", "New chat message") : tr("消息内容", "Message")}
             aria-describedby={replyToMessageId ? quoteDescriptionId : undefined}
             aria-autocomplete="list"
             aria-controls={slashOpen ? slash.listId : undefined}
@@ -1045,8 +1048,8 @@ export function Composer({
                   disabled={!members.length}
                   aria-expanded={open}
                   aria-controls={open ? menuId : undefined}
-                  title="选择接收人"
-                  aria-label="选择接收人"
+                  title={tr("选择接收人", "Choose recipients")}
+                  aria-label={tr("选择接收人", "Choose recipients")}
                   ref={trigger}
                   onKeyDown={(e) => {
                     if (e.key === "ArrowDown" && open) moveInMenu(e);
@@ -1064,8 +1067,8 @@ export function Composer({
             <button
               type="button"
               className="send-btn"
-              aria-label={stopping ? "停止当前对话任务" : "发送消息"}
-              title={stopping ? "停止当前对话任务" : "发送消息"}
+              aria-label={stopping ? tr("停止当前对话任务", "Stop current task") : tr("发送消息", "Send message")}
+              title={stopping ? tr("停止当前对话任务", "Stop current task") : tr("发送消息", "Send message")}
               disabled={stopping ? busy : !canSend}
               onClick={stopping ? stop : send}
             >
@@ -1112,7 +1115,7 @@ export function Composer({
         )}
         {snippet !== null && (
           <Modal
-            title={snippetType === "editor" ? "附加编辑器选区" : "添加文本"}
+            title={snippetType === "editor" ? tr("附加编辑器选区", "Attach editor selection") : tr("添加文本", "Add text")}
             onClose={() => {
               if (!workingFiles) setSnippet(null);
             }}
@@ -1126,8 +1129,8 @@ export function Composer({
                     {
                       name:
                         snippetType === "editor"
-                          ? "编辑器选区.txt"
-                          : "添加的文本.txt",
+                          ? tr("编辑器选区.txt", "Editor selection.txt")
+                          : tr("添加的文本.txt", "Attached text.txt"),
                       text: snippet,
                     },
                   ]),
@@ -1138,11 +1141,11 @@ export function Composer({
               <textarea
                 className="snippet-input"
                 data-autofocus
-                aria-label="文本内容"
+                aria-label={tr("文本内容", "Text content")}
                 placeholder={
                   snippetType === "editor"
-                    ? "从编辑器复制选区，然后粘贴到这里"
-                    : "输入或粘贴文本"
+                    ? tr("从编辑器复制选区，然后粘贴到这里", "Copy a selection from your editor and paste it here")
+                    : tr("输入或粘贴文本", "Type or paste text")
                 }
                 value={snippet}
                 onChange={(e) => setSnippet(e.target.value)}
@@ -1155,7 +1158,7 @@ export function Composer({
                   onClick={() => setSnippet(null)}
                   disabled={workingFiles}
                 >
-                  取消
+                  {tr("取消", "Cancel")}
                 </Button>
                 <Button
                   type="submit"
@@ -1163,7 +1166,7 @@ export function Composer({
                   busy={workingFiles}
                   disabled={!snippet.trim()}
                 >
-                  添加到消息
+                  {tr("添加到消息", "Add to message")}
                 </Button>
               </div>
             </form>
@@ -1181,10 +1184,10 @@ export function Composer({
                 const blob = await new Promise((resolve) =>
                   canvas.toBlob(resolve, "image/png"),
                 );
-                if (!blob) throw new Error("无法导出草图，请重试。");
+                if (!blob) throw new Error(tr("无法导出草图，请重试。", "Could not export the sketch. Try again."));
                 await addFiles([
                   {
-                    name: "草图.png",
+                    name: tr("草图.png", "Sketch.png"),
                     bytes: new Uint8Array(await blob.arrayBuffer()),
                   },
                 ]);
@@ -1195,7 +1198,7 @@ export function Composer({
         )}
         <Notice>
           {(snippet === null && !sketch && error) ||
-            (ambiguous ? "群中有同名 Bot，请从接收人列表中按账号选择。" : "")}
+            (ambiguous ? tr("群中有同名 Bot，请从接收人列表中按账号选择。", "Multiple bots share this name. Choose a recipient by account.") : "")}
         </Notice>
       </div>
     </div>

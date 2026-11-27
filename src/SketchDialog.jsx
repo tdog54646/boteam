@@ -1,7 +1,9 @@
+import { useLanguage } from "./preferences";
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { Button, Modal, Notice } from "./ui";
 
 export function SketchDialog({ busy, error, onClose, onAdd }) {
+  const tr = useLanguage();
   const canvas = useRef(null);
   const activePointer = useRef(null);
   const [drawn, setDrawn] = useState(false);
@@ -50,13 +52,13 @@ export function SketchDialog({ busy, error, onClose, onAdd }) {
     ctx.moveTo(x, y);
   }
   return (
-    <Modal title="绘制草图" onClose={onClose}>
+    <Modal title={tr("绘制草图", "Draw a sketch")} onClose={onClose}>
       <canvas
         width={1024}
         height={640}
         ref={canvas}
         className="sketch-surface"
-        aria-label="草图画布"
+        aria-label={tr("草图画布", "Sketch canvas")}
         onPointerDown={start}
         onPointerMove={draw}
         onLostPointerCapture={() => {
@@ -66,7 +68,7 @@ export function SketchDialog({ busy, error, onClose, onAdd }) {
       <Notice>{error}</Notice>
       <div className="form-actions">
         <Button disabled={!drawn || busy} onClick={clear}>
-          清空画布
+          {tr("清空画布", "Clear canvas")}
         </Button>
         <Button
           variant="primary"
@@ -74,7 +76,7 @@ export function SketchDialog({ busy, error, onClose, onAdd }) {
           disabled={!drawn}
           onClick={() => onAdd(canvas.current)}
         >
-          添加到消息
+          {tr("添加到消息", "Add to message")}
         </Button>
       </div>
     </Modal>

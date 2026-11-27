@@ -1,13 +1,14 @@
+import { useLanguage } from "./preferences";
 import React, { useEffect, useState } from "react";
 import { Button, Modal, Notice, errorText } from "./ui";
 
 const statusLabels = {
-  active: "进行中",
-  paused: "已暂停",
-  blocked: "受阻",
-  usageLimited: "已达用量限制",
-  budgetLimited: "已达目标预算",
-  complete: "已完成",
+  active: ["进行中", "Active"],
+  paused: ["已暂停", "Paused"],
+  blocked: ["受阻", "Blocked"],
+  usageLimited: ["已达用量限制", "Usage limit reached"],
+  budgetLimited: ["已达目标预算", "Goal budget reached"],
+  complete: ["已完成", "Complete"],
 };
 
 export function GoalDialog({
@@ -20,6 +21,7 @@ export function GoalDialog({
   onStarted,
   initialObjective = "",
 }) {
+  const tr = useLanguage();
   const [existing, setExisting] = useState(() => draftGoal ? { status: "paused", objective: draftGoal } : null);
   const [text, setText] = useState(initialObjective || draftGoal || "");
   const [busy, setBusy] = useState(Boolean(chatId));
@@ -72,8 +74,8 @@ export function GoalDialog({
   }
   return (
     <Modal
-      title="目标"
-      subtitle={bot.name + " 将持续追求此目标，直至完成或停止。"}
+      title={tr("目标", "Goal")}
+      subtitle={bot.name + tr(" 将持续追求此目标，直至完成或停止。", " will pursue this goal until it is completed or stopped.")}
       onClose={() => {
         if (!busy || !ready) onClose();
       }}
@@ -86,16 +88,16 @@ export function GoalDialog({
       >
         {existing && (
           <p className="goal-status">
-            目标状态 · {statusLabels[existing.status] || existing.status}
+            {tr("目标状态 ·", "Goal status ·")} {statusLabels[existing.status] ? tr(...statusLabels[existing.status]) : existing.status}
           </p>
         )}
         <textarea
           data-autofocus
           className="snippet-input"
-          aria-label="目标内容"
+          aria-label={tr("目标内容", "Objective")}
           maxLength={10000}
           rows={4}
-          placeholder="设置要持续追求的目标"
+          placeholder={tr("设置要持续追求的目标", "Set an ongoing goal")}
           value={text}
           readOnly={!ready || busy}
           onChange={(e) => setText(e.target.value)}
@@ -104,12 +106,12 @@ export function GoalDialog({
         <div className="form-actions">
           {existing && (
             <Button disabled={busy} onClick={() => save("clear")}>
-              清除目标
+              {tr("清除目标", "Clear goal")}
             </Button>
           )}
           {!ready && error && (
             <Button onClick={() => setAttempt((value) => value + 1)}>
-              重新读取
+              {tr("重新读取", "Reload")}
             </Button>
           )}
           {ready && (
@@ -117,7 +119,7 @@ export function GoalDialog({
               disabled={busy || !text.trim()}
               onClick={() => save("set", "paused")}
             >
-              {existing?.status === "active" ? "暂停目标" : "保存为暂停"}
+              {existing?.status === "active" ? tr("暂停目标", "Pause goal") : tr("保存为暂停", "Save paused")}
             </Button>
           )}
           <Button
@@ -126,7 +128,7 @@ export function GoalDialog({
             disabled={!ready || !text.trim()}
             busy={busy}
           >
-            {existing?.status === "active" ? "更新目标" : "开始目标"}
+            {existing?.status === "active" ? tr("更新目标", "Update goal") : tr("开始目标", "Start goal")}
           </Button>
         </div>
       </form>
