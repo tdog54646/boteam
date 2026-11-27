@@ -1,0 +1,89 @@
+.channel-setup-dialog {
+  max-width: calc(100vw - 48px);
+  margin: auto;
+  border: 0;
+  color: var(--fg);
+  overflow: hidden;
+  outline: none;
+}
+.channel-setup-dialog[open] { display: flex; flex-direction: column; }
+.channel-setup-dialog::backdrop { background: rgb(0 0 0 / 27%); }
+.channel-setup-heading { flex: none; }
+.channel-setup-heading .channel-icon { width: 32px; height: 32px; border-radius: 8px; }
+.channel-setup-heading > div { flex: 1; min-width: 0; }
+.channel-setup-body {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin: -4px;
+  padding: 4px;
+}
+.channel-setup-body > .notice { margin: 0 0 16px; }
+.channel-guide { margin-bottom: 20px; }
+.channel-setup-body h3 { margin: 0 0 8px; font-size: 13px; line-height: 18px; font-weight: 550; }
+.channel-guide ol { padding-left: 1.4em; color: var(--muted); font-size: 13px; line-height: 19px; }
+.channel-guide li + li { margin-top: 4px; }
+.channel-guide-link { color: var(--accent); text-decoration: underline; font-size: inherit; }
+.channel-guide li .channel-guide-link, .channel-permission-copy { margin-left: 6px; }
+.channel-credentials { display: grid; gap: 16px; }
+.setup-field, .setup-qr-pin label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 520;
+}
+.setup-field b { color: var(--danger); }
+.setup-field :is(input, select, textarea), .setup-qr-pin input, .channel-setup-body .channel-policy-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--canvas);
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 400;
+}
+.setup-field textarea { height: auto; padding-block: 7px; }
+.setup-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
+.channel-credentials .setup-actions { margin-top: 8px; }
+.setup-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 510;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.setup-secondary:hover:enabled { background: var(--hover); }
+.setup-qr { text-align: center; }
+.setup-qr-hint { color: var(--muted); margin: 0 0 12px; font-size: 13px; line-height: 19px; }
+.setup-qr-image, .setup-qr-placeholder { display: block; width: 270px; max-width: 100%; aspect-ratio: 1; margin: auto; border-radius: 8px; }
+.setup-qr-image { image-rendering: pixelated; background: white; }
+.setup-qr-placeholder { display: grid; place-items: center; color: var(--muted); }
+.setup-qr-placeholder .notice { text-align: start; }
+.setup-qr-status { display: flex; justify-content: center; align-items: center; gap: 6px; margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 17px; }
+.setup-qr-pin { max-width: 270px; margin: 16px auto 0; display: flex; align-items: flex-end; gap: 8px; text-align: start; }
+.setup-configured { display: grid; gap: 16px; }
+.setup-connection-row, .setup-access-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.setup-connection-row > div, .setup-access-row > div { min-width: 0; }
+.setup-connection-row strong, .setup-access-row strong { display: block; font-size: 14px; font-weight: 540; overflow-wrap: anywhere; }
+.setup-connection-row small, .channel-binding-section small { display: block; font-size: 12px; line-height: 17px; color: var(--muted); overflow-wrap: anywhere; }
+.channel-binding-section { border-top: 1px solid var(--line); padding-top: 16px; }
+.channel-operation-permission { margin-top: 14px; }
+.channel-operation-permission > small { margin-top: 5px; }
+.channel-binding-section > p, .setup-actions > p { color: var(--muted); font-size: 13px; line-height: 19px; }
+.channel-binding-section > .channel-guide-link { display: inline-block; margin-top: 8px; font-size: 13px; }
+.setup-access-row { padding: 8px 0; }
+.setup-configured > .setup-actions { border-top: 1px solid var(--line); padding-top: 16px; }
