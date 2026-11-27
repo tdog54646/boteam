@@ -9,7 +9,7 @@ import { Workspace } from '../desktop/workspace.mjs'
 const root = await mkdtemp(join(tmpdir(), 'boteam-chat-actions-'))
 const repo = join(root, 'fixture-repository')
 const otherDirectory = join(root, 'second-directory')
-const groupName = '两个工作目录'
+const groupName = '两个工作目录中的发布说明、验收记录以及下一轮协作计划'
 const activeName = '当前对话'
 const targetName = '待整理对话'
 const renamed = '已重命名的对话'
@@ -83,7 +83,32 @@ try {
   const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
   const shareCount = () => app.evaluate(() => globalThis.chatActionProbe.shares)
 
-  await page.getByTitle(groupName, { exact: true }).click()
+  const groupButton = page.getByTitle(groupName, { exact: true })
+  const groupTitle = groupButton.locator('.chat-title-text')
+  const typography = element => {
+    const style = getComputedStyle(element)
+    return [style.color, style.fontWeight]
+  }
+  const ordinaryType = await groupTitle.evaluate(typography)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await groupButton.hover()
+  await expect.poll(() => groupTitle.evaluate(el => {
+    const transform = getComputedStyle(el).transform
+    return transform === 'none' ? 0 : new DOMMatrix(transform).m41
+  })).toBeLessThan(-1)
+  const endGap = await groupTitle.evaluate(el => {
+    el.getAnimations()[0].finish()
+    return el.getBoundingClientRect().right - el.parentElement.getBoundingClientRect().right
+  })
+  expect(Math.abs(endGap)).toBeLessThan(1)
+  await page.mouse.move(0, 0)
+  await expect(groupTitle).toHaveCSS('transform', 'none')
+  await groupButton.click()
+  await expect(groupButton).toHaveAttribute('aria-current', 'page')
+  expect(await groupTitle.evaluate(typography)).toEqual(ordinaryType)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(groupTitle).toHaveCSS('transform', 'none')
+  await page.emulateMedia({ reducedMotion: null })
   await headerButton.click()
   await item(headerMenu, '复制').hover()
   await item(page.getByRole('menu', { name: '复制', exact: true }), '复制工作目录').click()

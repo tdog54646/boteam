@@ -357,6 +357,8 @@ body.is-resizing-pane webview {
 }
 .rail-row[aria-current="page"] {
   background: var(--selected);
+}
+.rail-row[aria-current="page"]:not(.thread-row) {
   font-weight: 520;
 }
 .rail-row kbd,

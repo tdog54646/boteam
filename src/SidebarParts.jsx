@@ -1,17 +1,20 @@
+import { useLanguage } from "./preferences";
 import React, { useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Archive, ArchiveRestore, Check, ChevronRight, Pin, PinOff } from "lucide-react";
 import { IconButton } from "./ui";
+import { ChatRowTitle } from "./ChatRowTitle";
 
-export function shortDate(when) {
+export function shortDate(when, language = "zh-CN") {
   const date = new Date(when);
   if (!Number.isFinite(date.getTime())) return "";
   return date.toDateString() === new Date().toDateString()
-    ? date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })
-    : date.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
+    ? date.toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit", hour12: false })
+    : date.toLocaleDateString(language, { month: "numeric", day: "numeric" });
 }
 
 export function ChatRows({ chats, selected, runningIds, select, onChatMenu, onChatAction, menuChatId }) {
+  const tr = useLanguage();
   return chats.map(chat => {
     function context(event, keyboard) {
       event.preventDefault();
@@ -27,15 +30,15 @@ export function ChatRows({ chats, selected, runningIds, select, onChatMenu, onCh
       }}>
       <button className="rail-row thread-row" aria-current={selected === chat.id ? "page" : undefined}
         title={chat.name} onClick={() => select(chat.id)}>
-        <span>{chat.name}</span>
-        {chat.unread && <i className="chat-unread-dot" aria-label="未读" role="img" />}
-        {runningIds.has(chat.id) && <i className="running-dot" role="img" aria-label="正在运行" />}
+        <ChatRowTitle>{chat.name}</ChatRowTitle>
+        {chat.unread && <i className="chat-unread-dot" aria-label={tr("未读", "Unread")} role="img" />}
+        {runningIds.has(chat.id) && <i className="running-dot" role="img" aria-label={tr("正在运行", "Running")} />}
       </button>
       <div className="chat-row-quick">
         {!chat.archived && <IconButton icon={chat.pinned ? PinOff : Pin}
-          label={chat.pinned ? "取消置顶聊天" : "置顶聊天"} onClick={() => onChatAction("pin", chat)} />}
+          label={chat.pinned ? tr("取消置顶聊天", "Unpin chat") : tr("置顶聊天", "Pin chat")} onClick={() => onChatAction("pin", chat)} />}
         <IconButton icon={chat.archived ? ArchiveRestore : Archive}
-          label={chat.archived ? "取消归档聊天" : "归档聊天"} onClick={() => onChatAction("archive", chat)} />
+          label={chat.archived ? tr("取消归档聊天", "Unarchive chat") : tr("归档聊天", "Archive chat")} onClick={() => onChatAction("archive", chat)} />
       </div>
     </div>;
   });
