@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowLeft, Check, ChevronDown, ChevronRight, CircleAlert, Copy } from "lucide-react";
 import { fileBasename } from "../desktop/file-preview-rules.mjs";
@@ -9,17 +10,20 @@ import { errorText, IconButton, Spinner } from "./ui";
 import "./conversation.css";
 import "./subagents.css";
 
-export const agentStatus = {
-  pendingInit: "等待启动",
-  running: "运行中",
-  dispatched: "已派发",
-  unconfirmed: "状态待确认",
-  completed: "已完成",
-  interrupted: "已中断",
-  errored: "失败",
-  shutdown: "已关闭",
-  notFound: "未找到",
+const agentStatus = {
+  pendingInit: ["等待启动", "Starting"],
+  running: ["运行中", "Running"],
+  dispatched: ["已派发", "Dispatched"],
+  unconfirmed: ["状态待确认", "Unconfirmed"],
+  completed: ["已完成", "Completed"],
+  interrupted: ["已中断", "Interrupted"],
+  errored: ["失败", "Failed"],
+  shutdown: ["已关闭", "Closed"],
+  notFound: ["未找到", "Not found"],
 };
+export function agentStatusLabel(status, tr) {
+  return agentStatus[status] ? tr(...agentStatus[status]) : status;
+}
 export const finishedAgentStates = new Set(["completed", "interrupted", "errored", "shutdown", "notFound"]);
 const active = new Set(["pendingInit", "running"]);
 const awaiting = new Set(["dispatched", "unconfirmed"]);
@@ -60,22 +64,23 @@ export function listSubagents(chatId, tasks, bots, accounts) {
 }
 
 function State({ agent }) {
+  const tr = useLanguage();
   return (
     <span className="subagent-state" data-state={agent.status}>
       <i aria-hidden="true" />
-      {agentStatus[agent.status]}
+      {agentStatusLabel(agent.status, tr)}
     </span>
   );
 }
 
-function liveSubagentHeadline(toolEvents) {
+function liveSubagentHeadline(toolEvents, tr) {
   const latest = [...toolEvents].reverse().find((ev) => ev.status === "running") || toolEvents.at(-1);
-  if (!latest) return "正在思考";
-  if (latest.category === "read" || latest.category === "search") return "正在读取文件";
-  if (latest.category === "command" || latest.kind === "command") return "正在运行命令";
-  if (latest.category === "edit" || latest.kind === "fileChange") return "正在编辑文件";
-  if (latest.category === "web" || latest.kind === "webSearch") return "正在搜索网页";
-  return "正在调用工具";
+  if (!latest) return tr("正在思考", "Thinking");
+  if (latest.category === "read" || latest.category === "search") return tr("正在读取文件", "Reading files");
+  if (latest.category === "command" || latest.kind === "command") return tr("正在运行命令", "Running a command");
+  if (latest.category === "edit" || latest.kind === "fileChange") return tr("正在编辑文件", "Editing files");
+  if (latest.category === "web" || latest.kind === "webSearch") return tr("正在搜索网页", "Searching the web");
+  return tr("正在调用工具", "Using a tool");
 }
 
 function isReportSignoff(text, reportText) {
@@ -219,6 +224,7 @@ function SubagentTurnView({
   onOpenUrl,
   onOpenChatLink,
 }) {
+  const tr = useLanguage();
   const hasIntermediateSteps = turn.timelineBlocks.length > 0;
   const [stepsOpen, setStepsOpen] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -262,7 +268,7 @@ function SubagentTurnView({
             {turn.turnRunning ? (
               <div className="turn-live-bar">
                 <span className="turn-live-status">
-                  <span className="codex-shimmer">{liveSubagentHeadline(turn.allToolEvents)}</span>
+                  <span className="codex-shimmer">{liveSubagentHeadline(turn.allToolEvents, tr)}</span>
                 </span>
               </div>
             ) : turn.isLastTurn && agent.status === "interrupted" ? (
@@ -274,11 +280,11 @@ function SubagentTurnView({
                   aria-controls={stepsRegionId}
                   onClick={() => setStepsOpen((v) => !v)}
                 >
-                  <span>已中断{toolCount ? ` · ${toolCount} 项操作` : ""}</span>
+                  <span>{tr("已中断", "Interrupted")}{toolCount ? tr(` · ${toolCount} 项操作`, ` · ${toolCount} actions`) : ""}</span>
                   <ChevronDown size={13} className={`turn-chevron ${stepsOpen ? "is-open" : ""}`} aria-hidden="true" />
                 </button>
               ) : (
-                <div className="turn-duration-static is-interrupted">已中断</div>
+                <div className="turn-duration-static is-interrupted">{tr("已中断", "Interrupted")}</div>
               )
             ) : turn.isLastTurn && agent.status === "errored" ? (
               hasIntermediateSteps ? (
@@ -290,13 +296,13 @@ function SubagentTurnView({
                   onClick={() => setStepsOpen((v) => !v)}
                 >
                   <CircleAlert size={13} />
-                  <span>运行失败{toolCount ? ` · ${toolCount} 项操作` : ""}</span>
+                  <span>{tr("运行失败", "Run failed")}{toolCount ? tr(` · ${toolCount} 项操作`, ` · ${toolCount} actions`) : ""}</span>
                   <ChevronDown size={13} className={`turn-chevron ${stepsOpen ? "is-open" : ""}`} aria-hidden="true" />
                 </button>
               ) : (
                 <div className="turn-duration-static is-failed">
                   <CircleAlert size={13} />
-                  <span>运行失败</span>
+                  <span>{tr("运行失败", "Run failed")}</span>
                 </div>
               )
             ) : hasIntermediateSteps ? (
@@ -307,7 +313,7 @@ function SubagentTurnView({
                 aria-controls={stepsRegionId}
                 onClick={() => setStepsOpen((v) => !v)}
               >
-                <span>执行过程{toolCount ? ` · ${toolCount} 项操作` : ""}</span>
+                <span>{tr("执行过程", "Activity")}{toolCount ? tr(` · ${toolCount} 项操作`, ` · ${toolCount} actions`) : ""}</span>
                 <ChevronDown size={13} className={`turn-chevron ${stepsOpen ? "is-open" : ""}`} aria-hidden="true" />
               </button>
             ) : null}
@@ -362,7 +368,7 @@ function SubagentTurnView({
             )}
 
             {turn.outputFiles.length > 0 && (
-              <div className="end-resource-list" aria-label="生成与更新的文件">
+              <div className="end-resource-list" aria-label={tr("生成与更新的文件", "Generated and updated files")}>
                 {turn.outputFiles.map((item) => (
                   <EndResourceCard
                     key={item.path}
@@ -376,7 +382,7 @@ function SubagentTurnView({
 
             {turn.isLastTurn && !turn.finalText && waiting && (
               <p className="subagent-hint" role="status">
-                <span className="codex-shimmer">正在等待子智能体输出</span>
+                <span className="codex-shimmer">{tr("正在等待子智能体输出", "Waiting for subagent output")}</span>
               </p>
             )}
 
@@ -389,8 +395,8 @@ function SubagentTurnView({
                 <button
                   type="button"
                   className="codex-action-icon"
-                  aria-label={copied ? "已复制回复" : "复制回复"}
-                  title={copied ? "已复制" : "复制"}
+                  aria-label={copied ? tr("已复制回复", "Reply copied") : tr("复制回复", "Copy reply")}
+                  title={copied ? tr("已复制", "Copied") : tr("复制", "Copy")}
                   onClick={copyReply}
                 >
                   {copied ? <Check size={13.5} /> : <Copy size={13.5} />}
@@ -405,6 +411,7 @@ function SubagentTurnView({
 }
 
 function AgentTranscript({ agent, chatId, invoke, activeTab, open, back }) {
+  const tr = useLanguage();
   const [result, setResult] = useState(null);
   const [retry, setRetry] = useState(0);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
@@ -513,13 +520,13 @@ function AgentTranscript({ agent, chatId, invoke, activeTab, open, back }) {
     (entry) => entry.role === "activity" && entry.text.includes("等待权限确认"),
   );
   const emptyReply = blockedOnApproval
-    ? "该子智能体因调用需交互授权的工具已挂起中断，后续由主会话接管。"
+    ? tr("该子智能体因调用需交互授权的工具已挂起中断，后续由主会话接管。", "This subagent was interrupted while waiting for interactive approval. The main chat will take over.")
     : agent.nativeThreadId && agent.provider === "antigravity"
-      ? "已读取原生子会话，当前没有正文回复。"
+      ? tr("已读取原生子会话，当前没有正文回复。", "The native subagent session has no reply yet.")
       : {
-          dispatched: "CLI 已确认派发，尚未提供子智能体会话或完成状态。",
-          unconfirmed: "主任务已结束，暂未收到子智能体回复。",
-        }[agent.status] || "此任务没有可预览的子智能体回复。";
+          dispatched: tr("CLI 已确认派发，尚未提供子智能体会话或完成状态。", "The CLI accepted the task and has not yet provided a subagent session or completion status."),
+          unconfirmed: tr("主任务已结束，暂未收到子智能体回复。", "The main task has ended without a subagent reply."),
+        }[agent.status] || tr("此任务没有可预览的子智能体回复。", "No subagent reply is available to preview.");
 
   const turns = useMemo(() => buildSubagentTurns(entries, waiting), [entries, waiting]);
 
@@ -532,7 +539,7 @@ function AgentTranscript({ agent, chatId, invoke, activeTab, open, back }) {
   return (
     <>
       <header className="subagent-heading">
-        <IconButton icon={ArrowLeft} label="返回子智能体列表" onClick={back} />
+        <IconButton icon={ArrowLeft} label={tr("返回子智能体列表", "Back to subagents")} onClick={back} />
         <SubagentGlyph seed={agent.avatarSeed} size={24} />
         <div className="subagent-identity">
           <h2 title={agent.name}>{agent.name}</h2>
@@ -545,7 +552,7 @@ function AgentTranscript({ agent, chatId, invoke, activeTab, open, back }) {
           className="subagent-transcript"
           ref={view}
           role="region"
-          aria-label="子智能体会话"
+          aria-label={tr("子智能体会话", "Subagent chat")}
           onScroll={(event) => {
             const el = event.currentTarget;
             const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
@@ -555,7 +562,7 @@ function AgentTranscript({ agent, chatId, invoke, activeTab, open, back }) {
         >
           {!result ? (
             <p className="subagent-hint" role="status">
-              <Spinner size={14} /> 正在读取子智能体会话
+              <Spinner size={14} /> {tr("正在读取子智能体会话", "Loading subagent chat")}
             </p>
           ) : result.error ? (
             <p className="subagent-hint" role="alert">
@@ -568,7 +575,7 @@ function AgentTranscript({ agent, chatId, invoke, activeTab, open, back }) {
                   setRetry((n) => n + 1);
                 }}
               >
-                重试
+                {tr("重试", "Retry")}
               </button>
             </p>
           ) : turns.length > 0 ? (
@@ -590,7 +597,7 @@ function AgentTranscript({ agent, chatId, invoke, activeTab, open, back }) {
             <>
               {waiting && (
                 <p className="subagent-hint" role="status">
-                  <span className="codex-shimmer">正在等待子智能体输出</span>
+                  <span className="codex-shimmer">{tr("正在等待子智能体输出", "Waiting for subagent output")}</span>
                 </p>
               )}
               {!waiting && <p className="subagent-hint">{emptyReply}</p>}
@@ -601,8 +608,8 @@ function AgentTranscript({ agent, chatId, invoke, activeTab, open, back }) {
           <button
             type="button"
             className="codex-float-scroll-btn conv-scroll-bottom"
-            aria-label="回到底部"
-            title="回到底部"
+            aria-label={tr("回到底部", "Back to bottom")}
+            title={tr("回到底部", "Back to bottom")}
             onClick={jumpToBottom}
           >
             <ArrowDown size={15} />
@@ -614,6 +621,7 @@ function AgentTranscript({ agent, chatId, invoke, activeTab, open, back }) {
 }
 
 export function SubagentsPanel({ agents, agentKey, select, chatId, invoke, activeTab, open }) {
+  const tr = useLanguage();
   const agent = agents.find((item) => item.key === agentKey);
   if (agent) {
     return (
@@ -629,13 +637,13 @@ export function SubagentsPanel({ agents, agentKey, select, chatId, invoke, activ
     );
   }
   const groups = [
-    { title: "进行中", items: agents.filter((item) => active.has(item.status)) },
-    { title: "待确认", items: agents.filter((item) => awaiting.has(item.status)) },
-    { title: "已结束", items: agents.filter((item) => !active.has(item.status) && !awaiting.has(item.status)) },
+    { title: tr("进行中", "In progress"), items: agents.filter((item) => active.has(item.status)) },
+    { title: tr("待确认", "Pending"), items: agents.filter((item) => awaiting.has(item.status)) },
+    { title: tr("已结束", "Finished"), items: agents.filter((item) => !active.has(item.status) && !awaiting.has(item.status)) },
   ].filter((group) => group.items.length);
   return (
-    <div className="subagent-list" aria-label="子智能体列表">
-      {!groups.length && <p className="subagent-hint">当前对话暂无子智能体记录。</p>}
+    <div className="subagent-list" aria-label={tr("子智能体列表", "Subagents")}>
+      {!groups.length && <p className="subagent-hint">{tr("当前对话暂无子智能体记录。", "This chat has no subagents yet.")}</p>}
       {groups.map(({ title, items }) => (
         <section key={title} aria-label={title}>
           <h2>

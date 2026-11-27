@@ -1,4 +1,5 @@
 import React from "react";
+import { usePreferences } from "./preferences";
 import "./subagent-glyph.css";
 
 // Codex pairs each light glyph with a separately drawn dark glyph.
@@ -51,10 +52,10 @@ export function subagentAccentColor(seed = "") {
 }
 
 export function SubagentGlyph({ seed, size = 14 }) {
+  const { appearance } = usePreferences();
   const variant = subagentVariant(seed);
   return <picture className="subagent-glyph" data-variant={variant} aria-hidden="true">
-    <source media="(prefers-color-scheme: dark)" srcSet={glyphs[`../assets/subagent-glyphs/${variant}-dark.svg`]} />
-    <img src={glyphs[`../assets/subagent-glyphs/${variant}-light.svg`]} width={size} height={size} alt="" draggable={false} />
+    <img src={glyphs[`../assets/subagent-glyphs/${variant}-${appearance}.svg`]} width={size} height={size} alt="" draggable={false} />
   </picture>;
 }
 

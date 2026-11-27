@@ -1,10 +1,11 @@
+import { useLanguage } from "./preferences";
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, ChevronDown, ChevronRight, Ellipsis, FileText,
   Folder, GitBranch, Globe, Link2, PanelRight, Plus, Search, Upload,
 } from "lucide-react";
 import { errorText, IconButton, Spinner } from "./ui";
-import { agentStatus, finishedAgentStates } from "./Subagents";
+import { agentStatusLabel, finishedAgentStates } from "./Subagents";
 import SubagentGlyph from "./SubagentGlyph";
 import "./chat-toolbar.css";
 
@@ -18,7 +19,7 @@ function OverviewIcon({ size, strokeWidth }) {
   </svg>;
 }
 
-function conversationSources(messages, tasks, drafts) {
+function conversationSources(messages, tasks, drafts, tr) {
   const sources = new Map();
   const addFile = (file, messageId) => sources.set(file.id, {
     id: file.id, title: file.name, kind: file.kind === "folder" ? "folder" : "file", messageId,
@@ -41,7 +42,7 @@ function conversationSources(messages, tasks, drafts) {
       if (event.source?.url) addUrl(event.source.url, task.messageId);
       else if (event.source || ["搜索网页", "WebSearch", "WebFetch"].includes(event.text)) {
         const id = task.id + "/" + index;
-        sources.set(id, { id, kind: "search", title: event.source?.title || "网页搜索", messageId: task.messageId });
+        sources.set(id, { id, kind: "search", title: event.source?.title || tr("网页搜索", "Web search"), messageId: task.messageId });
       }
     }
   }
@@ -56,6 +57,7 @@ function jumpToMessage(id) {
 }
 
 function Overview({ id, chat, members, state, agents, invoke, draft, pickSource, openWorkspace, dismiss }) {
+  const tr = useLanguage();
   const [botId, setBotId] = useState(members[0]?.id);
   const member = members.find(bot => bot.id === botId) || members[0];
   const [changes, setChanges] = useState(null);
@@ -67,14 +69,14 @@ function Overview({ id, chat, members, state, agents, invoke, draft, pickSource,
   const jobs = useMemo(() => state.tasks.filter(t => t.chatId === chat.id), [state.tasks, chat.id]);
   const files = draft?.chatId === chat.id ? draft.files : noFiles;
   const sources = useMemo(() => conversationSources(
-    state.messages.filter(m => m.chatId === chat.id), jobs, files,
-  ), [state.messages, jobs, chat.id, files]);
+    state.messages.filter(m => m.chatId === chat.id), jobs, files, tr,
+  ), [state.messages, jobs, chat.id, files, tr]);
   const filteredSources = sources.filter(s => s.title.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()));
   const complete = agents.filter(a => a.status === "completed").length;
   const waitingAgents = agents.filter(agent => !finishedAgentStates.has(agent.status));
   const summaryAgents = (waitingAgents.length ? waitingAgents : agents).slice(0, 4);
   const ended = agents.length - waitingAgents.length;
-  const endedLabel = ended + (complete === ended ? " 个已完成" : " 个已结束");
+  const endedLabel = ended + (complete === ended ? tr(" 个已完成", " completed") : tr(" 个已结束", " finished"));
   const settled = jobs.filter(job => !["queued", "running", "approval"].includes(job.status)).length;
   useEffect(() => {
     if (!member || !showChanges) return;
@@ -105,65 +107,65 @@ function Overview({ id, chat, members, state, agents, invoke, draft, pickSource,
     );
   }
   return (
-    <section id={id} className="chat-popover overview" aria-label="聊天概览" role="dialog">
+    <section id={id} className="chat-popover overview" aria-label={tr("聊天概览", "Chat overview")} role="dialog">
       {allSources ? (
         <>
           <header className="overview-sources-head">
-            <IconButton icon={ArrowLeft} label="返回聊天概览" onClick={() => { setAllSources(false); setFilter(""); }} />
-            <strong>全部来源</strong>
+            <IconButton icon={ArrowLeft} label={tr("返回聊天概览", "Back to chat overview")} onClick={() => { setAllSources(false); setFilter(""); }} />
+            <strong>{tr("全部来源", "All sources")}</strong>
           </header>
-          <label className="overview-search"><Search size={15} /><input autoFocus type="search" placeholder="搜索来源" aria-label="搜索来源"
+          <label className="overview-search"><Search size={15} /><input autoFocus type="search" placeholder={tr("搜索来源", "Search sources")} aria-label={tr("搜索来源", "Search sources")}
             value={filter} onChange={e => setFilter(e.target.value)} /></label>
           {filteredSources.map(sourceRow)}
-          {!filteredSources.length && <p>没有匹配的来源</p>}
+          {!filteredSources.length && <p>{tr("没有匹配的来源", "No matching sources")}</p>}
         </>
       ) : (
         <>
           <div className="overview-section">
             <div className="overview-label">
               <button type="button" aria-expanded={showChanges} onClick={() => setShowChanges(!showChanges)}>
-                变更 {showChanges ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                {tr("变更", "Changes")} {showChanges ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               </button>
-              {members.length > 1 && <select value={member?.id} aria-label="查看成员工作目录" onChange={e => setBotId(e.target.value)}>
+              {members.length > 1 && <select value={member?.id} aria-label={tr("查看成员工作目录", "View member working directory")} onChange={e => setBotId(e.target.value)}>
                 {members.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
               </select>}
             </div>
-            {showChanges && (failure ? <p role="alert">{failure}</p> : !member ? <p>没有可用的工作目录</p> :
-              !changes ? <p><Spinner size={13} /> 正在读取变更</p> :
+            {showChanges && (failure ? <p role="alert">{failure}</p> : !member ? <p>{tr("没有可用的工作目录", "No working directory available")}</p> :
+              !changes ? <p><Spinner size={13} /> {tr("正在读取变更", "Loading changes")}</p> :
               <button className="overview-row overview-repo" onClick={() => { dismiss(); openWorkspace({ type: "changes", botId: member.id }); }}
                 title={changes.root}>
-                <GitBranch size={15} /><span>{changes.repo ? [changes.repo, changes.branch].filter(Boolean).join(" · ") : "当前目录未使用 Git"}</span>
+                <GitBranch size={15} /><span>{changes.repo ? [changes.repo, changes.branch].filter(Boolean).join(" · ") : tr("当前目录未使用 Git", "This directory does not use Git")}</span>
                 {changes.repo && <small><b>+{changes.added}</b> <em>−{changes.removed}</em></small>}
               </button>)}
           </div>
           <div className="overview-section">
-            <div className="overview-label"><span>子智能体</span>
-              {agents.length > 0 && <IconButton icon={PanelRight} label="查看全部子智能体" onClick={() => openAgents(null)} />}
+            <div className="overview-label"><span>{tr("子智能体", "Subagents")}</span>
+              {agents.length > 0 && <IconButton icon={PanelRight} label={tr("查看全部子智能体", "View all subagents")} onClick={() => openAgents(null)} />}
             </div>
             {agents.length ? <>
               <button className="overview-row" aria-expanded={showAgents} onClick={() => setShowAgents(!showAgents)}>
                 <i className="overview-agent-marks" aria-hidden="true">{summaryAgents.map(agent =>
                   <SubagentGlyph key={agent.key} seed={agent.avatarSeed} size={16} />)}</i>
-                <span>{waitingAgents.length ? waitingAgents.length + " 个子智能体" : endedLabel}</span>
+                <span>{waitingAgents.length ? waitingAgents.length + tr(" 个子智能体", " subagents") : endedLabel}</span>
                 {waitingAgents.length > 0 && ended > 0 && <small>{endedLabel}</small>}
                 {showAgents ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               </button>
               {showAgents && agents.map(agent => <button key={agent.key} className="overview-row agent-detail"
                 onClick={() => openAgents(agent.key)}>
                 <SubagentGlyph seed={agent.avatarSeed} />
-                <span>{agent.name}</span><small>{agentStatus[agent.status]}</small>
+                <span>{agent.name}</span><small>{agentStatusLabel(agent.status, tr)}</small>
               </button>)}
-            </> : <p>暂无子智能体记录</p>}
+            </> : <p>{tr("暂无子智能体记录", "No subagents yet")}</p>}
           </div>
           <div className="overview-section">
-            <div className="overview-label">来源
-              <IconButton icon={Plus} label="添加来源" disabled={draft?.chatId !== chat.id || !draft?.canPick}
+            <div className="overview-label">{tr("来源", "Sources")}
+              <IconButton icon={Plus} label={tr("添加来源", "Add source")} disabled={draft?.chatId !== chat.id || !draft?.canPick}
                 onClick={() => { dismiss(); pickSource(); }} />
             </div>
             {sources.slice(0, 3).map(sourceRow)}
-            {!sources.length && <p>暂无来源</p>}
+            {!sources.length && <p>{tr("暂无来源", "No sources yet")}</p>}
             {sources.length > 0 && <button className="overview-row overview-all" onClick={() => setAllSources(true)}>
-              <Link2 size={15} /><span>查看全部</span>
+              <Link2 size={15} /><span>{tr("查看全部", "View all")}</span>
             </button>}
           </div>
         </>
@@ -173,6 +175,7 @@ function Overview({ id, chat, members, state, agents, invoke, draft, pickSource,
 }
 
 export function ChatToolbar({ chat, draftChat, members, state, agents, invoke, draft, pickSource, onChatMenu, onChatAction, menuOpen, workspaceVisible, toggleWorkspace, openWorkspace }) {
+  const tr = useLanguage();
   const [popup, setPopup] = useState(null);
   const group = useRef(null);
   const trigger = useRef(null);
@@ -203,22 +206,22 @@ export function ChatToolbar({ chat, draftChat, members, state, agents, invoke, d
   return (
     <div ref={group} className="chat-tools">
       {chat && <>
-        <IconButton icon={Ellipsis} label="更多聊天操作" aria-haspopup="menu" aria-expanded={!!menuOpen}
+        <IconButton icon={Ellipsis} label={tr("更多聊天操作", "More chat actions")} aria-haspopup="menu" aria-expanded={!!menuOpen}
           onClick={event => {
             dismiss();
             const anchor = event.currentTarget;
             const rect = anchor.getBoundingClientRect();
             onChatMenu(chat, { x: rect.right, y: rect.bottom, anchor }, "header");
           }} />
-        <IconButton icon={Upload} label="分享聊天" onClick={event => {
+        <IconButton icon={Upload} label={tr("分享聊天", "Share chat")} onClick={event => {
           dismiss();
           const { left, bottom } = event.currentTarget.getBoundingClientRect();
           onChatAction("share", chat, { x: Math.round(left), y: Math.round(bottom) });
         }} />
       </>}
-      {(chat || draftChat) && <IconButton icon={OverviewIcon} label="聊天概览" aria-haspopup="dialog" aria-expanded={popup === "overview"}
+      {(chat || draftChat) && <IconButton icon={OverviewIcon} label={tr("聊天概览", "Chat overview")} aria-haspopup="dialog" aria-expanded={popup === "overview"}
         aria-controls={popup === "overview" ? id : undefined} onClick={e => toggle("overview", e)} />}
-      {!workspaceVisible && <IconButton icon={PanelRight} label="打开右侧栏" aria-expanded={false}
+      {!workspaceVisible && <IconButton icon={PanelRight} label={tr("打开右侧栏", "Open right sidebar")} aria-expanded={false}
         onClick={() => { dismiss(); toggleWorkspace(); }} />}
       {popup === "overview" && (chat || draftChat) && <Overview id={id} chat={chat || draftChat} members={members} state={state} agents={agents} invoke={invoke}
         draft={draft} pickSource={pickSource} openWorkspace={openWorkspace} dismiss={dismiss} />}

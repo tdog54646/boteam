@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
@@ -55,9 +56,9 @@ const RICH_ARTIFACT_KINDS = new Set([
   "video",
 ]);
 
-const localTime = (s) =>
+const localTime = (s, tr) =>
   s && !Number.isNaN(Date.parse(s))
-    ? new Date(s).toLocaleTimeString("zh-CN", {
+    ? new Date(s).toLocaleTimeString(tr("zh-CN", "en"), {
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
@@ -232,25 +233,25 @@ export function normalizeToolEvent(ev) {
   };
 }
 
-function summarizeToolGroup(events, taskRunning) {
+function summarizeToolGroup(events, taskRunning, tr) {
   const runningEv = taskRunning
     ? [...events].reverse().find((ev) => ev.status === "running")
     : null;
   if (runningEv) {
     switch (runningEv.category) {
       case "loaded":
-        return { text: "正在加载工具", running: true };
+        return { text: tr("正在加载工具", "Loading tools"), running: true };
       case "read":
       case "search":
-        return { text: "正在读取文件", running: true };
+        return { text: tr("正在读取文件", "Reading files"), running: true };
       case "command":
-        return { text: "正在运行命令", running: true };
+        return { text: tr("正在运行命令", "Running a command"), running: true };
       case "edit":
-        return { text: "正在编辑文件", running: true };
+        return { text: tr("正在编辑文件", "Editing files"), running: true };
       case "web":
-        return { text: "正在搜索网页", running: true };
+        return { text: tr("正在搜索网页", "Searching the web"), running: true };
       default:
-        return { text: "正在调用工具", running: true };
+        return { text: tr("正在调用工具", "Using a tool"), running: true };
     }
   }
 
@@ -265,38 +266,38 @@ function summarizeToolGroup(events, taskRunning) {
   }
 
   const ordered = [
-    ["loaded", "加载了工具"],
-    ["read", "读取文件"],
-    ["command", "运行了命令"],
-    ["edit", "编辑了文件"],
-    ["web", "已搜索网页"],
+    ["loaded", tr("加载了工具", "Loaded tools")],
+    ["read", tr("读取文件", "Read files")],
+    ["command", tr("运行了命令", "Ran commands")],
+    ["edit", tr("编辑了文件", "Edited files")],
+    ["web", tr("已搜索网页", "Searched the web")],
   ];
   const clauses = ordered.filter(([key]) => seen.has(key)).map(([, label]) => label);
   if (!clauses.length || (seen.has("mcp") && clauses.length === 0)) {
-    clauses.push("调用了工具");
+    clauses.push(tr("调用了工具", "Used tools"));
   }
   return { clauses, text: clauses.join(" "), running: false };
 }
 
-function liveTurnHeadline(task, resolvedAgents, toolEvents) {
-  if (!task) return "正在运行";
-  if (task.status === "queued") return "等待运行";
+function liveTurnHeadline(task, resolvedAgents, toolEvents, tr) {
+  if (!task) return tr("正在运行", "Running");
+  if (task.status === "queued") return tr("等待运行", "Queued");
   if (task.status === "approval") {
-    return task.approval?.kind === "questions" ? "等待回答" : "等待审批";
+    return task.approval?.kind === "questions" ? tr("等待回答", "Awaiting an answer") : tr("等待审批", "Awaiting approval");
   }
   if (resolvedAgents.some((a) => activeAgentStates.has(a.status))) {
-    return "子智能体正在运行";
+    return tr("子智能体正在运行", "Subagents running");
   }
   const latestRunningTool = [...toolEvents].reverse().find((e) => e.status === "running");
   if (latestRunningTool) {
-    if (latestRunningTool.category === "read" || latestRunningTool.category === "search") return "正在读取文件";
-    if (latestRunningTool.category === "command" || latestRunningTool.kind === "command") return "正在运行命令";
-    if (latestRunningTool.category === "edit" || latestRunningTool.kind === "fileChange") return "正在编辑文件";
-    if (latestRunningTool.category === "web" || latestRunningTool.kind === "webSearch") return "正在搜索网页";
-    if (latestRunningTool.category === "loaded" || latestRunningTool.kind === "loadedTool") return "正在加载工具";
-    return "正在调用工具";
+    if (latestRunningTool.category === "read" || latestRunningTool.category === "search") return tr("正在读取文件", "Reading files");
+    if (latestRunningTool.category === "command" || latestRunningTool.kind === "command") return tr("正在运行命令", "Running a command");
+    if (latestRunningTool.category === "edit" || latestRunningTool.kind === "fileChange") return tr("正在编辑文件", "Editing files");
+    if (latestRunningTool.category === "web" || latestRunningTool.kind === "webSearch") return tr("正在搜索网页", "Searching the web");
+    if (latestRunningTool.category === "loaded" || latestRunningTool.kind === "loadedTool") return tr("正在加载工具", "Loading tools");
+    return tr("正在调用工具", "Using a tool");
   }
-  return "正在思考";
+  return tr("正在思考", "Thinking");
 }
 
 export function extractRichMarkdownArtifacts(markdownText) {
@@ -500,9 +501,10 @@ function buildTurnModel(message, task) {
 }
 
 function SubagentBatchRow({ agents, onSelectAgent }) {
+  const tr = useLanguage();
   const anyActive = agents.some((a) => activeAgentStates.has(a.status));
   const anyFailed = !anyActive && agents.some((a) => a.status === "errored" || a.status === "interrupted");
-  const statusLabel = anyActive ? "正在运行" : anyFailed ? "已结束" : "已完成";
+  const statusLabel = anyActive ? tr("正在运行", "Running") : anyFailed ? tr("已结束", "Finished") : tr("已完成", "Completed");
 
   return (
     <div className="codex-subagent-row">
@@ -515,7 +517,7 @@ function SubagentBatchRow({ agents, onSelectAgent }) {
         {agents.map((agent, idx) => {
           const isLast = idx === agents.length - 1;
           const isSecondLast = idx === agents.length - 2;
-          const sep = !isLast ? (isSecondLast ? "和" : "、") : "";
+          const sep = !isLast ? (isSecondLast ? tr("和", " and ") : "、") : "";
           return (
             <React.Fragment key={agent.id}>
               <button
@@ -563,12 +565,13 @@ function singleLineCommand(cmd) {
 }
 
 export function ToolActivityCard({ events, taskRunning, onOpenFile, onOpenUrl }) {
+  const tr = useLanguage();
   const [open, setOpen] = useState(true);
   const [expandedRow, setExpandedRow] = useState(null);
   const listRef = useRef(null);
   const stickBottom = useRef(true);
   const [overflowState, setOverflowState] = useState({ top: false, bottom: false });
-  const summary = useMemo(() => summarizeToolGroup(events, taskRunning), [events, taskRunning]);
+  const summary = useMemo(() => summarizeToolGroup(events, taskRunning, tr), [events, taskRunning, tr]);
 
   const updateScrollShadows = useCallback(() => {
     const el = listRef.current;
@@ -637,8 +640,8 @@ export function ToolActivityCard({ events, taskRunning, onOpenFile, onOpenUrl })
                   ev.kind === "command" && ev.command
                     ? singleLineCommand(ev.command)
                     : ev.kind === "webSearch" && ev.url
-                      ? `已搜索网页：${ev.url}`
-                      : ev.title || ev.text || "工具调用";
+                      ? tr(`已搜索网页：${ev.url}`, `Searched the web for ${ev.url}`)
+                      : ev.title || ev.text || tr("工具调用", "Tool call");
 
                 const diffTotals =
                   ev.kind === "fileChange" && Array.isArray(ev.files)
@@ -698,7 +701,7 @@ export function ToolActivityCard({ events, taskRunning, onOpenFile, onOpenUrl })
                         )}
                         {ev.output && <pre className="codex-drawer-out">{ev.output}</pre>}
                         {ev.exitCode != null && ev.exitCode !== 0 && (
-                          <div className="codex-drawer-exit">退出码 {ev.exitCode}</div>
+                          <div className="codex-drawer-exit">{tr("退出码", "Exit code")} {ev.exitCode}</div>
                         )}
                         {ev.files?.length > 1 && (
                           <div className="codex-drawer-files">
@@ -726,8 +729,8 @@ export function ToolActivityCard({ events, taskRunning, onOpenFile, onOpenUrl })
               <button
                 type="button"
                 className="codex-tool-bottom-btn"
-                aria-label="滚动到最新工具记录"
-                title="滚动到底部"
+                aria-label={tr("滚动到最新工具记录", "Scroll to latest tool activity")}
+                title={tr("滚动到底部", "Scroll to bottom")}
                 onClick={scrollToLatest}
               >
                 <ArrowDown size={14} strokeWidth={2} />
@@ -741,6 +744,7 @@ export function ToolActivityCard({ events, taskRunning, onOpenFile, onOpenUrl })
 }
 
 function NativeQuestions({ request, busy, submit }) {
+  const tr = useLanguage();
   const [answers, setAnswers] = useState({});
   const [custom, setCustom] = useState({});
   const answer = (id, value) => setAnswers((previous) => ({ ...previous, [id]: value }));
@@ -785,7 +789,7 @@ function NativeQuestions({ request, busy, submit }) {
                   answer(question.id, "");
                 }}
               />
-              其他
+              {tr("其他", "Other")}
             </label>
           )}
           {(!question.options.length || custom[question.id]) && (
@@ -808,7 +812,7 @@ function NativeQuestions({ request, busy, submit }) {
           variant="primary"
           disabled={busy || request.questions.some((q) => !Object.hasOwn(answers, q.id) || !answers[q.id].trim())}
         >
-          提交回答
+          {tr("提交回答", "Submit answers")}
         </Button>
       </div>
     </form>
@@ -828,6 +832,7 @@ function AssistantTurnBody({
   onError,
   openWorkspace,
 }) {
+  const tr = useLanguage();
   const [stepsOpen, setStepsOpen] = useState(true);
   const [showMeta, setShowMeta] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -924,7 +929,7 @@ function AssistantTurnBody({
         <div className="message-author">
           <ProviderIcon provider={account?.provider} size="small" />
           <strong>{message?.name || bot?.name || "Bot"}</strong>
-          {message?.createdAt && <time dateTime={message.createdAt}>{localTime(message.createdAt)}</time>}
+          {message?.createdAt && <time dateTime={message.createdAt}>{localTime(message.createdAt, tr)}</time>}
         </div>
       )}
 
@@ -933,7 +938,7 @@ function AssistantTurnBody({
         <div className="turn-live-bar">
           <span className="turn-live-status">
             <span className="codex-shimmer">
-              {liveTurnHeadline(task, resolvedAgents, allToolEvents)}
+              {liveTurnHeadline(task, resolvedAgents, allToolEvents, tr)}
               {slashSuffix}
             </span>
             {durationLabel && <span className="turn-live-timer">{durationLabel}</span>}
@@ -943,10 +948,10 @@ function AssistantTurnBody({
             className="text-btn task-stop"
             onClick={() => act("cancel", { taskId: task.id })}
             disabled={busy}
-            title="停止任务"
+            title={tr("停止任务", "Stop task")}
           >
             <Square size={10} />
-            停止
+            {tr("停止", "Stop")}
           </button>
         </div>
       ) : task?.status === "interrupted" ? (
@@ -958,12 +963,12 @@ function AssistantTurnBody({
             aria-controls={stepsRegionId}
             onClick={() => setStepsOpen((v) => !v)}
           >
-            <span>{durationLabel ? `你在 ${durationLabel} 后停止了` : "已中断"}</span>
+            <span>{durationLabel ? tr(`你在 ${durationLabel} 后停止了`, `You stopped this task after ${durationLabel}`) : tr("已中断", "Interrupted")}</span>
             <ChevronDown size={13} className={`turn-chevron ${stepsOpen ? "is-open" : ""}`} aria-hidden="true" />
           </button>
         ) : (
           <div className="turn-duration-static is-interrupted">
-            {durationLabel ? `你在 ${durationLabel} 后停止了` : "已中断"}
+            {durationLabel ? tr(`你在 ${durationLabel} 后停止了`, `You stopped this task after ${durationLabel}`) : tr("已中断", "Interrupted")}
           </div>
         )
       ) : task?.status === "failed" ? (
@@ -976,13 +981,13 @@ function AssistantTurnBody({
             onClick={() => setStepsOpen((v) => !v)}
           >
             <CircleAlert size={13} />
-            <span>运行失败{durationLabel ? ` · ${durationLabel}` : ""}</span>
+            <span>{tr("运行失败", "Run failed")}{durationLabel ? ` · ${durationLabel}` : ""}</span>
             <ChevronDown size={13} className={`turn-chevron ${stepsOpen ? "is-open" : ""}`} aria-hidden="true" />
           </button>
         ) : (
           <div className="turn-duration-static is-failed">
             <CircleAlert size={13} />
-            <span>运行失败</span>
+            <span>{tr("运行失败", "Run failed")}</span>
           </div>
         )
       ) : hasIntermediateSteps ? (
@@ -993,11 +998,11 @@ function AssistantTurnBody({
           aria-controls={stepsRegionId}
           onClick={() => setStepsOpen((v) => !v)}
         >
-          <span>{durationLabel ? `用时 ${durationLabel}` : "执行过程"}</span>
+          <span>{durationLabel ? tr(`用时 ${durationLabel}`, `Took ${durationLabel}`) : tr("执行过程", "Activity")}</span>
           <ChevronDown size={13} className={`turn-chevron ${stepsOpen ? "is-open" : ""}`} aria-hidden="true" />
         </button>
       ) : durationLabel && elapsedSeconds >= 2 ? (
-        <div className="turn-duration-static">用时 {durationLabel}</div>
+        <div className="turn-duration-static">{tr("用时", "Time")} {durationLabel}</div>
       ) : null}
 
       {/* Chronological intermediate commentary, subagents, & tool activity groups */}
@@ -1062,7 +1067,7 @@ function AssistantTurnBody({
 
       {/* Generated / modified end-resource file cards */}
       {outputFiles.length > 0 && (
-        <div className="end-resource-list" aria-label="生成与更新的文件">
+        <div className="end-resource-list" aria-label={tr("生成与更新的文件", "Generated and updated files")}>
           {outputFiles.map((item) => (
             <EndResourceCard
               key={item.path}
@@ -1077,7 +1082,7 @@ function AssistantTurnBody({
               className="text-btn erc-more-btn"
               onClick={() => openWorkspace?.({ type: "changes", botId })}
             >
-              查看全部 {totalChangedFiles} 个变更文件
+              {tr("查看全部", "View all")} {totalChangedFiles} {tr("个变更文件", " changed files")}
             </button>
           )}
         </div>
@@ -1088,7 +1093,7 @@ function AssistantTurnBody({
       {shouldOfferAccountReauth(task, account) && (
         <button type="button" className="text-btn reauth" onClick={() => onLogin(account.id)}>
           <KeyRound size={12} />
-          重新授权
+          {tr("重新授权", "Reauthorize")}
         </button>
       )}
       {task?.status === "approval" && task.approval?.kind === "questions" && (
@@ -1103,7 +1108,7 @@ function AssistantTurnBody({
         <div className="approval">
           <strong>
             <ShieldCheck size={15} />
-            {task.approval.title || "原生工具请求权限"}
+            {task.approval.title || tr("原生工具请求权限", "The CLI requested permission")}
           </strong>
           {task.approval.detail && <pre>{task.approval.detail}</pre>}
           <div className="actions">
@@ -1117,7 +1122,7 @@ function AssistantTurnBody({
                 })
               }
             >
-              拒绝
+              {tr("拒绝", "Deny")}
             </Button>
             <Button
               variant="primary"
@@ -1130,7 +1135,7 @@ function AssistantTurnBody({
                 })
               }
             >
-              允许本次操作
+              {tr("允许本次操作", "Allow once")}
             </Button>
           </div>
         </div>
@@ -1144,8 +1149,8 @@ function AssistantTurnBody({
             <button
               type="button"
               className="codex-action-icon"
-              aria-label={copied ? "已复制回复" : "复制回复"}
-              title={copied ? "已复制" : "复制"}
+              aria-label={copied ? tr("已复制回复", "Reply copied") : tr("复制回复", "Copy reply")}
+              title={copied ? tr("已复制", "Copied") : tr("复制", "Copy")}
               onClick={copyReply}
             >
               {copied ? <Check size={13.5} /> : <Copy size={13.5} />}
@@ -1155,9 +1160,9 @@ function AssistantTurnBody({
             <button
               type="button"
               className={`codex-action-icon ${showMeta ? "is-active" : ""}`}
-              aria-label="运行环境核验信息"
+              aria-label={tr("运行环境核验信息", "Runtime verification")}
               aria-expanded={showMeta}
-              title="查看运行环境核验"
+              title={tr("查看运行环境核验", "View runtime verification")}
               onClick={() => setShowMeta((v) => !v)}
             >
               <ShieldCheck size={13.5} />
@@ -1167,11 +1172,11 @@ function AssistantTurnBody({
             <button
               type="button"
               className="quote-action"
-              aria-description={`${message.name}的消息`}
+              aria-description={tr(`${message.name}的消息`, `Message from ${message.name}`)}
               onClick={onQuote}
             >
               <Quote size={13} aria-hidden="true" />
-              引用
+              {tr("引用", "Quote")}
             </button>
           )}
         </div>
@@ -1189,7 +1194,7 @@ function AssistantTurnBody({
             <div>
               <ShieldCheck size={12} />
               <span title={task.verifiedKey}>
-                已核验账号 ·{" "}
+                {tr("已核验账号 ·", "Verified account ·")}{" "}
                 {task.verifiedKey.startsWith("codex:") ? task.verifiedKey.slice(6, 18) : task.verifiedKey}
               </span>
             </div>
@@ -1220,6 +1225,7 @@ export function Conversation({
   onError,
   firstProject,
 }) {
+  const tr = useLanguage();
   const { accounts, bots, messages, tasks } = state;
   function chatLink(url, children, key) {
     return (
@@ -1291,7 +1297,7 @@ export function Conversation({
   for (const job of jobs) {
     const labels = job.runSettings?.extensionLabels;
     if (!labels?.length) continue;
-    const prefix = group ? (bots.find((b) => b.id === job.botId)?.name || "已归档 Bot") + " · " : "";
+    const prefix = group ? (bots.find((b) => b.id === job.botId)?.name || tr("已归档 Bot", "Archived bot")) + " · " : "";
     const chips = sentExtensions.get(job.messageId) || [];
     sentExtensions.set(
       job.messageId,
@@ -1308,7 +1314,7 @@ export function Conversation({
   }
 
   return (
-    <section className={`conversation${empty ? " is-empty" : ""}`} aria-label={chat.name || "对话"}>
+    <section className={`conversation${empty ? " is-empty" : ""}`} aria-label={chat.name || tr("对话", "Chat")}>
       <div className="message-scroll-stage">
         <div
           className="message-scroll"
@@ -1324,12 +1330,12 @@ export function Conversation({
           }}
         >
           {!empty ? (
-            <div className="message-log" role="log" aria-live="polite" aria-label="消息记录">
+            <div className="message-log" role="log" aria-live="polite" aria-label={tr("消息记录", "Messages")}>
               {chat.sourceChatId && (
                 <p className="fork-origin">
-                  分支自「{state.chats.find((c) => c.id === chat.sourceChatId)?.name || "原会话"}」
+                  {tr("分支自「", "Branched from ")}{state.chats.find((c) => c.id === chat.sourceChatId)?.name || tr("原会话", "Original chat")}{tr("」", "")}
                   <button className="text-btn" onClick={() => onOpenChat(chat.sourceChatId)}>
-                    查看原会话
+                    {tr("查看原会话", "View original chat")}
                   </button>
                 </p>
               )}
@@ -1354,7 +1360,7 @@ export function Conversation({
                           {group && m.recipients?.length > 0 && (
                             <div className="sent-recipients">
                               {m.recipients
-                                .map((id) => "@" + (bots.find((b) => b.id === id)?.name || "已归档 Bot"))
+                                .map((id) => "@" + (bots.find((b) => b.id === id)?.name || tr("已归档 Bot", "Archived bot")))
                                 .join(" ")}
                             </div>
                           )}
@@ -1362,7 +1368,7 @@ export function Conversation({
                             <button
                               type="button"
                               className="quote-card sent-quote"
-                              aria-label="查看引用原文"
+                              aria-label={tr("查看引用原文", "View quoted message")}
                               aria-describedby={`quote-preview-${m.id}`}
                               onClick={() => {
                                 const original = document.getElementById(`message-${quoted.id}`);
@@ -1385,7 +1391,7 @@ export function Conversation({
                             </div>
                           )}
                           {sentExtensions.has(m.id) && (
-                            <div className="sent-attachments" aria-label="已发送扩展">
+                            <div className="sent-attachments" aria-label={tr("已发送扩展", "Sent extensions")}>
                               {sentExtensions.get(m.id).map((label, index) => (
                                 <span key={index}>
                                   <Plug size={13} />
@@ -1400,11 +1406,11 @@ export function Conversation({
                           <button
                             type="button"
                             className="quote-action"
-                            aria-description={`${m.name}的消息`}
+                            aria-description={tr(`${m.name}的消息`, `Message from ${m.name}`)}
                             onClick={() => quoteControl.current?.select(m.id)}
                           >
                             <Quote size={13} aria-hidden="true" />
-                            引用
+                            {tr("引用", "Quote")}
                           </button>
                         )}
                         {jobs
@@ -1441,11 +1447,11 @@ export function Conversation({
             </div>
           ) : (
             <div className="conversation-empty">
-              <h1>{chat.name || members[0]?.name || "新对话"}</h1>
+              <h1>{chat.name || members[0]?.name || tr("新对话", "New chat")}</h1>
               {group ? (
-                <p>群聊 · {members.length} 位可用成员</p>
+                <p>{tr("群聊 ·", "Group chat ·")} {members.length} {tr("位可用成员", " available members")}</p>
               ) : !members.length ? (
-                <p>此 Bot 已归档</p>
+                <p>{tr("此 Bot 已归档", "This bot is archived")}</p>
               ) : directAccount?.note ? (
                 <p>{directAccount.note}</p>
               ) : null}
@@ -1470,8 +1476,8 @@ export function Conversation({
           <button
             type="button"
             className="conv-scroll-bottom"
-            aria-label="回到底部"
-            title="回到底部"
+            aria-label={tr("回到底部", "Back to bottom")}
+            title={tr("回到底部", "Back to bottom")}
             onClick={jumpToConversationBottom}
           >
             <ArrowDown size={15} strokeWidth={2} />
@@ -1492,8 +1498,8 @@ export function Conversation({
       />
       {chat.archived ? (
         <div className="archived-composer">
-          <span>此聊天已归档</span>
-          <Button onClick={restoreChat}>恢复聊天</Button>
+          <span>{tr("此聊天已归档", "This chat is archived")}</span>
+          <Button onClick={restoreChat}>{tr("恢复聊天", "Restore chat")}</Button>
         </div>
       ) : (
         <Composer

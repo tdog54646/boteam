@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import "./message-navigator.css";
 
@@ -8,7 +9,7 @@ function excerpt(text, limit) {
   return characters.length <= limit ? characters.join("") : characters.slice(0, limit - 1).join("").trimEnd() + "…";
 }
 
-function messageTurns(messages, tasks) {
+function messageTurns(messages, tasks, tr) {
   const turns = new Map();
   const parents = new Map(tasks.map(task => [task.id, task.messageId]));
   let latest;
@@ -16,7 +17,7 @@ function messageTurns(messages, tasks) {
     if (message.author === "user") {
       latest = {
         id: message.id,
-        prompt: excerpt(message.text || "", 120) || "图片或附件消息",
+        prompt: excerpt(message.text || "", 120) || tr("图片或附件消息", "Image or attachment"),
         reply: null,
       };
       turns.set(latest.id, latest);
@@ -49,11 +50,13 @@ function revealMarker(list, marker) {
 }
 
 export function MessageNavigator({ messages, tasks, scrollRef, onNavigate }) {
-  const turns = useMemo(() => messageTurns(messages, tasks), [messages, tasks]);
+  const tr = useLanguage();
+  const turns = useMemo(() => messageTurns(messages, tasks, tr), [messages, tasks, tr]);
   return turns.length > 1 && <TurnRail turns={turns} scrollRef={scrollRef} onNavigate={onNavigate} />;
 }
 
 function TurnRail({ turns, scrollRef, onNavigate }) {
+  const tr = useLanguage();
   const nav = useRef(null);
   const list = useRef(null);
   const card = useRef(null);
@@ -264,7 +267,7 @@ function TurnRail({ turns, scrollRef, onNavigate }) {
   }
 
   return (
-    <nav className="message-nav" aria-label="消息导航" ref={nav} hidden={!visible} data-dragging={dragging}>
+    <nav className="message-nav" aria-label={tr("消息导航", "Message navigation")} ref={nav} hidden={!visible} data-dragging={dragging}>
       <div
         className="message-nav-list"
         data-previewing={target >= 0}
