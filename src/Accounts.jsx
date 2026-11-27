@@ -667,8 +667,18 @@ export function AccountList({ accounts, bots, open }) {
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+export function LocalAccountSettings({ open }) {
+  const tr = useLanguage();
+  return <div className="page-scroll"><article className="settings-page">
+    <header className="settings-heading"><h1>{tr("本机配置", "Local configurations")}</h1>
+      <p>{tr("将本机已登录的订阅账号连接到 BoTeam。", "Connect subscription accounts already signed in on this device.")}</p>
+    </header>
       <section aria-label={tr("本机配置", "Local configurations")}>
-        <h2>{tr("本机配置", "Local configurations")}</h2>
+        <h2>{tr("订阅账号来源", "Subscription sources")}</h2>
         <div className="settings-group">
           <div className="settings-row">
             <div className="row-copy">
@@ -683,9 +693,9 @@ export function AccountList({ accounts, bots, open }) {
           </div>
         </div>
       </section>
-    </div>
-  );
+  </article></div>;
 }
+
 export function LoginDialog({ account, invoke, onClose, onDone }) {
   const tr = useLanguage();
   const [provider, setProvider] = useState(account?.provider || "codex");

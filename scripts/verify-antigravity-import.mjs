@@ -125,7 +125,7 @@ async function verify() {
   const row = email => candidates().locator('.detected-account').filter({hasText:email})
   const openDiscovery = async () => {
     await page.getByRole('button',{name:'设置',exact:true}).click()
-    await page.getByRole('button',{name:'账号管理',exact:true}).click()
+    await page.getByRole('button',{name:'本机配置',exact:true}).click()
     await page.getByRole('button',{name:'检测本机账号',exact:true}).click()
   }
   const refresh = () => candidates().getByRole('button',{name:'重新检测',exact:true}).click()

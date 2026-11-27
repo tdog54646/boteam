@@ -1,12 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Archive, ArchiveRestore, Bot, CalendarCheck, ChevronLeft, ChevronRight, House, MessageSquare, MessagesSquare, PanelLeftClose, Search, Settings, Trash2, UsersRound, WalletCards } from "lucide-react";
-import { IconButton } from "./ui";
+import { CalendarCheck, ChevronLeft, ChevronRight, House, MessageSquare, MessagesSquare, PanelLeftClose, Search, Settings, UsersRound } from "lucide-react";
+import { Button, IconButton } from "./ui";
 import { UserMenu } from "./UserMenu";
-import { useLanguage } from "./preferences";
+import { useLanguage, usePreferences } from "./preferences";
 import "./workspace-navigation.css";
-
-export const settingsPages = ["archived", "bots", "accounts"];
 
 export function WorkspaceNavigation({ section, select, disabled, settingsPage }) {
   const t = useLanguage();
@@ -75,28 +73,13 @@ export function SidebarTitlebar({ collapse, history, disabled }) {
   </div>;
 }
 
-export function SettingsNavigation({ page, select }) {
-  const t = useLanguage();
-  const items = [
-    ["bots", Bot, t("Bot 管理", "Bots")],
-    ["accounts", WalletCards, t("账号管理", "CLI accounts")],
-    ["archived", Archive, t("已归档会话", "Archived chats")],
-  ];
-  return <nav className="settings-navigation" aria-label={t("设置分类", "Settings categories")}>
-    <h2>{t("设置", "Settings")}</h2>
-    {items.map(([id, Icon, label]) => <button key={id} type="button" className="rail-row"
-      aria-current={page === id ? "page" : undefined} onClick={() => select(id)}>
-      <Icon size={16} aria-hidden="true"/><span>{label}</span>
-    </button>)}
-  </nav>;
-}
-
 export function ArchivedChats({ state, select, action }) {
-  const t = useLanguage();
+  const { t, language } = usePreferences();
   const [query, setQuery] = useState("");
   const archived = state.chats.filter(chat => chat.archived);
   const summaries = new Map(state.projects.map(project => [project.id, project.name]));
   const bots = new Map(state.bots.map(bot => [bot.id, bot.name]));
+  const dateFormat = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
   const term = query.trim().toLocaleLowerCase();
   const rows = archived.map(chat => {
     const detail = [summaries.get(chat.projectId), ...chat.members.map(id => bots.get(id))].filter(Boolean).join(" · ");
@@ -114,13 +97,21 @@ export function ArchivedChats({ state, select, action }) {
     <div className="settings-group">
       {rows.map(({chat, detail}) => {
         const Icon = chat.kind === "group" ? UsersRound : MessageSquare;
+        const updated = chat.updatedAt ? new Date(chat.updatedAt) : null;
+        const timestamp = updated && Number.isFinite(updated.getTime()) ? dateFormat.format(updated) : "";
         return <div className="settings-row archived-chat-row" key={chat.id} data-chat-id={chat.id}>
-          <button type="button" className="archived-chat-link" onClick={() => select(chat.id)}>
-            <Icon size={17} aria-hidden="true"/><span className="row-copy"><strong>{chat.name}</strong><small>{detail}</small></span>
-          </button>
-          <time dateTime={chat.updatedAt}>{new Date(chat.updatedAt).toLocaleDateString(document.documentElement.lang)}</time>
-          <IconButton label={t("取消归档聊天", "Restore chat")} icon={ArchiveRestore} onClick={() => action("archive", chat)}/>
-          <IconButton label={t("永久删除聊天", "Delete chat permanently")} icon={Trash2} onClick={() => action("delete", chat)}/>
+          <Icon size={17} aria-hidden="true"/>
+          <div className="row-copy">
+            <button type="button" className="archived-chat-title" title={chat.name} onClick={() => select(chat.id)}>{chat.name}</button>
+            <small className="archived-chat-detail" title={[timestamp, detail].filter(Boolean).join(" · ")}>
+              {timestamp && <time dateTime={chat.updatedAt}>{timestamp}</time>}{timestamp && detail && " · "}{detail}
+            </small>
+          </div>
+          <div className="archived-chat-actions">
+            <Button aria-label={t("取消归档聊天", "Restore chat")} onClick={() => action("archive", chat)}>{t("取消归档", "Unarchive")}</Button>
+            <Button className="archived-delete" aria-label={t("永久删除聊天", "Delete chat permanently")}
+              onClick={() => action("delete", chat)}>{t("删除", "Delete")}</Button>
+          </div>
         </div>;
       })}
       {!rows.length && <p className="settings-empty">{archived.length ? t("没有匹配的会话", "No matching chats") : t("暂无已归档会话", "No archived chats")}</p>}

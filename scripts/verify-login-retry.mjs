@@ -93,7 +93,7 @@ async function verify() {
 
     await page.getByRole('button', { name: '暂时跳过' }).click()
     await page.getByRole('button', { name: '设置', exact: true }).click()
-    await page.getByRole('button', { name: '账号管理', exact: true }).click()
+    await page.getByRole('button', { name: '订阅账号', exact: true }).click()
     await add()
     await start()
     await waitForAttempt(0)
@@ -144,7 +144,7 @@ async function verify() {
     await waitForAttempt(7)
     await page.reload()
     await page.getByRole('button', { name: '设置', exact: true }).click()
-    await page.getByRole('button', { name: '账号管理', exact: true }).click()
+    await page.getByRole('button', { name: '订阅账号', exact: true }).click()
     await add()
     await start()
     await waitForAttempt(8)

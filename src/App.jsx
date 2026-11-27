@@ -6,7 +6,7 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { AccountDialog, AccountList, Discovery, LoginDialog } from "./Accounts";
+import { AccountDialog, AccountList, LocalAccountSettings, Discovery, LoginDialog } from "./Accounts";
 import { BotForm, BotList, ChatDialog } from "./Bots";
 import { Conversation } from "./Conversation";
 import { ChatToolbar } from "./ChatToolbar";
@@ -21,7 +21,8 @@ import { ProjectActionDialog, ProjectDialog } from "./ProjectDialog";
 import { Home } from "./Home";
 import { ChannelNavigation, Channels } from "./Channels";
 import { ScheduleNavigation, SchedulesPage, scheduleCreatePages } from "./Schedules";
-import { ArchivedChats, HistoryButtons, SettingsNavigation, SidebarTitlebar, WorkspaceNavigation, settingsPages } from "./WorkspaceNavigation";
+import { ArchivedChats, HistoryButtons, SidebarTitlebar, WorkspaceNavigation } from "./WorkspaceNavigation";
+import { SettingsNavigation, settingsPages } from "./SettingsNavigation";
 import { useLanguage } from "./preferences";
 import { hasComposerDraft, pruneComposerDrafts } from "./composerDrafts";
 import {
@@ -76,7 +77,8 @@ function readDrafts() {
 }
 export default function App() {
   const t = useLanguage();
-  const lastSettingsPage = useRef("archived");
+  const lastSettingsPage = useRef("bots");
+  const settingsSearch = useRef(null);
   const [state, setState] = useState(empty);
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -360,6 +362,13 @@ export default function App() {
           !(e.metaKey || e.ctrlKey) || !ready || !state.onboarded || dialog || document.querySelector('[aria-modal="true"], dialog[open]'))
         return;
       const key = e.key.toLowerCase();
+      if (key === "f" && settingsPages.includes(page) && (/Mac/i.test(navigator.platform) ? e.metaKey : e.ctrlKey)) {
+        e.preventDefault();
+        setCollapsed(false);
+        settingsSearch.current?.focus();
+        settingsSearch.current?.select();
+        return;
+      }
       if (!["b", "k", "n"].includes(key)) return;
       e.preventDefault();
       if (key === "b") setCollapsed((value) => !value);
@@ -368,7 +377,7 @@ export default function App() {
     }
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
-  }, [ready, state.onboarded, dialog, newChat]);
+  }, [ready, state.onboarded, dialog, newChat, page]);
   const wizard = ready && !state.onboarded;
   const chat = state.chats.find((c) => c.id === chatIdForPage(page));
   const agents = useMemo(() => listSubagents(chat?.id, state.tasks, state.bots, state.accounts),
@@ -461,6 +470,7 @@ export default function App() {
   }[page]) || t("新对话", "New chat");
   const shellClasses = [
     "shell",
+    settingsPages.includes(page) && !wizard ? "settings-shell" : "",
     !hasSecondary ? "sidebar-closed no-secondary-sidebar" : "",
     sidebarWidth != null ? "has-custom-rail" : "",
     panelWidth != null ? "has-custom-panel" : "",
@@ -521,7 +531,7 @@ export default function App() {
             {section === "channels" && <ChannelNavigation state={state} activeChatId={chat?.id} onOverview={() => select("channels")}
               onOpenChat={openChannelChat} onChatMenu={actions.showMenu}/>}
             {section === "schedules" && <ScheduleNavigation state={state} page={page} select={select}/>}
-            {section === "settings" && <SettingsNavigation page={settingsPage} select={select}/>}
+            {section === "settings" && <SettingsNavigation page={settingsPage} select={select} searchRef={settingsSearch}/>}
           </aside>}
           <PaneResizer
             side="left"
@@ -551,7 +561,7 @@ export default function App() {
             />
           )}
           {!hasSecondary && <div className="window-history"><HistoryButtons history={history} disabled={wizard || !ready}/></div>}
-          {section !== "schedules" && <div className="window-title">{pageTitle}</div>}
+          {section !== "schedules" && !settingsPages.includes(page) && <div className="window-title">{pageTitle}</div>}
           <div className="header-actions">
             {!wizard && (chat || draft)?.kind === "group" && (
               <button
@@ -615,6 +625,8 @@ export default function App() {
           <SchedulesPage state={state} page={page} invoke={invoke} select={select} refresh={refresh} open={setDialog}/>
         ) : page === "archived" ? (
           <ArchivedChats state={state} select={select} action={actions.act}/>
+        ) : page === "local-accounts" ? (
+          <LocalAccountSettings open={setDialog}/>
         ) : page === "accounts" ? (
           <div className="page-scroll">
             <AccountList

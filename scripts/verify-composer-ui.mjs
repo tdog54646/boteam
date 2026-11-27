@@ -1159,7 +1159,7 @@ async function verify() {
     assert.deepEqual(state.tasks.filter(t => t.messageId === sent.id).map(t => [t.botId,t.status]), [[first,'done']])
     assert.equal(state.composerSettings.find(s => s.botId === second).effort, 'high')
     await button('设置').click()
-    await button('账号管理').click()
+    await button('订阅账号').click()
     await expect(page.getByRole('heading', {name:'账号管理',exact:true})).toBeVisible()
     await page.reload()
     await expect(button('更换模型和思考强度')).toBeVisible()

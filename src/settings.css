@@ -516,3 +516,73 @@
   color: var(--subtle);
   font: 11px/16px var(--mono);
 }
+
+/* Include body-level dialogs while settings are open, and the settings navigation beside archived chats. */
+body:has(> #root > .settings-shell) *,
+.settings-navigation * {
+  font-weight: 400 !important;
+}
+
+.archive-page { container-type: inline-size; }
+.archive-page .archived-chat-row { display: grid; grid-template-columns: 17px minmax(0, 1fr) auto; }
+.archived-chat-row > svg { color: var(--subtle); }
+.archived-chat-title, .archived-chat-detail { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.archived-chat-title { justify-self: start; align-self: flex-start; max-width: 100%; }
+.archived-chat-title:hover { text-decoration: underline; }
+.archived-chat-actions { display: flex; gap: 8px; }
+.archived-chat-actions .archived-delete { color: var(--danger); background: color-mix(in srgb, var(--danger) 11%, var(--canvas)); box-shadow: none; }
+.archived-chat-actions .archived-delete:hover:enabled { background: color-mix(in srgb, var(--danger) 17%, var(--canvas)); }
+@container (max-width: 360px) {
+  .archive-page .archived-chat-row { grid-template-columns: 17px minmax(0, 1fr); }
+  .archived-chat-actions { grid-column: 2; }
+}
+
+/* Settings use the same quiet dividers and open rows as the desktop sidebar. */
+.settings-shell .settings-page {
+  container-type: inline-size;
+  width: min(100%, 768px);
+  padding: 26px 20px 48px;
+}
+.settings-shell .settings-heading { margin-bottom: 32px; }
+.settings-shell .settings-heading h1 { font-size: 28px; line-height: 36px; letter-spacing: -.015em; }
+.settings-shell .settings-heading p { margin-top: 4px; font-size: 14px; line-height: 24px; letter-spacing: 0; }
+.settings-shell .settings-page section + section { margin-top: 40px; }
+.settings-shell .settings-page .settings-group { border: 0; border-radius: 0; border-top: 1px solid var(--line); overflow: visible; }
+.settings-shell .settings-page .settings-row { min-height: 48px; gap: 16px; padding: 12px 0; }
+.settings-shell .settings-page .settings-empty { padding-inline: 0; }
+.settings-shell .settings-page .row-copy { gap: 2px; }
+.settings-shell .settings-page .row-copy strong,
+.settings-shell .settings-page .row-copy small { font-size: 13px; line-height: 20px; }
+.settings-shell .settings-page .btn,
+.settings-shell .settings-page .select-wrap select {
+  height: 28px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.settings-shell .settings-row .select-wrap { width: auto; min-width: 94px; max-width: 52%; }
+.settings-shell .settings-row .select-wrap > select { text-align: end; text-overflow: ellipsis; }
+.settings-shell .settings-page :is(.account-search, .channel-search) {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: transparent;
+}
+.settings-shell .settings-page :is(.account-search, .channel-search):focus-within {
+  border-color: var(--subtle);
+  outline: none;
+}
+.settings-shell .settings-page :is(.account-search, .channel-search) input[type=search] {
+  height: 30px;
+  font-size: 13px;
+}
+@container (max-width: 380px) {
+  .settings-page .settings-section-heading { flex-wrap: wrap; }
+  .settings-shell .settings-row:has(> .select-wrap) {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .settings-shell .settings-row > .select-wrap { max-width: 100%; }
+  .settings-shell .settings-row .select-wrap > select { text-align: start; }
+}
