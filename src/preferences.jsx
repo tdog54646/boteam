@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
 
 import { defaultShortcuts, readShortcuts } from "./shortcuts";
+import { isProfileImage } from "./profileImage";
 
 const storageKey = "boteam.user-preferences.v1";
 export const choices = {
@@ -20,7 +21,7 @@ export function preferenceLabels(t) {
     en: "English",
   };
 }
-const defaultProfile = { displayName: "", username: "user" };
+const defaultProfile = { displayName: "", username: "user", avatar: "" };
 const defaults = { theme: "system", fontSize: "standard", language: "zh-CN", shortcuts: defaultShortcuts, profile: defaultProfile };
 const fontScales = { small: 0.92, standard: 1, large: 1.15 };
 const chinese = (zh) => zh;
@@ -30,7 +31,8 @@ const Preferences = createContext({ ...defaults, appearance: "light", fontScale:
 function readProfile(profile) {
   const displayName = typeof profile?.displayName === "string" ? profile.displayName.trim().slice(0, 60) : "";
   const username = typeof profile?.username === "string" ? profile.username.trim().replace(/^@+/, "").slice(0, 40) : "";
-  return { displayName, username: username || defaultProfile.username };
+  const avatar = isProfileImage(profile?.avatar) ? profile.avatar : "";
+  return { displayName, username: username || defaultProfile.username, avatar };
 }
 
 function readPreferences() {

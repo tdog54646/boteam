@@ -147,7 +147,42 @@ async function verifyProfile(page, nav, main) {
   await page.getByRole('button', { name: '前进' }).click()
   const openEdit = main.getByRole('button', { name: '编辑', exact: true })
   const edit = page.getByRole('dialog', { name: '编辑个人资料' })
+  const avatarImage = 'img.local-user-avatar, .local-user-avatar img'
+  const hero = main.locator('.profile-identity').locator(avatarImage)
+  const rail = page.locator('.user-menu-trigger').locator(avatarImage)
+  const preview = edit.locator(avatarImage)
+  const png = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 32
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#107ac1'
+    ctx.fillRect(0, 0, 32, 32)
+    return canvas.toDataURL('image/png').split(',')[1]
+  })
+  const file = { name: 'avatar.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') }
+
   await openEdit.click()
+  const [picker] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    edit.getByRole('button', { name: '更换头像' }).click(),
+  ])
+  await picker.setFiles(file)
+  await expect(preview).toBeVisible()
+  await expect.poll(() => preview.evaluate(img => img.naturalWidth)).toBeGreaterThan(0)
+  await edit.getByRole('button', { name: '取消' }).click()
+  await page.reload()
+  await expect(openEdit).toBeVisible()
+  await expect(hero).toHaveCount(0)
+  await expect(rail).toHaveCount(0)
+
+  await openEdit.click()
+  const input = edit.locator('input[type=file]')
+  await input.setInputFiles({ ...file, buffer: Buffer.from('invalid image') })
+  await expect(edit.getByRole('alert')).toBeVisible()
+  await expect(preview).toHaveCount(0)
+  await input.setInputFiles(file)
+  await expect(preview).toBeVisible()
+  await expect(edit.getByRole('alert')).toHaveCount(0)
   await edit.getByLabel('显示名称').fill('验收用户')
   await edit.getByLabel('用户名').fill('@fixture')
   await edit.getByRole('button', { name: '保存' }).click()
@@ -155,6 +190,10 @@ async function verifyProfile(page, nav, main) {
   await page.reload()
   await expect(main.getByRole('heading', { name: '验收用户' })).toBeVisible()
   await expect(main.getByText('@fixture', { exact: true })).toBeVisible()
+  await expect(hero).toBeVisible()
+  await expect.poll(() => hero.evaluate(img => img.naturalWidth)).toBeGreaterThan(0)
+  const savedAvatar = await hero.getAttribute('src')
+  await expect(rail).toHaveAttribute('src', savedAvatar)
   await main.getByRole('button', { name: '分享' }).click()
   const share = page.getByRole('dialog', { name: '分享个人资料' })
   await expect(share).toContainText('验收用户\n@fixture')
@@ -174,6 +213,7 @@ async function verifyProfile(page, nav, main) {
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: '设置', exact: true }).click()
   await expect(link).toHaveAccessibleName('验收用户')
+  await expect(link.locator(avatarImage)).toHaveAttribute('src', savedAvatar)
 }
 
 async function verifySettings(page) {

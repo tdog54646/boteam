@@ -1,11 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Check, Copy, LockKeyhole, Pencil, Puzzle, Share } from "lucide-react";
 import { usePreferences } from "./preferences";
 import { Button, errorText, Field, Modal, Notice, Spinner } from "./ui";
 import { describeModel } from "./NativeModelPicker";
 import { ProfileAvatar } from "./ProfileAvatar";
 import { ProfileActivity } from "./ProfileActivity";
+import { prepareProfileImage, profileImageAccept } from "./profileImage";
 import "./profile.css";
+import "./profile-editor.css";
 
 function formatDuration(ms, t) {
   const seconds = Math.floor(ms / 1000);
@@ -21,31 +23,59 @@ function EditProfile({ onClose }) {
   const { profile, saveProfile, t } = usePreferences();
   const [name, setName] = useState(profile.displayName);
   const [handle, setHandle] = useState(profile.username);
+  const [selectedAvatar, setSelectedAvatar] = useState(null);
+  const [readingAvatar, setReadingAvatar] = useState(false);
+  const fileInput = useRef(null);
   const [error, setError] = useState("");
   const username = handle.trim();
   const valid = name.trim() && username && !/[\s@]/u.test(username);
 
+  async function chooseAvatar(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = "";
+    setReadingAvatar(true);
+    setError("");
+    try {
+      setSelectedAvatar(await prepareProfileImage(file, t));
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setReadingAvatar(false);
+    }
+  }
+
   function save(event) {
     event.preventDefault();
-    if (!valid) return;
+    if (!valid || readingAvatar) return;
     try {
-      saveProfile({ displayName: name.trim(), username });
+      saveProfile({ displayName: name.trim(), username, ...(selectedAvatar !== null && { avatar: selectedAvatar }) });
       onClose();
     } catch (reason) { setError(errorText(reason)); }
   }
-  return <Modal title={t("编辑个人资料", "Edit profile")} onClose={onClose}>
+  return <Modal className="profile-editor-dialog" title={t("编辑个人资料", "Edit profile")} onClose={onClose}>
     <form onSubmit={save}>
+      <div className="profile-editor-photo">
+        <ProfileAvatar className="profile-editor-avatar"
+          profile={{ displayName: name.trim() || profile.displayName, avatar: selectedAvatar ?? profile.avatar }}/>
+        <Button busy={readingAvatar} onClick={() => fileInput.current?.click()}>{t("更换头像", "Change avatar")}</Button>
+        <input ref={fileInput} type="file" accept={profileImageAccept} hidden disabled={readingAvatar}
+          aria-label={t("选择头像图片", "Select avatar image")} onChange={chooseAvatar}/>
+      </div>
       <Field label={t("显示名称", "Display name")}>
         <input data-autofocus required maxLength={60} value={name} onChange={e => setName(e.target.value)}/>
       </Field>
       <Field label={t("用户名", "Username")} hint={/[\s@]/u.test(username) && t("用户名中不能包含空格或 @。", "Use a username without spaces or @.")}>
-        <input required maxLength={40} autoCapitalize="none" spellCheck={false}
-          value={handle} onChange={e => setHandle(e.target.value.replace(/^@/, "").slice(0, 40))}/>
+        <span className="profile-editor-handle">
+          <span aria-hidden="true">@</span>
+          <input required maxLength={41} autoCapitalize="none" spellCheck={false}
+            value={handle} onChange={e => setHandle(e.target.value.replace(/^@/, "").slice(0, 40))}/>
+        </span>
       </Field>
       <Notice>{error}</Notice>
       <div className="form-actions">
         <Button onClick={onClose}>{t("取消", "Cancel")}</Button>
-        <Button type="submit" variant="primary" disabled={!valid}>{t("保存", "Save")}</Button>
+        <Button type="submit" variant="primary" disabled={!valid || readingAvatar}>{t("保存", "Save")}</Button>
       </div>
     </form>
   </Modal>;

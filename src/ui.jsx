@@ -123,7 +123,7 @@ export function Notice({ children }) {
     </div>
   ) : null;
 }
-export function Modal({ title, subtitle, children, onClose, wide = false }) {
+export function Modal({ title, subtitle, children, onClose, wide = false, className = "" }) {
   const tr = useLanguage();
   const ref = useRef(null);
   const closeRef = useRef(onClose);
@@ -170,7 +170,7 @@ export function Modal({ title, subtitle, children, onClose, wide = false }) {
       }}
     >
       <section
-        className={`modal ${wide ? "wide" : ""}`}
+        className={`modal ${wide ? "wide" : ""} ${className}`.trim()}
         role="dialog"
         aria-modal="true"
         aria-label={title}

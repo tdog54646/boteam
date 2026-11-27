@@ -1,12 +1,18 @@
-import React from "react";
+import React, { useState } from "react";
 import { usePreferences } from "./preferences";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
-export function ProfileAvatar({ className = "" }) {
-  const { profile } = usePreferences();
-  const name = profile.displayName;
+export function ProfileAvatar({ className = "", profile }) {
+  const { profile: saved, t } = usePreferences();
+  const [failedImage, setFailedImage] = useState("");
+  const name = profile?.displayName?.trim() || saved.displayName || t("用户", "User");
+  const avatar = profile?.avatar ?? saved.avatar;
   const avatarClass = `local-user-avatar ${className}`;
+  if (avatar && avatar !== failedImage) {
+    return <img className={avatarClass} src={avatar} alt="" draggable={false}
+      style={{ background: "transparent" }} onError={() => setFailedImage(avatar)}/>;
+  }
   const words = name.split(/\s+/);
   let initials;
   if (words.length > 1) {
