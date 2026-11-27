@@ -83,7 +83,7 @@ export function ChannelNavigation({ state, activeChatId, onOverview, onOpenChat,
 
   return <>
     <div className="rail-primary">
-      <div className="workbench-heading channel-nav-heading">
+      <div className="workbench-heading">
         <button type="button" className="workbench-switch channel-overview" aria-current={activeChatId ? undefined : "page"} onClick={onOverview}>
           <SlidersHorizontal size={16}/><span>{t("频道配置", "Channel configuration")}</span>
           <small>{configured}/{platforms.length}</small>
@@ -93,7 +93,7 @@ export function ChannelNavigation({ state, activeChatId, onOverview, onOpenChat,
           updateQuery("");
         }}/>
       </div>
-      {searchOpen && <label className="channel-search channel-session-search"><Search size={14}/>
+      {searchOpen && <label className="sidebar-filter channel-session-search"><Search size={14}/>
         <input autoFocus type="search" aria-label={searchLabel} placeholder={t("搜索平台或会话", "Search platforms or chats")}
           value={query} onChange={e => updateQuery(e.target.value)}/>
       </label>}

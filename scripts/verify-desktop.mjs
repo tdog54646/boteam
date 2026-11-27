@@ -289,6 +289,66 @@ async function verifyScheduledTask(page) {
   await expect(main.getByRole('heading', { name: '安排任务' })).toBeVisible()
 }
 
+async function verifySidebarStyles(page, chatTitle) {
+  const navigation = page.getByRole('navigation', { name: '主导航' })
+  const sidebar = page.getByRole('complementary', { name: '侧栏' })
+  const visit = name => navigation.getByRole('button', { name, exact: true }).click()
+  const typography = ['fontSize', 'fontWeight', 'lineHeight']
+  const rowStyle = [...typography, 'height', 'borderRadius', 'columnGap']
+  const read = (locator, properties) => locator.evaluate((el, keys) => {
+    const style = getComputedStyle(el)
+    return Object.fromEntries(keys.map(key => [key, style[key]]))
+  }, properties)
+
+  async function sample(title, row) {
+    const [primary, secondary, heading, item] = await Promise.all([
+      read(navigation, ['backgroundColor', 'width']),
+      read(sidebar, ['backgroundColor', 'width']),
+      read(sidebar.locator(title), typography),
+      read(row, rowStyle),
+    ])
+    expect(primary.width).toBe('52px')
+    expect(primary.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
+    expect(primary.backgroundColor).toBe(secondary.backgroundColor)
+    return { primary, secondary, heading, item }
+  }
+
+  const initialTheme = await page.locator('html').getAttribute('data-appearance')
+  const surfaces = []
+  try {
+    for (const theme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme: theme })
+      await expect(page.locator('html')).toHaveAttribute('data-appearance', theme)
+
+      await visit('首页')
+      const newChat = sidebar.getByRole('button', { name: '新建对话', exact: true })
+      const home = await sample('.workbench-switch', newChat)
+      const group = await read(sidebar.locator('.rail-section-heading > button').first(), [...typography, 'color'])
+      surfaces.push(home.primary.backgroundColor)
+      await sidebar.getByRole('button', { name: chatTitle, exact: true }).click()
+      await expect(page.getByRole('main').getByRole('log')).toBeVisible()
+      expect(await sample('.workbench-switch', newChat), theme + ' 聊天侧栏').toEqual(home)
+
+      await visit('频道')
+      const channel = sidebar.getByRole('button', { name: 'Telegram', exact: true })
+      expect(await sample('.channel-overview', channel), theme + ' 频道侧栏').toEqual(home)
+      await visit('定时任务')
+      const task = sidebar.getByRole('button', { name: '新建任务', exact: true })
+      expect(await sample('.schedule-nav h1', task), theme + ' 定时任务侧栏').toEqual(home)
+      await visit('设置')
+      const account = sidebar.getByRole('button', { name: '订阅账号', exact: true })
+      expect(await sample('.settings-navigation h2', account), theme + ' 设置侧栏').toEqual(home)
+      expect(await read(sidebar.locator('.settings-category > p').first(), [...typography, 'color']),
+        theme + ' 设置分组标题').toEqual(group)
+    }
+    expect(surfaces[0]).not.toBe(surfaces[1])
+  } finally {
+    await page.emulateMedia({ colorScheme: null })
+    await expect(page.locator('html')).toHaveAttribute('data-appearance', initialTheme)
+  }
+  await visit('定时任务')
+}
+
 async function selectNativeSettings(page) {
   const catalog = await page.evaluate(async () => {
     const { accounts } = await window.boteam.invoke('snapshot')
@@ -514,6 +574,7 @@ try {
     await button('定时任务').click()
     await expect(page.getByRole('heading', { name: '定时任务', exact: true })).toBeVisible()
     await verifyScheduledTask(page)
+    await verifySidebarStyles(page, history.title)
     await button('验收用户').click()
     await page.getByRole('menuitem', { name: '语言' }).hover()
     await page.getByRole('menuitemradio', { name: 'English' }).click()

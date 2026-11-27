@@ -1,30 +1,27 @@
-.project-sidebar {
-  --rail-muted: color-mix(in srgb, var(--fg) 61%, var(--surface));
+.workbench-heading { display: flex; align-items: center; min-width: 0; margin-bottom: 10px; gap: 4px; }
+.workbench-heading .icon-btn, .project-sidebar .section-tools { color: var(--rail-label); }
+.workbench-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px var(--rail-gutter);
+  margin-inline-end: auto;
+  font-size: var(--rail-title-size);
+  line-height: var(--rail-title-line);
+  font-weight: var(--rail-weight);
+  border-radius: var(--rail-row-radius);
 }
-:root[data-appearance="light"] .project-sidebar { --selected: #eeefef; }
-.project-sidebar .sidebar-titlebar .icon-btn:first-child { margin-right: auto; }
-.project-sidebar .sidebar-titlebar { padding-right: 12px; }
-.project-sidebar .rail-primary, .project-sidebar .rail-history, .project-sidebar .rail-settings { padding-left: 10px; padding-right: 10px; }
-.project-sidebar .rail-primary { padding-top: 5px; }
-.workbench-heading { display: flex; align-items: center; min-width: 0; }
-.workbench-heading { margin-bottom: 6px; gap: 4px; }
-.workbench-heading .icon-btn, .project-sidebar .section-tools { color: var(--rail-muted); }
-.workbench-switch { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 35px; padding: 0 8px; margin-right: auto; font-size: 17px; font-weight: 620; letter-spacing: -.035em; border-radius: 8px; }
-.workbench-switch svg { color: var(--rail-muted); }
-.workbench-switch:hover:not(:disabled), .workbench-switch[aria-expanded=true] { background: var(--hover); }
-.project-sidebar .rail-row { font-size: 14px; height: 31px; border-radius: 8px; gap: 8px; text-align: start; }
-.project-sidebar .rail-primary .rail-row, .project-sidebar .rail-settings .rail-row { color: color-mix(in srgb, currentColor 87%, transparent); }
-.project-sidebar .sidebar-quick-bot[aria-expanded=true] { background: var(--selected); }
-.project-sidebar .sidebar-quick-bot .sidebar-bot-chevron { flex: none; width: 13px; height: 13px; margin-left: auto; color: var(--rail-muted); }
-.project-sidebar .rail-history { padding-top: 13px; padding-bottom: 14px; scrollbar-width: thin; scrollbar-gutter: auto; }
-.project-sidebar .rail-section + .rail-section { margin-top: 15px; }
-.project-sidebar .rail-section-heading { height: 25px; margin: 0 5px 3px 8px; color: var(--rail-muted); }
-.project-sidebar .rail-section-heading > button:first-child { font-size: 13px; font-weight: 510; }
+.workbench-switch svg { color: var(--rail-label); }
+.workbench-switch:hover:enabled { background: var(--hover); }
+.workbench-switch[aria-expanded=true], .project-sidebar .sidebar-quick-bot[aria-expanded=true] { background: var(--rail-active); }
+.project-sidebar .rail-row { text-align: start; }
+.project-sidebar .sidebar-quick-bot .sidebar-bot-chevron { flex: none; width: 13px; height: 13px; margin-left: auto; color: var(--rail-label); }
 .project-sidebar .section-tools { display: flex; align-items: center; gap: 5px; }
 .project-sidebar .section-tools .icon-btn { width: 24px; height: 24px; color: inherit; }
-.project-sidebar .rail-empty { font-size: 12px; padding: 4px 8px; }
-.project-sidebar .thread-row { color: color-mix(in srgb, currentColor 86%, transparent); }
-.project-sidebar .chat-row-wrap { border-radius: 8px; }
+.project-sidebar .chat-row-wrap { border-radius: var(--rail-row-radius); }
+.project-sidebar .chat-row-wrap .thread-row:not([aria-current=page]):hover { background: transparent; }
+.project-sidebar .chat-unread .chat-row-title { font-weight: var(--rail-weight); }
 .chat-row-title { display: block; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
 .chat-title-text { display: block; width: max-content; }
 .chat-row-title[data-overflow] {
@@ -50,23 +47,22 @@
 }
 .project-sidebar .thread-row .chat-unread-dot { margin-left: auto; }
 .project-sidebar .thread-row .chat-unread-dot + .running-dot { margin-left: 0; }
-.project-sidebar .option-active, .project-sidebar .icon-btn[aria-expanded=true] { background: var(--selected); color: var(--fg); }
+.project-sidebar .option-active, .project-sidebar .icon-btn[aria-expanded=true] { background: var(--rail-active); color: var(--fg); }
 .project-sidebar .rail-settings { padding-top: 5px; padding-bottom: 9px; }
-.project-sidebar .rail-settings .rail-row { height: 29px; font-size: 13px; }
 .project-sidebar .project-import { opacity: 0; }
 .project-sidebar .rail-section:hover .project-import, .project-sidebar .rail-section:focus-within .project-import,
 .project-sidebar .rail-section:not(:has(.sidebar-project)) .project-import { opacity: 1; }
 .project-sidebar > .notice { flex-shrink: 0; margin: 6px 10px; }
-.sidebar-project-row { position: relative; border-radius: 8px; }
+.sidebar-project-row { position: relative; border-radius: var(--rail-row-radius); }
 .sidebar-project-row:is(:hover,:focus-within,.showing) { background: var(--hover); }
 .sidebar-project-row:is(:hover,:focus-within,.showing) .project-toggle { padding-right: 56px; }
 .sidebar-project-row .project-toggle:hover { background: transparent; }
 .project-row-tools { display: flex; position: absolute; align-items: center; top: 3px; right: 4px; gap: 1px; opacity: 0; pointer-events: none; }
 .sidebar-project-row:is(:hover,:focus-within,.showing) .project-row-tools { opacity: 1; pointer-events: auto; }
-.project-row-tools .icon-btn { width: 24px; height: 25px; color: var(--rail-muted); }
+.project-row-tools .icon-btn { width: 24px; height: 25px; color: var(--rail-label); }
 .project-row-tools .icon-btn svg { width: 15px; height: 15px; }
 .project-chats .thread-row { padding-left: 32px; }
-.project-sidebar .thread-row:focus-visible, .project-sidebar .project-toggle:focus-visible { outline-offset: -2px; }
+.project-sidebar :is(.rail-row, .workbench-switch, .rail-section-heading button):focus-visible { outline: 1px solid var(--muted); outline-offset: -1px; }
 .sidebar-options-menu, .project-detail-card {
   position: fixed; z-index: 65; -webkit-app-region: no-drag;
   border: 1px solid var(--line); border-radius: 13px; background: var(--surface);
@@ -121,7 +117,6 @@
 .project-dialog-footer .project-remove:hover { background: color-mix(in srgb,var(--danger) 13%,var(--surface)); }
 .project-remove-message { color: var(--muted); font-size: 14px; line-height: 1.6; }
 @media (max-width: 620px) {
-  .project-sidebar .rail-primary, .project-sidebar .rail-history, .project-sidebar .rail-settings { padding-left: 6px; padding-right: 6px; }
   .workbench-heading { gap: 1px; }
   .project-dialog-shell .modal { padding: 18px; }
 }

@@ -26,7 +26,6 @@
     0 16px 48px rgb(0 0 0 / 13%);
   --composer-shadow:
     0 0 0 0.5px rgb(0 0 0 / 12%), 0 3px 7.5px #0000000a, 0 0 20px #0000000d;
-  --rail-width: 256px;
   --toolbar-height: 46px;
   font: 14px/20px var(--sans);
   color: var(--fg);
@@ -138,6 +137,20 @@ pre {
   font-variant-numeric: tabular-nums;
 }
 .shell {
+  --nav-width: 52px;
+  --rail-width: clamp(190px, 22vw, 238px);
+  --rail-font-size: calc(14px * var(--font-scale, 1));
+  --rail-line-height: calc(20px * var(--font-scale, 1));
+  --rail-title-size: calc(18px * var(--font-scale, 1));
+  --rail-title-line: calc(23px * var(--font-scale, 1));
+  --rail-weight: 400;
+  --rail-row-height: 30px;
+  --rail-row-gap: 1px;
+  --rail-row-radius: 10px;
+  --rail-gutter: 8px;
+  --rail-group-gap: 17px;
+  --rail-label: var(--subtle);
+  --rail-active: color-mix(in srgb, var(--fg) 6%, var(--sidebar));
   height: 100dvh;
   min-height: 0;
   display: flex;
@@ -199,8 +212,12 @@ body.is-resizing-pane webview {
   min-height: 0;
   flex-direction: column;
   background: var(--canvas);
+  border-inline-start: 1px solid var(--line);
+  border-start-start-radius: 14px;
+  border-end-start-radius: 14px;
 }
 .sidebar {
+  --selected: var(--rail-active);
   flex: 0 0 var(--rail-width);
   width: var(--rail-width);
   min-height: 0;
@@ -208,8 +225,8 @@ body.is-resizing-pane webview {
   flex-direction: column;
   user-select: none;
   background: var(--sidebar);
-  border-right: 1px solid light-dark(#ededed, var(--line));
   color: var(--fg);
+  font: var(--rail-weight) var(--rail-font-size) / var(--rail-line-height) var(--sans);
 }
 .sidebar-titlebar,
 .topbar {
@@ -279,10 +296,10 @@ body.is-resizing-pane webview {
 .rail-primary,
 .rail-history,
 .rail-settings {
-  padding: 0 8px;
+  padding: 0 var(--rail-gutter);
 }
 .rail-primary {
-  padding-top: 4px;
+  padding-top: 6px;
 }
 .rail-workspace {
   height: 32px;
@@ -333,13 +350,15 @@ body.is-resizing-pane webview {
 .rail-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  border-radius: 10px;
+  gap: var(--rail-gutter);
+  border-radius: var(--rail-row-radius);
   width: 100%;
-  height: 30px;
-  padding: 0 8px;
-  font-size: 14px;
-  line-height: 20px;
+  min-height: var(--rail-row-height);
+  margin-block-end: var(--rail-row-gap);
+  padding: 5px var(--rail-gutter);
+  font-size: var(--rail-font-size);
+  font-weight: var(--rail-weight);
+  line-height: var(--rail-line-height);
 }
 .rail-row > svg {
   width: 16px;
@@ -356,10 +375,11 @@ body.is-resizing-pane webview {
   background: var(--hover);
 }
 .rail-row[aria-current="page"] {
-  background: var(--selected);
+  background: var(--rail-active);
 }
-.rail-row[aria-current="page"]:not(.thread-row) {
-  font-weight: 520;
+.rail-row:focus-visible {
+  outline: 1px solid var(--muted);
+  outline-offset: -1px;
 }
 .rail-row kbd,
 .thread-row time,
@@ -382,26 +402,24 @@ body.is-resizing-pane webview {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  padding-top: 18px;
+  padding-block: var(--rail-group-gap) 14px;
 }
 .rail-section + .rail-section {
-  margin-top: 16px;
+  margin-top: var(--rail-group-gap);
 }
 .rail-section-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 26px;
-  margin: 0 4px 2px 8px;
-  color: var(--muted);
+  height: var(--rail-line-height);
+  margin: 0 var(--rail-gutter) 7px;
+  color: var(--rail-label);
 }
 .rail-section-heading > button:first-child {
   height: 100%;
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
-  font-weight: 540;
 }
 .rail-section-heading > button:first-child svg {
   opacity: 0;
@@ -422,12 +440,8 @@ body.is-resizing-pane webview {
   height: 14px;
 }
 .rail-empty {
-  padding: 3px 8px 3px 16px;
-  font-size: 12px;
-  color: var(--subtle);
-}
-.thread-row {
-  font-size: 13px;
+  padding: 5px var(--rail-gutter);
+  color: var(--rail-label);
 }
 .thread-row > svg {
   color: var(--muted);
@@ -930,15 +944,7 @@ body.is-resizing-pane webview {
   padding: 3px 7px;
   white-space: nowrap;
 }
-@media (max-width: 1000px) {
-  :root {
-    --rail-width: 224px;
-  }
-}
 @media (max-width: 720px) {
-  :root {
-    --rail-width: 190px;
-  }
   .shell.has-custom-rail {
     --rail-width: clamp(160px, var(--custom-rail-width), 36vw);
   }

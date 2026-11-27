@@ -93,12 +93,13 @@ export function ScheduleNavigation({ state, page, select }) {
         <IconButton icon={Search} label={t("搜索定时任务", "Search scheduled tasks")} aria-expanded={searching}
           onClick={() => searching ? closeSearch() : setSearching(true)}/>
       </div>
-      {searching && <label className="schedule-search"><Search size={14}/>
+      {searching && <label className="sidebar-filter schedule-search"><Search size={14}/>
         <input autoFocus type="search" aria-label={t("搜索定时任务", "Search scheduled tasks")}
           placeholder={t("搜索任务", "Search tasks")} value={query} onChange={e => setQuery(e.target.value)}
           onKeyDown={e => { if (e.key === "Escape") { e.preventDefault(); closeSearch(); } }}/>
       </label>}
-      <button type="button" className="rail-row" onClick={() => select("schedule:new")}><Plus size={16}/>{t("新建任务", "New task")}</button>
+      <button type="button" className="rail-row" aria-current={scheduleCreatePages.includes(page) ? "page" : undefined}
+        onClick={() => select("schedule:new")}><Plus size={16}/>{t("新建任务", "New task")}</button>
     </div>
     <nav className="rail-history schedule-nav-list" aria-label={t("定时任务列表", "Scheduled task list")}>
       {matches.map(job => <button key={job.id} type="button" className="rail-row thread-row schedule-row"

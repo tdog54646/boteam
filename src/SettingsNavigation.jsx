@@ -89,7 +89,7 @@ export function SettingsNavigation({ page, select, searchRef }) {
   return <nav className="settings-navigation" aria-label={t("设置分类", "Settings categories")}>
     <header>
       <h2>{t("设置", "Settings")}</h2>
-      <div className="settings-filter">
+      <div className="sidebar-filter">
         <Search size={15} aria-hidden="true"/>
         <input ref={searchRef} autoFocus type="search" value={query} aria-label={t("搜索设置", "Search settings")}
           placeholder={t("搜索", "Search")} onChange={e => setQuery(e.target.value)}
