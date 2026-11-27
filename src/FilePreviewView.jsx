@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
@@ -77,6 +78,7 @@ export function injectHtmlSandboxCsp(rawHtml) {
 }
 
 function CodeSourceViewer({ content, language, line, endLine, scrollTrigger }) {
+  const tr = useLanguage();
   const targetRef = useRef(null);
   const lines = useMemo(() => {
     const raw = String(content ?? "");
@@ -102,7 +104,7 @@ function CodeSourceViewer({ content, language, line, endLine, scrollTrigger }) {
   const enableSyntax = lines.length <= 4000;
 
   return (
-    <div className="fp-code-wrap" role="region" aria-label="代码与文本视图">
+    <div className="fp-code-wrap" role="region" aria-label={tr("代码与文本视图", "Code and text view")}>
       <div className="fp-code-table">
         {lines.map((lineText, idx) => {
           const lineNo = idx + 1;
@@ -128,6 +130,7 @@ function CodeSourceViewer({ content, language, line, endLine, scrollTrigger }) {
 }
 
 function HtmlSandboxPreview({ html }) {
+  const tr = useLanguage();
   const preparedHtml = useMemo(() => injectHtmlSandboxCsp(html || ""), [html]);
   const [previewState, setPreviewState] = useState({ html: "", url: null, useSrcDoc: false });
 
@@ -166,7 +169,7 @@ function HtmlSandboxPreview({ html }) {
       {ready && (
         <iframe
           className="fp-html-frame"
-          title="HTML 预览"
+          title={tr("HTML 预览", "HTML preview")}
           sandbox="allow-scripts"
           src={previewState.url || undefined}
           srcDoc={previewState.useSrcDoc ? preparedHtml : undefined}
@@ -177,12 +180,13 @@ function HtmlSandboxPreview({ html }) {
 }
 
 function ImageStagePreview({ src, alt, zoom = 1 }) {
+  const tr = useLanguage();
   const pct = Math.round(zoom * 100);
   return (
     <div className="fp-image-stage">
       <img
         className="fp-image wp-image"
-        alt={alt || "图片预览"}
+        alt={alt || tr("图片预览", "Image preview")}
         src={src}
         style={zoom !== 1 ? { width: `${pct}%`, maxWidth: "none" } : undefined}
       />
@@ -191,13 +195,14 @@ function ImageStagePreview({ src, alt, zoom = 1 }) {
 }
 
 function SpreadsheetPreview({ structured }) {
+  const tr = useLanguage();
   const sheets = structured?.sheets || [];
   const [sheetIdx, setSheetIdx] = useState(0);
   useEffect(() => {
     setSheetIdx(0);
   }, [structured]);
 
-  if (!sheets.length) return <p className="wp-empty">表格内容为空。</p>;
+  if (!sheets.length) return <p className="wp-empty">{tr("表格内容为空。", "This sheet is empty.")}</p>;
   const active = sheets[Math.min(sheetIdx, sheets.length - 1)] || sheets[0];
   const colCount = Math.max(active.colCount || 0, 1);
   const cols = Array.from({ length: colCount }, (_, idx) => columnLabel(idx));
@@ -208,7 +213,7 @@ function SpreadsheetPreview({ structured }) {
         <table className="fp-sheet-table">
           <thead>
             <tr>
-              <th className="fp-sheet-corner" aria-label="行号">#</th>
+              <th className="fp-sheet-corner" aria-label={tr("行号", "Row number")}>#</th>
               {cols.map((label) => (
                 <th key={label}>{label}</th>
               ))}
@@ -228,7 +233,7 @@ function SpreadsheetPreview({ structured }) {
               <tr>
                 <td className="fp-sheet-rownum">1</td>
                 <td colSpan={colCount} className="fp-sheet-empty">
-                  （工作表为空）
+                  {tr("（工作表为空）", "(Empty sheet)")}
                 </td>
               </tr>
             )}
@@ -237,7 +242,7 @@ function SpreadsheetPreview({ structured }) {
       </div>
       <div className="fp-sheet-footer">
         {sheets.length > 1 && (
-          <div className="fp-sheet-tabs" role="tablist" aria-label="工作表切换">
+          <div className="fp-sheet-tabs" role="tablist" aria-label={tr("工作表切换", "Switch sheet")}>
             {sheets.map((s, idx) => (
               <button
                 key={`${s.name}-${idx}`}
@@ -253,8 +258,8 @@ function SpreadsheetPreview({ structured }) {
           </div>
         )}
         <span className="fp-sheet-meta">
-          共 {active.totalRows ?? active.rows.length} 行 · {active.colCount || 0} 列
-          {active.truncatedRows ? "（仅预览前 1,000 行）" : ""}
+          {tr("共", "Total")} {active.totalRows ?? active.rows.length} {tr("行 ·", " rows ·")} {active.colCount || 0} {tr("列", " columns")}
+          {active.truncatedRows ? tr("（仅预览前 1,000 行）", "(Showing the first 1,000 rows)") : ""}
         </span>
       </div>
     </div>
@@ -287,8 +292,9 @@ function renderDocxRun(run, idx, onOpenUrl) {
 }
 
 function DocxDocumentPreview({ structured, onOpenUrl }) {
+  const tr = useLanguage();
   const blocks = structured?.blocks || [];
-  if (!blocks.length) return <p className="wp-empty">文档正文为空。</p>;
+  if (!blocks.length) return <p className="wp-empty">{tr("文档正文为空。", "This document has no text.")}</p>;
 
   return (
     <div className="fp-doc-stage">
@@ -362,13 +368,14 @@ function DocxDocumentPreview({ structured, onOpenUrl }) {
 }
 
 function PptxSlidesPreview({ structured }) {
+  const tr = useLanguage();
   const slides = structured?.slides || [];
   const [activeSlide, setActiveSlide] = useState(0);
   useEffect(() => {
     setActiveSlide(0);
   }, [structured]);
 
-  if (!slides.length) return <p className="wp-empty">演示文稿中未找到幻灯片。</p>;
+  if (!slides.length) return <p className="wp-empty">{tr("演示文稿中未找到幻灯片。", "No slides found in this presentation.")}</p>;
   const current = slides[Math.min(activeSlide, slides.length - 1)] || slides[0];
 
   return (
@@ -376,22 +383,22 @@ function PptxSlidesPreview({ structured }) {
       <div className="fp-pptx-bar">
         <IconButton
           icon={ChevronLeft}
-          label="上一张幻灯片"
+          label={tr("上一张幻灯片", "Previous slide")}
           disabled={activeSlide <= 0}
           onClick={() => setActiveSlide((v) => Math.max(0, v - 1))}
         />
         <span className="fp-pptx-counter">
-          幻灯片 {current.number} / {slides.length}
+          {tr("幻灯片", "Slide")} {current.number} / {slides.length}
         </span>
         <IconButton
           icon={ChevronRight}
-          label="下一张幻灯片"
+          label={tr("下一张幻灯片", "Next slide")}
           disabled={activeSlide >= slides.length - 1}
           onClick={() => setActiveSlide((v) => Math.min(slides.length - 1, v + 1))}
         />
       </div>
 
-      <section className="fp-slide-card" aria-label={`幻灯片 ${current.number}`}>
+      <section className="fp-slide-card" aria-label={tr(`幻灯片 ${current.number}`, `Slide ${current.number}`)}>
         <header className="fp-slide-head">
           <span className="fp-slide-badge">{current.number}</span>
           <h2>{current.title}</h2>
@@ -433,7 +440,7 @@ function PptxSlidesPreview({ structured }) {
       </section>
 
       {slides.length > 1 && (
-        <div className="fp-slide-strip" role="tablist" aria-label="幻灯片列表">
+        <div className="fp-slide-strip" role="tablist" aria-label={tr("幻灯片列表", "Slides")}>
           {slides.map((s, idx) => (
             <button
               key={s.number}
@@ -459,6 +466,7 @@ function joinNotebookSource(source) {
 }
 
 function NotebookPreview({ content, onOpenFile, onOpenUrl }) {
+  const tr = useLanguage();
   const parsed = useMemo(() => {
     try {
       const nb = JSON.parse(content || "{}");
@@ -468,12 +476,12 @@ function NotebookPreview({ content, onOpenFile, onOpenUrl }) {
         "python";
       return { cells: Array.isArray(nb?.cells) ? nb.cells : [], language: String(lang).toLowerCase() };
     } catch (err) {
-      return { error: err?.message || "无法解析 Notebook JSON。" };
+      return { error: err?.message || tr("无法解析 Notebook JSON。", "Could not read notebook JSON.") };
     }
   }, [content]);
 
   if (parsed.error) return <Notice>{parsed.error}</Notice>;
-  if (!parsed.cells.length) return <p className="wp-empty">Notebook 不包含任何单元格。</p>;
+  if (!parsed.cells.length) return <p className="wp-empty">{tr("Notebook 不包含任何单元格。", "The notebook has no cells.")}</p>;
 
   return (
     <div className="fp-ipynb-wrap">
@@ -520,7 +528,7 @@ function NotebookPreview({ content, onOpenFile, onOpenUrl }) {
                         key={oIdx}
                         className="fp-nb-img"
                         src={`data:image/png;base64,${b64}`}
-                        alt="Notebook 输出"
+                        alt={tr("Notebook 输出", "Notebook output")}
                       />
                     );
                   }
@@ -531,14 +539,14 @@ function NotebookPreview({ content, onOpenFile, onOpenUrl }) {
                         key={oIdx}
                         className="fp-nb-img"
                         src={`data:image/jpeg;base64,${b64}`}
-                        alt="Notebook 输出"
+                        alt={tr("Notebook 输出", "Notebook output")}
                       />
                     );
                   }
                   if (data["image/svg+xml"]) {
                     const svgRaw = joinNotebookSource(data["image/svg+xml"]);
                     const svgUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svgRaw)}`;
-                    return <img key={oIdx} className="fp-nb-img" src={svgUrl} alt="SVG 输出" />;
+                    return <img key={oIdx} className="fp-nb-img" src={svgUrl} alt={tr("SVG 输出", "SVG output")} />;
                   }
                   if (data["text/markdown"]) {
                     return (
@@ -738,16 +746,17 @@ export function FilePreviewBody({
   onOpenFile,
   onOpenUrl,
 }) {
+  const tr = useLanguage();
   if (!file) return null;
 
   if (file.oversize) {
     return (
       <div className="fp-oversize">
         {file.src && <img className="fp-oversize-thumb" alt={file.name} src={file.src} />}
-        <p className="fp-oversize-msg">{file.limitMessage || "文件体积超出预览上限。"}</p>
+        <p className="fp-oversize-msg">{file.limitMessage || tr("文件体积超出预览上限。", "The file exceeds the preview size limit.")}</p>
         {onReveal && (
           <Button icon={FolderOpen} onClick={onReveal}>
-            在 Finder 中显示
+            {tr("在 Finder 中显示", "Show in Finder")}
           </Button>
         )}
       </div>
@@ -760,7 +769,7 @@ export function FilePreviewBody({
         <Notice>{file.previewError}</Notice>
         {onReveal && (
           <Button icon={FolderOpen} onClick={onReveal}>
-            在 Finder 中显示
+            {tr("在 Finder 中显示", "Show in Finder")}
           </Button>
         )}
       </div>
@@ -777,7 +786,7 @@ export function FilePreviewBody({
           endLine={endLine}
           scrollTrigger={scrollTrigger}
         />
-        {file.truncated && <p className="wp-empty">文件较大，仅显示前 {formatByteLimit(file.maxBytes)} 内容。</p>}
+        {file.truncated && <p className="wp-empty">{tr("文件较大，仅显示前", "Large file. Showing the first")} {formatByteLimit(file.maxBytes)} {tr("内容。", " of content.")}</p>}
       </>
     );
   }
@@ -788,7 +797,7 @@ export function FilePreviewBody({
         <div className="fp-doc-stage">
           <article className="fp-doc-page">
             <MarkdownContent text={file.content || ""} onOpenFile={onOpenFile} onOpenUrl={onOpenUrl} />
-            {file.truncated && <p className="wp-empty">文件较大，仅显示部分内容。</p>}
+            {file.truncated && <p className="wp-empty">{tr("文件较大，仅显示部分内容。", "Large file. Showing partial content.")}</p>}
           </article>
         </div>
       );
@@ -803,7 +812,7 @@ export function FilePreviewBody({
     case "pdf":
       if (file.base64) {
         return (
-          <Suspense fallback={<div className="wp-empty"><Spinner /> 正在加载 PDF 预览…</div>}>
+          <Suspense fallback={<div className="wp-empty"><Spinner /> {tr("正在加载 PDF 预览…", "Loading PDF preview…")}</div>}>
             <PdfPreview base64={file.base64} zoom={zoom} />
           </Suspense>
         );
@@ -863,10 +872,10 @@ export function FilePreviewBody({
   if (file.binary || file.content == null) {
     return (
       <div className="fp-oversize">
-        <p className="wp-empty">此文件不支持直接预览。</p>
+        <p className="wp-empty">{tr("此文件不支持直接预览。", "A preview is unavailable for this file.")}</p>
         {onReveal && (
           <Button icon={FolderOpen} onClick={onReveal}>
-            在 Finder 中显示
+            {tr("在 Finder 中显示", "Show in Finder")}
           </Button>
         )}
       </div>
@@ -882,7 +891,7 @@ export function FilePreviewBody({
         endLine={endLine}
         scrollTrigger={scrollTrigger}
       />
-      {file.truncated && <p className="wp-empty">文件较大，仅显示部分内容。</p>}
+      {file.truncated && <p className="wp-empty">{tr("文件较大，仅显示部分内容。", "Large file. Showing partial content.")}</p>}
     </>
   );
 }
@@ -930,11 +939,12 @@ export function FileTypeBadge({ filePath }) {
 }
 
 export function EndResourceCard({ filePath, line, action, onOpen }) {
+  const tr = useLanguage();
   const spec = classifyPreviewFile(filePath || "");
   const name = fileBasename(filePath || "");
   const actionPrefix =
-    action === "added" ? "已生成" : action === "modified" ? "已更新" : "";
-  const defaultSub = [actionPrefix, spec.subtitle, line ? `第 ${line} 行` : ""]
+    action === "added" ? tr("已生成", "Created") : action === "modified" ? tr("已更新", "Updated") : "";
+  const defaultSub = [actionPrefix, spec.subtitle, line ? tr(`第 ${line} 行`, `Line ${line}`) : ""]
     .filter(Boolean)
     .join(" · ");
 
@@ -949,11 +959,11 @@ export function EndResourceCard({ filePath, line, action, onOpen }) {
       <span className="erc-copy">
         <strong className="erc-title">{name}</strong>
         <span className="erc-subtitle-stack">
-          <span className="erc-subtitle-default">{defaultSub || "文件"}</span>
-          <span className="erc-subtitle-hover" aria-hidden="true">打开预览</span>
+          <span className="erc-subtitle-default">{defaultSub || tr("文件", "File")}</span>
+          <span className="erc-subtitle-hover" aria-hidden="true">{tr("打开预览", "Open preview")}</span>
         </span>
       </span>
-      <span className="erc-open-pill">打开</span>
+      <span className="erc-open-pill">{tr("打开", "Open")}</span>
     </button>
   );
 }
@@ -969,6 +979,7 @@ export function FilePreviewToolbarControls({
   onReload,
   onReveal,
 }) {
+  const tr = useLanguage();
   const [copied, setCopied] = useState(false);
   const toggleable = canTogglePreviewSource(file);
   const zoomable = canZoomPreview(file, viewMode);
@@ -988,7 +999,7 @@ export function FilePreviewToolbarControls({
         <span className="fp-size-pill">{formatByteLimit(file.sizeBytes)}</span>
       )}
       {toggleable && (
-        <div className="fp-mode-toggle" role="tablist" aria-label="预览模式">
+        <div className="fp-mode-toggle" role="tablist" aria-label={tr("预览模式", "Preview mode")}>
           <button
             type="button"
             role="tab"
@@ -996,7 +1007,7 @@ export function FilePreviewToolbarControls({
             className={viewMode === "preview" ? "active" : ""}
             onClick={() => setViewMode("preview")}
           >
-            预览
+            {tr("预览", "Preview")}
           </button>
           <button
             type="button"
@@ -1005,29 +1016,29 @@ export function FilePreviewToolbarControls({
             className={viewMode === "source" ? "active" : ""}
             onClick={() => setViewMode("source")}
           >
-            源码
+            {tr("源码", "Source")}
           </button>
         </div>
       )}
       {zoomable && (
-        <div className="fp-zoom-bar" aria-label="缩放控制">
+        <div className="fp-zoom-bar" aria-label={tr("缩放控制", "Zoom controls")}>
           <IconButton
             icon={Minus}
-            label="缩小预览"
+            label={tr("缩小预览", "Zoom out")}
             disabled={zoom <= 0.5}
             onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.25) * 100) / 100))}
           />
           <button
             type="button"
             className="fp-zoom-reset"
-            title="重置缩放"
+            title={tr("重置缩放", "Reset zoom")}
             onClick={() => setZoom(1)}
           >
             {Math.round(zoom * 100)}%
           </button>
           <IconButton
             icon={Plus}
-            label="放大预览"
+            label={tr("放大预览", "Zoom in")}
             disabled={zoom >= 3}
             onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.25) * 100) / 100))}
           />
@@ -1036,18 +1047,18 @@ export function FilePreviewToolbarControls({
       {file?.content != null && (
         <IconButton
           icon={copied ? Check : Copy}
-          label={copied ? "已复制内容" : "复制文件内容"}
+          label={copied ? tr("已复制内容", "Content copied") : tr("复制文件内容", "Copy file content")}
           onClick={copyContent}
         />
       )}
       {onReveal && (
-        <IconButton icon={FolderOpen} label="在 Finder 中显示" onClick={onReveal} />
+        <IconButton icon={FolderOpen} label={tr("在 Finder 中显示", "Show in Finder")} onClick={onReveal} />
       )}
       {canEdit && onEdit && (
-        <IconButton icon={Pencil} label="编辑页面" onClick={onEdit} />
+        <IconButton icon={Pencil} label={tr("编辑页面", "Edit page")} onClick={onEdit} />
       )}
       {onReload && (
-        <IconButton icon={RefreshCw} label="刷新文件内容" onClick={onReload} />
+        <IconButton icon={RefreshCw} label={tr("刷新文件内容", "Reload file")} onClick={onReload} />
       )}
     </div>
   );

@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useMemo, useState } from "react";
 import { Check, Copy, ExternalLink, FileCode2, FileSpreadsheet, FileText, Image as ImageIcon, Presentation } from "lucide-react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
@@ -78,6 +79,7 @@ export function FileCategoryGlyph({ filePath, size = 14 }) {
 }
 
 function CodeBlock({ language, raw }) {
+  const tr = useLanguage();
   const [copied, setCopied] = useState(false);
 
   if (language === "math" || language === "katex") {
@@ -85,10 +87,8 @@ function CodeBlock({ language, raw }) {
     return <div className="md-math-block" dangerouslySetInnerHTML={{ __html: html }} />;
   }
 
-  const lines = useMemo(() => {
-    const trimmed = raw.endsWith("\n") ? raw.slice(0, -1) : raw;
-    return trimmed.split("\n");
-  }, [raw]);
+  const trimmed = raw.endsWith("\n") ? raw.slice(0, -1) : raw;
+  const lines = trimmed.split("\n");
 
   async function copyCode() {
     try {
@@ -102,9 +102,9 @@ function CodeBlock({ language, raw }) {
     <div className="md-codeblock">
       <div className="md-codeblock-head">
         <span className="md-codeblock-lang">{language || "code"}</span>
-        <button type="button" className="md-codeblock-copy" onClick={copyCode} aria-label="复制代码">
+        <button type="button" className="md-codeblock-copy" onClick={copyCode} aria-label={tr("复制代码", "Copy code")}>
           {copied ? <Check size={13} /> : <Copy size={13} />}
-          <span>{copied ? "已复制" : "复制"}</span>
+          <span>{copied ? tr("已复制", "Copied") : tr("复制", "Copy")}</span>
         </button>
       </div>
       <pre>
@@ -177,6 +177,7 @@ export function MarkdownContent({
   onOpenUrl,
   knownFiles,
 }) {
+  const tr = useLanguage();
   const normalizedText = useMemo(() => normalizeMarkdownMath(text), [text]);
   function renderPlainTokens(value) {
     if (typeof value !== "string" || !value) return value;
@@ -334,7 +335,7 @@ export function MarkdownContent({
             src && /^data:image\//i.test(src) ? (
               <img className="md-inline-img" alt={alt || ""} src={src} />
             ) : (
-              <span>{alt || "图片"}</span>
+              <span>{alt || tr("图片", "Image")}</span>
             ),
         }}
       >

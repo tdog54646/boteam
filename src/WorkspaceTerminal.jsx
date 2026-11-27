@@ -1,3 +1,4 @@
+import { usePreferences } from "./preferences";
 import React, { useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
@@ -6,6 +7,7 @@ import { errorText, IconButton, Notice } from "./ui";
 import "@xterm/xterm/css/xterm.css";
 
 export default function TerminalView({ call, active }) {
+  const { t: tr, appearance, fontScale } = usePreferences();
   const host = useRef(null);
   const emulator = useRef(null);
   const [run, setRun] = useState(0);
@@ -38,17 +40,13 @@ export default function TerminalView({ call, active }) {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(element);
-    term.textarea?.setAttribute("aria-label", "终端输入");
     function resize() {
       if (element.clientWidth && element.clientHeight) fit.fit();
     }
     resize();
-    emulator.current = { term, resize };
+    emulator.current = { term, resize, theme };
     const observer = new ResizeObserver(resize);
     observer.observe(element);
-    const appearance = matchMedia("(prefers-color-scheme: dark)");
-    const themeChanged = () => { term.options.theme = theme(); };
-    appearance.addEventListener("change", themeChanged);
     setSession(null);
     setExit(null);
     setError("");
@@ -91,11 +89,18 @@ export default function TerminalView({ call, active }) {
       clearTimeout(timer);
       if (sessionId) close(sessionId);
       observer.disconnect();
-      appearance.removeEventListener("change", themeChanged);
       emulator.current = null;
       term.dispose();
     };
   }, [call, run]);
+  useEffect(() => {
+    const current = emulator.current;
+    if (!current) return;
+    current.term.options.theme = current.theme();
+    current.term.options.fontSize = Math.round(12 * fontScale);
+    current.term.textarea?.setAttribute("aria-label", tr("终端输入", "Terminal input"));
+    current.resize();
+  }, [appearance, fontScale, tr, call, run]);
   useEffect(() => {
     if (!active || !session) return;
     emulator.current?.resize();
@@ -104,14 +109,14 @@ export default function TerminalView({ call, active }) {
 
   return <>
     <div className="wp-tools">
-      <span className="wp-tool-title" title={session?.cwd}>{session?.cwd || "终端"}</span>
+      <span className="wp-tool-title" title={session?.cwd}>{session?.cwd || tr("终端", "Terminal")}</span>
       {exit || (!session && error) ?
-        <IconButton icon={RefreshCw} label="重新启动终端" onClick={() => setRun(run + 1)} /> :
-        <IconButton icon={Square} label="中断当前命令" disabled={!session}
+        <IconButton icon={RefreshCw} label={tr("重新启动终端", "Restart terminal")} onClick={() => setRun(run + 1)} /> :
+        <IconButton icon={Square} label={tr("中断当前命令", "Interrupt command")} disabled={!session}
           onClick={() => call("panelTerminalInterrupt", { id: session.id }).catch((err) => setError(errorText(err)))} />}
     </div>
     <Notice>{error}</Notice>
     <div className="wp-terminal" ref={host} onKeyDown={(event) => event.stopPropagation()} />
-    {exit && <p className="wp-empty">终端已退出{exit.code != null && " · " + exit.code}</p>}
+    {exit && <p className="wp-empty">{tr("终端已退出", "Terminal exited")}{exit.code != null && " · " + exit.code}</p>}
   </>;
 }

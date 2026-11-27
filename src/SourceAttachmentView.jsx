@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useEffect, useState } from "react";
 import { ArrowUp, ChevronRight, File, Folder, LockKeyhole, RefreshCw } from "lucide-react";
 import { FilePreviewBody, FilePreviewToolbarControls } from "./FilePreviewView";
@@ -10,6 +11,7 @@ export function SourceAttachmentView({ chatId, attachmentId, title, invoke }) {
 }
 
 function AttachmentContents({ chatId, attachmentId, title, invoke }) {
+  const tr = useLanguage();
   const [trail, setTrail] = useState([]);
   const [viewMode, setViewMode] = useState("preview");
   const [zoom, setZoom] = useState(1);
@@ -25,7 +27,7 @@ function AttachmentContents({ chatId, attachmentId, title, invoke }) {
   const isFile = preview?.kind === "file";
   return <>
     <div className="wp-tools">
-      {trail.length > 0 && <IconButton icon={ArrowUp} label="返回上一级附件目录"
+      {trail.length > 0 && <IconButton icon={ArrowUp} label={tr("返回上一级附件目录", "Parent attachment directory")}
         onClick={() => setTrail(previous => previous.slice(0, -1))} />}
       <span className="wp-tool-title" title={label}>{label}</span>
       {isFile && (
@@ -37,11 +39,11 @@ function AttachmentContents({ chatId, attachmentId, title, invoke }) {
           setZoom={setZoom}
         />
       )}
-      <LockKeyhole size={13} aria-label="只读快照" />
-      {load.error && <IconButton icon={RefreshCw} label="重新读取附件" onClick={load.reload} />}
+      <LockKeyhole size={13} aria-label={tr("只读快照", "Read-only snapshot")} />
+      {load.error && <IconButton icon={RefreshCw} label={tr("重新读取附件", "Reload attachment")} onClick={load.reload} />}
     </div>
     <div className={`wp-scroll ${isFile ? "fp-flush-scroll" : ""}`}>
-      {load.busy && <div className="wp-empty" role="status"><Spinner /> 正在读取附件…</div>}
+      {load.busy && <div className="wp-empty" role="status"><Spinner /> {tr("正在读取附件…", "Loading attachment…")}</div>}
       {load.error && <Notice>{load.error}</Notice>}
       {preview?.kind === "folder" && <>
         {preview.entries.map(entry => {
@@ -52,7 +54,7 @@ function AttachmentContents({ chatId, attachmentId, title, invoke }) {
             <Icon size={16} /><span>{entry.name}</span>{folder && <ChevronRight size={13} />}
           </button>;
         })}
-        {!preview.entries.length && <p className="wp-empty">此文件夹为空</p>}
+        {!preview.entries.length && <p className="wp-empty">{tr("此文件夹为空", "This folder is empty")}</p>}
       </>}
       {isFile && (
         <FilePreviewBody

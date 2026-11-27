@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useEffect, useRef, useState } from "react";
 
 export const SIDEBAR_WIDTH_KEY = "boteam:sidebar-width";
@@ -37,6 +38,7 @@ export function PaneResizer({
   onResize,
   onReset,
 }) {
+  const tr = useLanguage();
   const [dragging, setDragging] = useState(false);
   const cleanupRef = useRef(null);
   const handleRef = useRef(null);
@@ -145,7 +147,7 @@ export function PaneResizer({
       aria-valuemax={bounds.max}
       aria-valuenow={ariaNow}
       tabIndex={0}
-      title={`${label}（双击恢复默认宽度）`}
+      title={tr(`${label}（双击恢复默认宽度）`, `${label} (double-click to restore default width)`)}
       className={`pane-resizer pane-resizer-${side} ${dragging ? "is-dragging" : ""}`}
       onPointerDown={handlePointerDown}
       onDoubleClick={(event) => {

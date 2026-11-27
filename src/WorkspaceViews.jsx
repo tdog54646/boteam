@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronRight,
@@ -24,23 +25,25 @@ export function usePanelLoad(load, deps) {
 }
 
 function Loading({ load }) {
+  const tr = useLanguage();
   if (load.error) return <Notice>{load.error}</Notice>;
-  if (load.busy) return <div className="wp-empty" role="status"><Spinner /> 正在读取…</div>;
+  if (load.busy) return <div className="wp-empty" role="status"><Spinner /> {tr("正在读取…", "Loading…")}</div>;
   return null;
 }
 
 export function FilesView({ initialPath = "", call, open }) {
+  const tr = useLanguage();
   const [path, setPath] = useState(initialPath);
   const load = usePanelLoad(() => call("panelFiles", { path }), [call, path]);
   const parent = path.split("/").slice(0, -1).join("/");
   return <>
     <div className="wp-tools">
-      <IconButton icon={ArrowUp} label="上一级目录" disabled={!path} onClick={() => setPath(parent)} />
+      <IconButton icon={ArrowUp} label={tr("上一级目录", "Parent directory")} disabled={!path} onClick={() => setPath(parent)} />
       <span className="wp-tool-title" title={load.data?.root}>
-        {path || load.data?.root?.split(/[\\/]/).filter(Boolean).at(-1) || "工作目录"}
+        {path || load.data?.root?.split(/[\\/]/).filter(Boolean).at(-1) || tr("工作目录", "Working directory")}
       </span>
-      <IconButton icon={FilePlus2} label="在此目录新建页面" onClick={() => open({ type: "page", directory: path })} />
-      <IconButton icon={RefreshCw} label="刷新文件" onClick={load.reload} />
+      <IconButton icon={FilePlus2} label={tr("在此目录新建页面", "Create page in this directory")} onClick={() => open({ type: "page", directory: path })} />
+      <IconButton icon={RefreshCw} label={tr("刷新文件", "Refresh files")} onClick={load.reload} />
     </div>
     <div className="wp-scroll">
       <Loading load={load} />
@@ -52,13 +55,14 @@ export function FilesView({ initialPath = "", call, open }) {
           <Icon size={16} /><span>{entry.name}</span>{directory && <ChevronRight size={13} />}
         </button>;
       })}
-      {load.data && !load.data.entries.length && <p className="wp-empty">此目录为空</p>}
-      {load.data?.truncated && <p className="wp-empty">仅显示部分文件，可按名称搜索。</p>}
+      {load.data && !load.data.entries.length && <p className="wp-empty">{tr("此目录为空", "This directory is empty")}</p>}
+      {load.data?.truncated && <p className="wp-empty">{tr("仅显示部分文件，可按名称搜索。", "Only some files are shown. Search by name to find more.")}</p>}
     </div>
   </>;
 }
 
 function DiffView({ path, call, version }) {
+  const tr = useLanguage();
   const load = usePanelLoad(() => call("panelDiff", { path }), [call, path, version]);
   return <div className="wp-diff">
     <Loading load={load} />
@@ -68,29 +72,30 @@ function DiffView({ path, call, version }) {
         line.startsWith("+") ? "wp-add" :
         line.startsWith("-") ? "wp-remove" : undefined
       }>{line}{"\n"}</span>)}</pre> :
-      load.data && <p className="wp-empty">没有可显示的文本差异</p>}
-    {load.data?.truncated && <p className="wp-empty">差异内容已截断。</p>}
+      load.data && <p className="wp-empty">{tr("没有可显示的文本差异", "No text diff available")}</p>}
+    {load.data?.truncated && <p className="wp-empty">{tr("差异内容已截断。", "The diff is truncated.")}</p>}
   </div>;
 }
 
 export function ChangesView({ call, active }) {
+  const tr = useLanguage();
   const load = usePanelLoad(() => active ? call("panelChanges") : null, [call, active]);
   const [selected, setSelected] = useState("");
   return <>
     <div className="wp-tools">
       <GitBranch size={15} />
       <strong className="wp-tool-title" title={load.data?.root}>
-        {load.data?.branch || "工作区变更"}
+        {load.data?.branch || tr("工作区变更", "Workspace changes")}
       </strong>
       {load.data?.repo && <span className="wp-stats">
         <span>+{load.data.added}</span> <span>−{load.data.removed}</span>
       </span>}
-      <IconButton icon={RefreshCw} label="刷新变更" onClick={load.reload} />
+      <IconButton icon={RefreshCw} label={tr("刷新变更", "Refresh changes")} onClick={load.reload} />
     </div>
     <div className="wp-scroll">
       <Loading load={load} />
-      {load.data && !load.data.repo && <p className="wp-empty">当前工作目录不在 Git 仓库中。</p>}
-      {load.data?.repo && !load.data.files.length && <p className="wp-empty"><Check size={16} /> 工作区没有变更</p>}
+      {load.data && !load.data.repo && <p className="wp-empty">{tr("当前工作目录不在 Git 仓库中。", "This working directory is outside a Git repository.")}</p>}
+      {load.data?.repo && !load.data.files.length && <p className="wp-empty"><Check size={16} /> {tr("工作区没有变更", "No workspace changes")}</p>}
       {load.data?.files.map((file) => <React.Fragment key={file.path}>
         <button className="wp-list-row" aria-expanded={selected === file.path}
           onClick={() => setSelected(selected === file.path ? "" : file.path)}>
@@ -106,6 +111,7 @@ export function ChangesView({ call, active }) {
 }
 
 function Editor({ file, draft, directory, call, onSaved, onDraft, onCancel }) {
+  const tr = useLanguage();
   const [name, setName] = useState(draft?.name ?? file?.path ?? "");
   const [content, setContent] = useState(draft?.content ?? file?.content ?? "");
   const [busy, setBusy] = useState(false);
@@ -119,7 +125,7 @@ function Editor({ file, draft, directory, call, onSaved, onDraft, onCancel }) {
   }
   async function save() {
     if (pending.current) return;
-    const filename = name.trim() || "未命名页面";
+    const filename = name.trim() || tr("未命名页面", "Untitled page");
     const path = file?.path || [directory, /\.md$/i.test(filename) ? filename : filename + ".md"].filter(Boolean).join("/");
     pending.current = true;
     setBusy(true);
@@ -144,15 +150,15 @@ function Editor({ file, draft, directory, call, onSaved, onDraft, onCancel }) {
     <div className="wp-tools">
       <File size={15} />
       <span className="wp-tool-title" title={file?.path || directory}>
-        {file?.path || (directory ? directory + "/" : "新建页面")}
+        {file?.path || (directory ? directory + "/" : tr("新建页面", "New page"))}
       </span>
-      {file && <IconButton icon={X} label="取消编辑" disabled={busy} onClick={onCancel} />}
-      <Button icon={ArrowDownToLine} busy={busy} onClick={save}>保存</Button>
+      {file && <IconButton icon={X} label={tr("取消编辑", "Cancel editing")} disabled={busy} onClick={onCancel} />}
+      <Button icon={ArrowDownToLine} busy={busy} onClick={save}>{tr("保存", "Save")}</Button>
     </div>
     <Notice>{error}</Notice>
-    {!file && <input className="wp-page-name" aria-label="页面名称" placeholder="未命名页面"
+    {!file && <input className="wp-page-name" aria-label={tr("页面名称", "Page name")} placeholder={tr("未命名页面", "Untitled page")}
       value={name} disabled={busy} onChange={(event) => change(event.target.value, content)} />}
-    <textarea className="wp-page-content" spellCheck={false} aria-label="页面内容" placeholder="开始编写…"
+    <textarea className="wp-page-content" spellCheck={false} aria-label={tr("页面内容", "Page content")} placeholder={tr("开始编写…", "Start writing…")}
       value={content} disabled={busy} onChange={(event) => change(name, event.target.value)} />
   </div>;
 }
@@ -273,6 +279,7 @@ export function webAddress(value) {
 }
 
 export function BrowserView({ url, onNavigate, setTitle }) {
+  const tr = useLanguage();
   const guest = useRef(null);
   const [address, setAddress] = useState(url);
   const [error, setError] = useState("");
@@ -290,7 +297,7 @@ export function BrowserView({ url, onNavigate, setTitle }) {
       ready();
     };
     const failed = (event) => {
-      if (event.isMainFrame && event.errorCode !== -3) setError(event.errorDescription || "无法打开网页。");
+      if (event.isMainFrame && event.errorCode !== -3) setError(event.errorDescription || tr("无法打开网页。", "Could not open the page."));
     };
     const events = [["dom-ready", ready], ["did-navigate", nav], ["did-navigate-in-page", nav],
       ["did-fail-load", failed], ["page-title-updated", titles]];
@@ -300,17 +307,17 @@ export function BrowserView({ url, onNavigate, setTitle }) {
   async function navigate(event) {
     event.preventDefault();
     const next = webAddress(address);
-    if (!next) { setError("请输入 HTTP 或 HTTPS 网址。"); return; }
+    if (!next) { setError(tr("请输入 HTTP 或 HTTPS 网址。", "Enter an HTTP or HTTPS address.")); return; }
     setError("");
     try { await guest.current.loadURL(next); }
     catch (err) { setError(errorText(err)); }
   }
   return <div className="wp-browser">
     <form className="wp-tools" onSubmit={navigate}>
-      <IconButton icon={ArrowLeft} label="网页后退" disabled={!controls.back} onClick={() => guest.current.goBack()} />
-      <IconButton icon={ArrowRight} label="网页前进" disabled={!controls.forward} onClick={() => guest.current.goForward()} />
-      <input aria-label="网页地址" className="wp-address" value={address} onChange={(event) => setAddress(event.target.value)} />
-      <IconButton icon={RefreshCw} label="刷新网页" disabled={!controls.ready} onClick={() => guest.current.reload()} />
+      <IconButton icon={ArrowLeft} label={tr("网页后退", "Go back")} disabled={!controls.back} onClick={() => guest.current.goBack()} />
+      <IconButton icon={ArrowRight} label={tr("网页前进", "Go forward")} disabled={!controls.forward} onClick={() => guest.current.goForward()} />
+      <input aria-label={tr("网页地址", "Web address")} className="wp-address" value={address} onChange={(event) => setAddress(event.target.value)} />
+      <IconButton icon={RefreshCw} label={tr("刷新网页", "Reload page")} disabled={!controls.ready} onClick={() => guest.current.reload()} />
     </form>
     <Notice>{error}</Notice>
     <webview ref={guest} partition="boteam-panel-web" src={url} />

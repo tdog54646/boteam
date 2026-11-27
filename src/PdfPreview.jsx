@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useEffect, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist/build/pdf.min.mjs";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -14,6 +15,7 @@ function base64ToUint8Array(base64) {
 }
 
 export default function PdfPreview({ base64, zoom = 1 }) {
+  const tr = useLanguage();
   const [doc, setDoc] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [error, setError] = useState("");
@@ -39,7 +41,7 @@ export default function PdfPreview({ base64, zoom = 1 }) {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err?.message || "无法加载此 PDF 预览。");
+          setError(err?.message || tr("无法加载此 PDF 预览。", "Could not load the PDF preview."));
           setLoading(false);
         }
       }
@@ -73,7 +75,7 @@ export default function PdfPreview({ base64, zoom = 1 }) {
         await renderTask.promise;
       } catch (err) {
         if (!cancelled && err?.name !== "RenderingCancelledException") {
-          setError("无法渲染当前 PDF 页面。");
+          setError(tr("无法渲染当前 PDF 页面。", "Could not render this PDF page."));
         }
       }
     })();
@@ -86,7 +88,7 @@ export default function PdfPreview({ base64, zoom = 1 }) {
   if (loading) {
     return (
       <div className="wp-empty" role="status">
-        <Spinner /> 正在加载 PDF 预览…
+        <Spinner /> {tr("正在加载 PDF 预览…", "Loading PDF preview…")}
       </div>
     );
   }
@@ -99,16 +101,16 @@ export default function PdfPreview({ base64, zoom = 1 }) {
         <div className="fp-pdf-nav">
           <IconButton
             icon={ChevronLeft}
-            label="上一页"
+            label={tr("上一页", "Previous page")}
             disabled={pageNumber <= 1}
             onClick={() => setPageNumber((p) => Math.max(1, p - 1))}
           />
           <span>
-            第 {pageNumber} / {doc.numPages} 页
+            {tr("第", "Page")} {pageNumber} / {doc.numPages} {tr("页", " ")}
           </span>
           <IconButton
             icon={ChevronRight}
-            label="下一页"
+            label={tr("下一页", "Next page")}
             disabled={pageNumber >= doc.numPages}
             onClick={() => setPageNumber((p) => Math.min(doc.numPages, p + 1))}
           />

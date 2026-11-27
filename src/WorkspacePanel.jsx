@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot, Check, ChevronDown, Ellipsis, File, FileText, Folder, Folders, Globe2,
@@ -17,22 +18,23 @@ const TerminalView = lazy(() => import("./WorkspaceTerminal"));
 const draftsByScope = new Map();
 
 const tools = [
-  { type: "page", name: "新建页面", icon: FileText },
-  { type: "changes", name: "变更", icon: FileDiff },
-  { type: "terminal", name: "终端", icon: SquareTerminal },
-  { type: "files", name: "文件", icon: Folders },
+  { type: "page", name: ["新建页面", "New page"], icon: FileText },
+  { type: "changes", name: ["变更", "Changes"], icon: FileDiff },
+  { type: "terminal", name: ["终端", "Terminal"], icon: SquareTerminal },
+  { type: "files", name: ["文件", "Files"], icon: Folders },
 ];
 const icons = { home: Plus, file: File, attachment: File, url: Globe2, agents: Bot, ...Object.fromEntries(tools.map((tool) => [tool.type, tool.icon])) };
-function tabName(tab) {
-  if (tab.type === "agents") return "子智能体";
+function tabName(tab, tr) {
+  if (tab.type === "agents") return tr("子智能体", "Subagents");
   return tab.title || tab.path?.split("/").at(-1) || (tab.url && new URL(tab.url).hostname)
-    || tools.find((tool) => tool.type === tab.type)?.name || "新标签页";
+    || tr(...(tools.find((tool) => tool.type === tab.type)?.name || ["新标签页", "New tab"]));
 }
 function newTab(details) {
   return { id: crypto.randomUUID(), type: "home", ...details };
 }
 
 function Launcher({ call, open }) {
+  const tr = useLanguage();
   const [query, setQuery] = useState("");
   const [result, setResult] = useState(null);
   const [menu, setMenu] = useState(false);
@@ -89,31 +91,31 @@ function Launcher({ call, open }) {
       <div className="wp-search-area">
         <form className="wp-search" onSubmit={submit}>
           <Search size={16} strokeWidth={1.7} />
-          <input ref={inputRef} aria-label="搜索文件或输入网址" placeholder="搜索文件或输入网址" autoComplete="off"
+          <input ref={inputRef} aria-label={tr("搜索文件或输入网址", "Search files or enter a URL")} placeholder={tr("搜索文件或输入网址", "Search files or enter a URL")} autoComplete="off"
             spellCheck={false} value={query} onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Escape") setQuery(""); }} />
-          {query && <IconButton label="清除搜索" icon={X} onClick={() => setQuery("")} />}
+          {query && <IconButton label={tr("清除搜索", "Clear search")} icon={X} onClick={() => setQuery("")} />}
         </form>
-        {value && <div className="wp-search-results" aria-label="工作区搜索结果">
-          {url && <button onClick={() => open({ type: "url", url })}><Globe2 size={14} /><span>打开 {url}</span></button>}
-          {!explicitUrl && (result?.value !== value ? <p><Spinner size={14} /> 正在搜索…</p> :
+        {value && <div className="wp-search-results" aria-label={tr("工作区搜索结果", "Workspace search results")}>
+          {url && <button onClick={() => open({ type: "url", url })}><Globe2 size={14} /><span>{tr("打开", "Open")} {url}</span></button>}
+          {!explicitUrl && (result?.value !== value ? <p><Spinner size={14} /> {tr("正在搜索…", "Searching…")}</p> :
             result.error ? <p role="alert">{result.error}</p> :
             entries.length ? entries.map((entry) =>
               <button key={entry.path} onClick={() => choose(entry)} title={entry.path}>
                 {entry.kind === "directory" ? <Folder size={14} /> : <File size={14} />}
                 <span>{entry.path}</span>
-              </button>) : <p>没有找到相关文件</p>)}
-          {!explicitUrl && result?.value === value && result.truncated && <p>可输入更完整的路径缩小范围。</p>}
+              </button>) : <p>{tr("没有找到相关文件", "No matching files")}</p>)}
+          {!explicitUrl && result?.value === value && result.truncated && <p>{tr("可输入更完整的路径缩小范围。", "Enter a more specific path to narrow the search.")}</p>}
         </div>}
       </div>
       <div className="wp-launcher-heading">
-        <span>打开</span>
+        <span>{tr("打开", "Open")}</span>
         <div className="wp-more" ref={menuRef} onKeyDown={(event) => {
           if (event.key === "Escape") { setMenu(false); menuRef.current.querySelector("button").focus(); }
         }}>
-          <IconButton icon={Ellipsis} label="打开选项" aria-expanded={menu} onClick={() => setMenu(!menu)} />
+          <IconButton icon={Ellipsis} label={tr("打开选项", "Open options")} aria-expanded={menu} onClick={() => setMenu(!menu)} />
           {menu && <div className="wp-option-menu">
-            {[{ value: false, Icon: LayoutGrid, label: "卡片视图" }, { value: true, Icon: List, label: "列表视图" }]
+            {[{ value: false, Icon: LayoutGrid, label: tr("卡片视图", "Card view") }, { value: true, Icon: List, label: tr("列表视图", "List view") }]
               .map(({value, Icon, label}) => <button key={label} onClick={() => {
                 setList(value);
                 localStorage.setItem("boteam:panel-list", String(value));
@@ -125,7 +127,7 @@ function Launcher({ call, open }) {
       <div className={`wp-tiles ${list ? "wp-list-mode" : ""}`}>
         {tools.map(({ type, name, icon: Icon }) =>
           <button key={type} onClick={() => open({ type })}>
-            <Icon size={16} strokeWidth={1.7} /><span>{name}</span>
+            <Icon size={16} strokeWidth={1.7} /><span>{tr(...name)}</span>
           </button>)}
       </div>
     </div>
@@ -133,6 +135,7 @@ function Launcher({ call, open }) {
 }
 
 function TabContent({ tab, chatId, initialProjectCwd, active, invoke, bots, agents, openTab, patchTab, draftScope }) {
+  const tr = useLanguage();
   const call = useCallback((method, payload) => invoke(method, {
     ...payload, chatId, botId: tab.botId, expectedProjectCwd: initialProjectCwd,
   }), [invoke, chatId, tab.botId, initialProjectCwd]);
@@ -159,7 +162,7 @@ function TabContent({ tab, chatId, initialProjectCwd, active, invoke, bots, agen
       title={tab.title} invoke={invoke} />; break;
     case "files": view = <FilesView initialPath={tab.path} call={call} open={open} />; break;
     case "changes": view = <ChangesView active={active} call={call} />; break;
-    case "terminal": view = <Suspense fallback={<div className="wp-empty"><Spinner /> 正在打开终端…</div>}>
+    case "terminal": view = <Suspense fallback={<div className="wp-empty"><Spinner /> {tr("正在打开终端…", "Opening terminal…")}</div>}>
       <TerminalView active={active} call={call} />
     </Suspense>; break;
     case "file":
@@ -174,9 +177,9 @@ function TabContent({ tab, chatId, initialProjectCwd, active, invoke, bots, agen
     {bots.length > 1 && ["home", "files", "changes"].includes(tab.type) &&
       <label className="wp-scope">
         <Folder size={13} />
-        <select aria-label="成员工作目录" value={tab.botId || bots[0].id}
+        <select aria-label={tr("成员工作目录", "Member working directories")} value={tab.botId || bots[0].id}
           onChange={(event) => openTab({ type: tab.type, botId: event.target.value }, tab.id)}>
-          {bots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name} 的工作目录</option>)}
+          {bots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name} {tr("的工作目录", " working directory")}</option>)}
         </select><ChevronDown size={12} />
       </label>}
     {view}
@@ -185,6 +188,7 @@ function TabContent({ tab, chatId, initialProjectCwd, active, invoke, bots, agen
 
 export function WorkspacePanel({ chatId, botId, draftScope, initialProjectCwd, bots = [], agents = [], invoke, visible = true, expanded = false,
   onToggleExpanded, onClose, request }) {
+  const tr = useLanguage();
   const [tabs, setTabs] = useState(() => {
     const drafts = draftsByScope.get(draftScope);
     return drafts?.size ? [...drafts.values()] : [newTab({ botId })];
@@ -249,11 +253,11 @@ export function WorkspacePanel({ chatId, botId, draftScope, initialProjectCwd, b
       if (id === selected) select(rest[Math.min(index, rest.length - 1)].id);
     }
   }
-  return <aside className={`workspace-panel ${expanded ? "wp-expanded" : ""}`} aria-label="右侧工作区" hidden={!visible}>
+  return <aside className={`workspace-panel ${expanded ? "wp-expanded" : ""}`} aria-label={tr("右侧工作区", "Workspace panel")} hidden={!visible}>
     <header className="wp-header">
-      <div className="wp-tabs" role="tablist" aria-label="工作区标签">
+      <div className="wp-tabs" role="tablist" aria-label={tr("工作区标签", "Workspace tabs")}>
         {tabs.map((tab, i) => {
-          const name = tabName(tab);
+          const name = tabName(tab, tr);
           const Icon = icons[tab.type] || File;
           return <div className={`wp-tab ${selected === tab.id ? "selected" : ""}`} key={tab.id}>
             <button className="wp-tab-select" role="tab" aria-selected={selected === tab.id}
@@ -268,20 +272,20 @@ export function WorkspacePanel({ chatId, botId, draftScope, initialProjectCwd, b
                 select(tabs[target].id);
                 document.getElementById("wp-tab-" + tabs[target].id)?.focus();
               }}><Icon size={15} /><span>{name}{tab.dirty && " ·"}</span></button>
-            <IconButton icon={X} label={"关闭标签页 " + name} onClick={() => closeTab(tab.id)} />
+            <IconButton icon={X} label={tr("关闭标签页 ", "Close tab ") + name} onClick={() => closeTab(tab.id)} />
           </div>;
         })}
       </div>
-      <IconButton icon={Plus} label="添加标签页" onClick={() => openTab({ type: "home" })} />
+      <IconButton icon={Plus} label={tr("添加标签页", "Add tab")} onClick={() => openTab({ type: "home" })} />
       <div className="wp-header-spacer" />
-      <IconButton icon={expanded ? Minimize2 : Maximize2} label={expanded ? "恢复侧栏大小" : "展开工作区"}
+      <IconButton icon={expanded ? Minimize2 : Maximize2} label={expanded ? tr("恢复侧栏大小", "Restore sidebar width") : tr("展开工作区", "Expand workspace")}
         onClick={onToggleExpanded} />
-      <IconButton icon={PanelRight} label="关闭右侧工作区" className="wp-toggle" onClick={onClose} />
+      <IconButton icon={PanelRight} label={tr("关闭右侧工作区", "Close workspace")} className="wp-toggle" onClick={onClose} />
     </header>
     {discard && <div className="wp-discard" role="alert">
-      <span>页面有未保存的修改。</span>
-      <button onClick={() => setDiscard(null)}>继续编辑</button>
-      <button onClick={() => closeTab(discard, true)}>放弃并关闭</button>
+      <span>{tr("页面有未保存的修改。", "This page has unsaved changes.")}</span>
+      <button onClick={() => setDiscard(null)}>{tr("继续编辑", "Keep editing")}</button>
+      <button onClick={() => closeTab(discard, true)}>{tr("放弃并关闭", "Discard and close")}</button>
     </div>}
     {tabs.map((tab) => <TabContent key={tab.id} tab={tab} chatId={chatId} initialProjectCwd={initialProjectCwd} active={visible && selected === tab.id}
       invoke={invoke} bots={bots} agents={agents} draftScope={draftScope} openTab={openTab} patchTab={patchTab} />)}
