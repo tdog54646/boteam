@@ -1,9 +1,11 @@
+import { useLanguage } from "./preferences";
 import React, { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, Folder, Plus, Search, X } from "lucide-react";
 import "./first-chat-project.css";
 
 function ProjectChoices({ anchor, dialogId, projects, projectId, close, onSelect, onCreate }) {
+  const tr = useLanguage();
   const [query, setQuery] = useState("");
   const panel = useRef(null);
   const search = useRef(null);
@@ -81,26 +83,27 @@ function ProjectChoices({ anchor, dialogId, projects, projectId, close, onSelect
     }
   }
 
-  return createPortal(<div ref={panel} id={dialogId} role="dialog" aria-label="选择聊天项目" className="first-project-menu" onKeyDown={keyboard}>
+  return createPortal(<div ref={panel} id={dialogId} role="dialog" aria-label={tr("选择聊天项目", "Choose chat project")} className="first-project-menu" onKeyDown={keyboard}>
     <label className="first-project-search"><Search size={14} aria-hidden="true"/>
-      <input ref={search} type="search" aria-label="搜索项目" aria-controls={dialogId + "-options"} autoComplete="off"
-        placeholder="搜索项目" value={query} onChange={e => setQuery(e.target.value)}/>
+      <input ref={search} type="search" aria-label={tr("搜索项目", "Search projects")} aria-controls={dialogId + "-options"} autoComplete="off"
+        placeholder={tr("搜索项目", "Search projects")} value={query} onChange={e => setQuery(e.target.value)}/>
     </label>
-    <div ref={results} className="first-project-results" id={dialogId + "-options"} role="listbox" aria-label="项目">
+    <div ref={results} className="first-project-results" id={dialogId + "-options"} role="listbox" aria-label={tr("项目", "Projects")}>
       {choices.map(project => <button key={project.id} type="button" role="option" aria-selected={project.id === projectId}
         title={project.name} onClick={() => select(project.id)}>
         <Folder/><span>{project.name}</span>{project.id === projectId && <Check/>}
       </button>)}
-      {!choices.length && <div className="first-project-empty">{term ? "没有匹配的项目" : "暂无项目"}</div>}
+      {!choices.length && <div className="first-project-empty">{term ? tr("没有匹配的项目", "No matching projects") : tr("暂无项目", "No projects yet")}</div>}
     </div>
     <div className="first-project-actions">
-      <button type="button" onClick={() => { restore(); onCreate(); }}><Plus/><span>新建项目</span></button>
-      <button type="button" aria-pressed={!projectId} onClick={() => select(null)}><X/><span>不在项目中工作</span>{!projectId && <Check/>}</button>
+      <button type="button" onClick={() => { restore(); onCreate(); }}><Plus/><span>{tr("新建项目", "New project")}</span></button>
+      <button type="button" aria-pressed={!projectId} onClick={() => select(null)}><X/><span>{tr("不在项目中工作", "Work without a project")}</span>{!projectId && <Check/>}</button>
     </div>
   </div>, document.body);
 }
 
 export function FirstChatProject({ projects, projectId, onSelect, onCreate, disabled = false }) {
+  const tr = useLanguage();
   const [open, setOpen] = useState(false);
   const anchor = useRef(null);
   const dialogId = useId();
@@ -110,12 +113,12 @@ export function FirstChatProject({ projects, projectId, onSelect, onCreate, disa
 
   return <>
     <button ref={anchor} type="button" className="first-project-chip" disabled={disabled}
-      aria-label="选择聊天项目" aria-description={current?.name || "不在项目中工作"} title={current ? "选择聊天项目 · " + current.name : "选择聊天项目"}
+      aria-label={tr("选择聊天项目", "Choose chat project")} aria-description={current?.name || tr("不在项目中工作", "Work without a project")} title={current ? tr("选择聊天项目 · ", "Choose chat project ·") + current.name : tr("选择聊天项目", "Choose chat project")}
       aria-haspopup="dialog" aria-expanded={open && !disabled} aria-controls={open ? dialogId : undefined}
       onClick={() => setOpen(value => !value)} onKeyDown={e => {
         if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); setOpen(true); }
       }}>
-      <Folder size={15} aria-hidden="true"/><span>{current?.name || "选择项目"}</span>
+      <Folder size={15} aria-hidden="true"/><span>{current?.name || tr("选择项目", "Choose project")}</span>
     </button>
     {open && !disabled && <ProjectChoices anchor={anchor} dialogId={dialogId} projects={projects} projectId={projectId}
       close={close} onSelect={onSelect} onCreate={onCreate}/>}

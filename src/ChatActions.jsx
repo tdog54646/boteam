@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useEffect, useRef, useState } from "react";
 import { Button, errorText, Field, Modal, Notice } from "./ui";
 
@@ -11,6 +12,7 @@ const dialogActions = new Set(["rename", "newSection", "delete"]);
 const directoryActions = new Set(["copyWorkingDirectory", "showInFinder", "openTarget"]);
 
 export function useChatActions({ state, page, currentPage, dialog, setDialog, invoke, select, refresh, setError }) {
+  const tr = useLanguage();
   const [menu, setMenu] = useState(null);
   const [openTargets, setOpenTargets] = useState([]);
   const [notice, setNotice] = useState("");
@@ -81,12 +83,12 @@ export function useChatActions({ state, page, currentPage, dialog, setDialog, in
           return;
         case "fork":
         case "forkWorktree": {
-          announce(action === "forkWorktree" ? "正在新工作树中创建聊天分支…" : "正在创建聊天分支…", 0);
+          announce(action === "forkWorktree" ? tr("正在新工作树中创建聊天分支…", "Creating chat branch in a new worktree…") : tr("正在创建聊天分支…", "Branching chat…"), 0);
           const id = await invoke(action === "forkWorktree" ? "forkChatInWorktree" : "forkChat", { chatId });
           await refresh();
           // Right-clicking another row targets that chat. An intervening navigation keeps its destination.
           if (currentPage.current === startPage) select(id);
-          announce("已创建聊天分支");
+          announce(tr("已创建聊天分支", "Chat branch created"));
           return;
         }
         case "pin":
@@ -104,7 +106,7 @@ export function useChatActions({ state, page, currentPage, dialog, setDialog, in
         case "archive":
           await invoke("setChatArchived", { chatId, archived: !chat.archived });
           if (!chat.archived && currentPage.current === chat.id) select("home");
-          announce(chat.archived ? "聊天已恢复" : "聊天已归档");
+          announce(chat.archived ? tr("聊天已恢复", "Chat restored") : tr("聊天已归档", "Chat archived"));
           break;
         default:
           return;
@@ -139,6 +141,7 @@ export function useChatActions({ state, page, currentPage, dialog, setDialog, in
 }
 
 export function ChatActionDialog({ chat, action, invoke, onDone, onClose }) {
+  const tr = useLanguage();
   const [value, setValue] = useState(action === "rename" ? chat.name : "");
   const [suggestion, setSuggestion] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -154,7 +157,7 @@ export function ChatActionDialog({ chat, action, invoke, onDone, onClose }) {
     }).catch(() => {});
     return () => { active = false; };
   }, [chat.id, invoke, rename]);
-  const title = deleting ? "永久删除聊天？" : rename ? "重命名聊天" : "新建分区";
+  const title = deleting ? tr("永久删除聊天？", "Permanently delete chat?") : rename ? tr("重命名聊天", "Rename chat") : tr("新建分区", "New section");
   async function submit(event) {
     event.preventDefault();
     if (pending.current || (!deleting && !value.trim())) return;
@@ -175,18 +178,18 @@ export function ChatActionDialog({ chat, action, invoke, onDone, onClose }) {
   return <Modal title={title} onClose={() => { if (!pending.current) onClose(); }}>
     <form onSubmit={submit}>
       {deleting
-        ? <p className="chat-delete-description">BoTeam 将永久删除「{chat.name}」的聊天记录和独占附件。原生工具的历史、工作目录及已有分支会保留。此操作无法撤销。</p>
-        : <Field label={rename ? "聊天名称" : "分区名称"}>
+        ? <p className="chat-delete-description">{tr("BoTeam 将永久删除「", "BoTeam will permanently delete the chat history and exclusive attachments for “")}{chat.name}{tr("」的聊天记录和独占附件。原生工具的历史、工作目录及已有分支会保留。此操作无法撤销。", "”. CLI history, working directories and existing branches will be kept. This cannot be undone.")}</p>
+        : <Field label={rename ? tr("聊天名称", "Chat name") : tr("分区名称", "Section name")}>
           <input data-autofocus type="text" value={value} required maxLength={120}
             onFocus={e => e.target.select()} onChange={e => setValue(e.target.value)} />
         </Field>}
       {rename && suggestion && suggestion !== value.trim() &&
-        <button className="text-btn" type="button" disabled={busy} onClick={() => setValue(suggestion)}>根据首条消息生成</button>}
+        <button className="text-btn" type="button" disabled={busy} onClick={() => setValue(suggestion)}>{tr("根据首条消息生成", "Generate from first message")}</button>}
       <Notice>{error}</Notice>
       <div className="form-actions">
-        <Button data-autofocus={deleting || undefined} disabled={busy} onClick={onClose}>取消</Button>
+        <Button data-autofocus={deleting || undefined} disabled={busy} onClick={onClose}>{tr("取消", "Cancel")}</Button>
         <Button type="submit" variant={deleting ? "danger" : "primary"} busy={busy} disabled={!deleting && !value.trim()}>
-          {deleting ? "永久删除" : rename ? "保存" : "创建并移入"}
+          {deleting ? tr("永久删除", "Delete permanently") : rename ? tr("保存", "Save") : tr("创建并移入", "Create and move")}
         </Button>
       </div>
     </form>
