@@ -569,6 +569,22 @@ test('settings catalogs and MCP status use registered project folders without cr
   assert.equal((await app.handle('composerActions', scope)).extensions[0].id, folder)
 })
 
+test('usage settings refresh an account without a bot and share quota state with chat views', async t => {
+  const seen = []
+  const { app } = await fixture(t, {
+    quota: async ({ account, model }) => {
+      seen.push([account.id, model])
+      return { scope: 'account', windows: [{ minutes: 300, remainingPercent: 42 }] }
+    },
+  })
+  app.db.run('INSERT INTO accounts(id,provider,identity,info) VALUES(?,?,?,?)',
+    'unbound', 'codex', 'other', JSON.stringify({ status: 'ready' }))
+  const result = await app.handle('settingsAccountQuota', { accountId: 'unbound' })
+  assert.deepEqual(seen, [['unbound', '']])
+  assert.equal(result.windows[0].remainingPercent, 42)
+  assert.deepEqual(app.snapshot().quotas, [result])
+})
+
 test('project and bot permission defaults reach draft and chat scopes without replacing explicit chat choices', async t => {
   const seen = []
   const { app, bot, other, dm } = await fixture(t, {
@@ -602,4 +618,46 @@ test('project and bot permission defaults reach draft and chat scopes without re
   assert.deepEqual(seen, ['read-only'])
   await assert.rejects(app.handle('setDefaultPermission', { botId: bot, permission: 'default', expected: null }))
   await assert.rejects(app.handle('setDefaultPermission', { botId: bot, permission: 'unsupported', expected: 'read-only' }))
+})
+
+test('quota refresh against a replaced binding cannot publish previous quota, even while a read is in flight', async t => {
+  const started = Promise.withResolvers(), pending = Promise.withResolvers()
+  let count = 0
+  const { app, bot } = await fixture(t, {
+    quota: async () => {
+      count++
+      if (count === 2) { started.resolve(); return pending.promise }
+      return { scope: 'account', windows: [{ minutes: 300, remainingPercent: count }] }
+    },
+  })
+  const read = () => app.handle('settingsAccountQuota', { accountId: 'a' })
+  await read()
+  const stale = read()
+  await started.promise
+  app.invalidateCatalogs('a')
+  const staleResult = assert.rejects(stale, /账号配置已变化/)
+  try {
+    assert.deepEqual(app.snapshot().quotas, [])
+    const fresh = await app.handle('refreshQuota', { botId: bot })
+    assert.equal(fresh.windows[0].remainingPercent, 3)
+  } finally {
+    pending.resolve({ scope: 'account', windows: [{ minutes: 300, remainingPercent: 2 }] })
+    await staleResult
+  }
+  assert.equal(app.snapshot().quotas[0].windows[0].remainingPercent, 3)
+})
+
+test('querying a known model from settings requests quota only', async t => {
+  const calls = []
+  const { app, bot } = await fixture(t, {
+    options: async () => { throw new Error('unneeded model catalog') },
+    quota: async ({ model }) => {
+      calls.push(model)
+      return { scope: 'model', model, windows: [{ minutes: 10080, remainingPercent: 71 }] }
+    },
+  })
+  app.db.run('UPDATE bots SET model=? WHERE id=?', 'selected-model', bot)
+  assert.equal((await app.handle('settingsAccountQuota', { accountId: 'a', model: 'selected-model' })).model, 'selected-model')
+  await assert.rejects(app.handle('settingsAccountQuota', { accountId: 'a', model: 'unbound' }), /模型/)
+  assert.deepEqual(calls, ['selected-model'])
 })

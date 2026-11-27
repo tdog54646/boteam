@@ -528,6 +528,7 @@ export function ComposerTools({
   const storedModel = (stored?.model ?? bot?.model) || catalog?.defaultModel;
   const requestKey = JSON.stringify([
     account?.id,
+    account?.bindingRevision,
     account?.identity,
     account?.source,
     account?.bin,

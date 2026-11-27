@@ -118,6 +118,7 @@ export class Workspace {
   invalidateCatalogs(accountId) {
     this.modelCatalogs.delete(accountId)
     this.actionCatalogs.delete(accountId)
+    this.db.run('DELETE FROM quota_usage WHERE accountId=?', accountId)
     this.bindingRevisions.set(accountId, (this.bindingRevisions.get(accountId) || 0) + 1)
   }
   busyAccount(id) {
@@ -552,6 +553,8 @@ export class Workspace {
         return this.accountOperation(this.threadGoal(p))
       case 'refreshQuota':
         return this.accountOperation(this.composer.refresh(p))
+      case 'settingsAccountQuota':
+        return this.accountOperation(this.composer.accountQuota(p))
       case 'openAntigravityInstall':
         return this.openAntigravityInstall()
       case 'installAntigravityCli':

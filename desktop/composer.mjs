@@ -327,16 +327,32 @@ export class ComposerSettings {
       validateSelection(catalog, draftModel, '')
       model = draftModel || catalog.defaultModel || ''
     }
-    const key = JSON.stringify([account.id, account.identity, account.source, model])
+    return this.readQuota(account, model)
+  }
+  async accountQuota({ accountId, model = '' }) {
+    const account = this.db.account(accountId)
+    if (account.status !== 'ready') throw new Error(account.reason || '请先重新授权订阅账号。')
+    if (!this.workspace.adapters[account.provider].quota) return null
+    if (typeof model !== 'string' || model.length > 500 || (model && !this.db.get(
+      'SELECT 1 FROM bots WHERE accountId=? AND archived=0 AND model=? UNION ALL SELECT 1 FROM quota_usage WHERE accountId=? AND model=? LIMIT 1',
+      accountId, model, accountId, model,
+    ))) throw new Error('请选择该订阅账号关联的模型。')
+    return this.readQuota(account, model || account.model || '', true)
+  }
+  async readQuota(account, model, force = false) {
+    if (this.workspace.accounts.updating.has(account.id)) throw new Error('账号绑定正在更新，请稍后读取额度。')
+    const adapter = this.workspace.adapters[account.provider]
+    const revision = this.workspace.bindingRevisions.get(account.id) || 0
+    const key = JSON.stringify([account.id, revision, account.identity, account.source, model])
     const inFlight = this.pendingQuota.get(key)
     if (inFlight) return inFlight
     const cached = this.recentQuota.get(key)
-    if (cached && cached.until > Date.now()) return cached.value
+    if (!force && cached && cached.until > Date.now()) return cached.value
     const check = (async () => {
       const quota = await adapter.quota({ account, model, signal: this.workspace.lifetime.signal })
       if (this.workspace.closed) throw new Error('工作台已关闭。')
       const current = this.db.account(account.id)
-      if (
+      if ((this.workspace.bindingRevisions.get(account.id) || 0) !== revision || this.workspace.accounts.updating.has(account.id) ||
         ['identity', 'source', 'credentialSource', 'bin', 'status'].some(
           (k) => current[k] !== account[k],
         )
