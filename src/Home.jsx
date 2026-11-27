@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Bot, BotMessageSquare, ChevronDown, WalletCards, Plus, UsersRound } from "lucide-react";
+import { BotMessageSquare, ChevronDown, WalletCards, Plus, UsersRound } from "lucide-react";
 import { Button, accountLabel, ProviderIcon } from "./ui";
 import { useLanguage } from "./preferences";
 import { Composer } from "./Composer";
@@ -24,7 +24,9 @@ export function Home({ state, invoke, open, draft, members, setSelection, firstP
     <div className={draft ? "home home-draft" : "home"}>
       <div className="home-stack">
         <div className="home-heading">
-          <BotMessageSquare className="home-mark" size={47} strokeWidth={1.35} aria-hidden="true"/>
+          {account && !group
+            ? <ProviderIcon provider={account.provider} size="large" />
+            : <BotMessageSquare className="home-mark" size={47} strokeWidth={1.35} aria-hidden="true"/>}
           <h1>{heading}</h1>
         </div>
         {draft ? (
@@ -65,7 +67,7 @@ export function Home({ state, invoke, open, draft, members, setSelection, firstP
         {bot && !group && (
           <div className="home-context">
             {setSelection ? <label className="bot-picker" title={t("选择接收 Bot", "Select recipient bot")}>
-              <Bot size={15} />
+              <ProviderIcon provider={account?.provider} size="small" />
               <span>{bot.name}</span>
               <ChevronDown size={12} />
               <select
@@ -83,7 +85,7 @@ export function Home({ state, invoke, open, draft, members, setSelection, firstP
                   </option>
                 ))}
               </select>
-            </label> : <span className="home-account"><Bot size={15} />{bot.name}</span>}
+            </label> : <span className="home-account"><ProviderIcon provider={account?.provider} size="small" />{bot.name}</span>}
             <span className="home-account">
               <WalletCards size={14} />
               {accountLabel(account)}

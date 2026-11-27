@@ -35,7 +35,7 @@
   flex: none;
   color: var(--muted);
 }
-.slash-row span {
+.slash-row > span:not(.provider-icon) {
   flex: none;
   max-width: 48%;
   overflow: hidden;

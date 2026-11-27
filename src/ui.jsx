@@ -1,14 +1,14 @@
 import { useLanguage } from "./preferences";
 import React, { useEffect, useRef } from "react";
+import codexIcon from "../assets/providers/codex.svg";
+import claudeIcon from "../assets/providers/claude.svg";
+import antigravityIcon from "../assets/providers/antigravity.svg";
 import {
-  Asterisk,
   Check,
   ChevronDown,
   CircleAlert,
   Command,
   LoaderCircle,
-  Orbit,
-  SquareTerminal,
   X,
 } from "lucide-react";
 
@@ -17,6 +17,7 @@ export const providers = {
   claude: "Claude Code",
   antigravity: "Antigravity",
 };
+const providerIcons = { codex: codexIcon, claude: claudeIcon, antigravity: antigravityIcon };
 export const providerName = (provider) =>
   providers[provider] || provider || "原生工具";
 export const identityLabel = (account) =>
@@ -56,15 +57,10 @@ export function Brand() {
   );
 }
 export function ProviderIcon({ provider, size = "normal" }) {
-  const Icon =
-    { codex: SquareTerminal, claude: Asterisk, antigravity: Orbit }[provider] ||
-    Command;
+  const src = providerIcons[provider];
   return (
-    <span className={`provider-icon ${provider || "unknown"} ${size}`}>
-      <Icon
-        size={size === "small" ? 15 : 23}
-        strokeWidth={provider === "claude" ? 2.25 : 1.65}
-      />
+    <span className={`provider-icon ${provider || "unknown"} ${size}`} aria-hidden="true">
+      {src ? <img src={src} alt="" draggable={false} /> : <Command />}
     </span>
   );
 }

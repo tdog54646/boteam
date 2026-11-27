@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bot, ChevronDown, Ellipsis, Folder, FolderOpen,
+  ChevronDown, Ellipsis, Folder, FolderOpen,
   FolderPlus, House, ListFilter, MessageSquare, Pin, PinOff, Search,
   Settings, SlidersHorizontal, SquarePen, UsersRound,
 } from "lucide-react";
-import { IconButton, Notice, accountLabel, errorText, identityLabel, providerName } from "./ui";
+import { IconButton, Notice, ProviderIcon, accountLabel, errorText, identityLabel, providerName } from "./ui";
 import { ChatRows, MenuItem, SidebarPopup, SidebarSection, shortDate } from "./SidebarParts";
 import { SidebarTitlebar } from "./WorkspaceNavigation";
 import { useLanguage } from "./preferences";
@@ -166,7 +166,8 @@ export function Sidebar({ state, page, select, open, disabled, collapse, history
         aria-description={homeBot.name} title={t("选择默认 Bot", "Select default bot") + " · " + homeBot.name}
         disabled={disabled} aria-haspopup="menu" aria-expanded={popup?.type === "bot"}
         onClick={e => show(e, "bot")}>
-        <Bot className="quick-bot-icon" size={16} aria-hidden="true"/><span>{homeBot.name}</span><ChevronDown className="sidebar-bot-chevron"/>
+        <ProviderIcon provider={state.accounts.find(a => a.id === homeBot.accountId)?.provider} size="small"/>
+        <span>{homeBot.name}</span><ChevronDown className="sidebar-bot-chevron"/>
       </button>}
     </nav>
     <nav className="rail-history" aria-label={t("聊天列表", "Chat list")}>
@@ -192,15 +193,15 @@ export function Sidebar({ state, page, select, open, disabled, collapse, history
     </nav>
     <Notice>{error}</Notice>
     {popup?.type === "workbench" && <SidebarPopup popup={popup} close={dismiss} title={t("切换工作台", "Switch workspace")}>
-      <MenuItem icon={House} checked={true} onClick={() => choose(() => select("home"))}>{t("首页", "Home")}</MenuItem>
-      <hr/><MenuItem icon={FolderPlus} onClick={importProject}>{t("导入本地项目", "Import local project")}</MenuItem>
+      <MenuItem icon={<House size={15}/>} checked={true} onClick={() => choose(() => select("home"))}>{t("首页", "Home")}</MenuItem>
+      <hr/><MenuItem icon={<FolderPlus size={15}/>} onClick={importProject}>{t("导入本地项目", "Import local project")}</MenuItem>
     </SidebarPopup>}
     {popup?.type === "bot" && homeBot && <SidebarPopup popup={popup} close={dismiss} title={t("选择默认 Bot", "Select default bot")}>
       {bots.map(bot => {
         const account = state.accounts.find(a => a.id === bot.accountId);
         const duplicate = bots.some(other => other.id !== bot.id && bot.name === other.name);
         const detail = [providerName(account?.provider), accountLabel(account), account?.note && identityLabel(account)].filter(Boolean).join(" · ");
-        return <MenuItem key={bot.id} icon={Bot} radio checked={bot.id === homeBot.id}
+        return <MenuItem key={bot.id} icon={<ProviderIcon provider={account?.provider} size="small"/>} radio checked={bot.id === homeBot.id}
           label={duplicate ? bot.name + " · " + detail : bot.name} detail={detail}
           onClick={() => choose(() => onSelectBot(bot.id))}>{bot.name}</MenuItem>;
       })}

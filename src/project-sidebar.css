@@ -16,7 +16,6 @@
 .project-sidebar .rail-primary .rail-row, .project-sidebar .rail-settings .rail-row { color: color-mix(in srgb, currentColor 87%, transparent); }
 .project-sidebar .sidebar-quick-bot[aria-expanded=true] { background: var(--selected); }
 .project-sidebar .sidebar-quick-bot .sidebar-bot-chevron { flex: none; width: 13px; height: 13px; margin-left: auto; color: var(--rail-muted); }
-.project-sidebar .quick-bot-icon { color: #42815c; }
 .project-sidebar .rail-history { padding-top: 13px; padding-bottom: 14px; scrollbar-width: thin; scrollbar-gutter: auto; }
 .project-sidebar .rail-section + .rail-section { margin-top: 15px; }
 .project-sidebar .rail-section-heading { height: 25px; margin: 0 5px 3px 8px; color: var(--rail-muted); }
@@ -81,7 +80,7 @@
   display: flex; align-items: center; gap: 9px; text-align: left; width: 100%; padding: 6px 9px;
   border-radius: 7px; font-size: 13px; line-height: 18px;
 }
-.sidebar-options-menu button span, .project-card-folders button span { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sidebar-menu-label, .project-card-folders button span { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .sidebar-options-menu button svg, .project-detail-card svg, .project-folder-list svg { flex: none; stroke-width: 1.65; }
 .sidebar-options-menu button:is(:hover,:focus-visible), .project-card-folders button:is(:hover,:focus-visible),
 .project-detail-card .project-edit:is(:hover,:focus-visible) { background: var(--hover); }
@@ -121,7 +120,6 @@
 .project-dialog-footer .project-remove { color: var(--danger); background: color-mix(in srgb,var(--danger) 8%,var(--surface)); border-color: transparent; margin-right: auto; }
 .project-dialog-footer .project-remove:hover { background: color-mix(in srgb,var(--danger) 13%,var(--surface)); }
 .project-remove-message { color: var(--muted); font-size: 14px; line-height: 1.6; }
-:root[data-appearance="dark"] .project-sidebar .quick-bot-icon { color: #96bf9e; }
 @media (max-width: 620px) {
   .project-sidebar .rail-primary, .project-sidebar .rail-history, .project-sidebar .rail-settings { padding-left: 6px; padding-right: 6px; }
   .workbench-heading { gap: 1px; }

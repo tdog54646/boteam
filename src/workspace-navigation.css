@@ -63,7 +63,8 @@
   .archived-chat-row { padding-inline: 10px; gap: 8px; }
   .archived-chat-row time { display: none; }
 }
-.home-mark { color: var(--subtle); opacity: .58; margin-bottom: 16px; }
+.home-heading > .provider-icon, .home-mark { margin-bottom: 16px; }
+.home-mark { color: var(--subtle); opacity: .58; }
 .home-draft { padding-bottom: 8px; }
 .home-draft .home-stack {
   align-self: stretch; padding-top: 0;

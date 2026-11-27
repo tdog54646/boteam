@@ -54,10 +54,10 @@ export function SidebarSection({ title, expanded, toggle, actions, children }) {
   </section>;
 }
 
-export function MenuItem({ icon: Icon, children, checked, radio = false, label, detail, onClick }) {
+export function MenuItem({ icon, children, checked, radio = false, label, detail, onClick }) {
   return <button type="button" role={radio ? "menuitemradio" : checked === undefined ? "menuitem" : "menuitemcheckbox"}
     aria-label={label} aria-description={detail} title={detail} aria-checked={checked} onClick={onClick}>
-    {Icon && <Icon size={15}/>}<span>{children}{detail && <small className="sidebar-bot-detail">{detail}</small>}</span>
+    {icon}<span className="sidebar-menu-label">{children}{detail && <small className="sidebar-bot-detail">{detail}</small>}</span>
     {checked && <Check size={14}/>}</button>;
 }
 

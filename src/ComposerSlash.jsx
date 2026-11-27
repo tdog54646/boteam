@@ -12,7 +12,6 @@ import {
   ChevronRight,
   CircleGauge,
   CircleHelp,
-  CircleUserRound,
   GitPullRequest,
   Lightbulb,
   ListCollapse,
@@ -31,8 +30,8 @@ import {
   Workflow,
 } from "lucide-react";
 import {
-  accountLabel,
   identityLabel,
+  ProviderIcon,
   providerName,
   Spinner,
 } from "./ui";
@@ -196,7 +195,7 @@ export function ComposerSlashMenu({
     >
       {isGroup && target && (
         <label className="slash-member-select">
-          <CircleUserRound size={14} />
+          <ProviderIcon provider={accountFor(target)?.provider} size="small" />
           <select
             aria-label={tr("命令接收人", "Command recipient")}
             value={target.id}
@@ -230,7 +229,7 @@ export function ComposerSlashMenu({
               onMouseMove={() => slash.setActive(i)}
               onClick={() => onTarget(bot.id)}
             >
-              <CircleUserRound size={15} />
+              <ProviderIcon provider={accountFor(bot)?.provider} size="small" />
               <span>{bot.name}</span>
               <small>{memberLabel(bot).slice(bot.name.length + 3)}</small>
               <ChevronRight size={13} />
