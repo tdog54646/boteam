@@ -1,4 +1,4 @@
-import electron, { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, safeStorage, shell } from 'electron'
+import electron, { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, nativeImage, nativeTheme, safeStorage, shell } from 'electron'
 import { writeFile } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -119,6 +119,26 @@ else {
     workspace = new Workspace({
       root: app.getPath('userData'),
       safeStorage,
+      showNotification: Notification.isSupported() ? ({ type, status, name, chatId, language }) => {
+        const english = language === 'en'
+        const titles = {
+          completed: english ? 'Task completed' : '任务完成',
+          failed: english ? 'Task failed' : '运行失败',
+          approval: english ? 'Approval needed' : '等待审批',
+          schedule: status === 'failed'
+            ? (english ? 'Scheduled task failed' : '定时任务失败')
+            : (english ? 'Scheduled task completed' : '定时任务完成'),
+        }
+        const alert = new Notification({ title: titles[type], body: name, silent: false })
+        alert.on('click', () => {
+          if (workspace.closed) return
+          const target = currentWindow() || openWindow(chatId)
+          focus(target)
+          if (chatId && workspace.db.get('SELECT id FROM chats WHERE id=?', chatId))
+            target.webContents.send('workspace:openChat', chatId)
+        })
+        alert.show()
+      } : null,
       codexExecutable: (await locate('codex')).bin,
       adapters: { codex, claude, antigravity },
       notify,

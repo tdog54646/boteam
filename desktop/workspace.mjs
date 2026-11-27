@@ -6,6 +6,7 @@ import { beginChatTitle, applyNativeTitle, suggestChatTitle } from './chat-title
 import { WorkspacePanel } from './workspace-panel.mjs'
 import { attachmentPreview } from './panel-files.mjs'
 import { Channels } from './channels.mjs'
+import { notificationSettings, setNotificationSetting, syncNotificationLanguage, notifyTask } from './notifications.mjs'
 import { Schedules } from './schedules.mjs'
 import { Accounts } from './accounts.mjs'
 import { authExpiredError, isAuthExpiredError } from './auth-errors.mjs'
@@ -80,6 +81,7 @@ export class Workspace {
       )
     }
     this.notify = options.notify || (() => {})
+    this.showNotification = options.showNotification
     this.onChatDeleted = options.onChatDeleted
     this.hasWindowChatTerminal = options.hasWindowChatTerminal
     this.pickDirectory = options.pickDirectory
@@ -111,6 +113,8 @@ export class Workspace {
     const permissionModes = Object.fromEntries(Object.entries(this.adapters)
       .map(([name, adapter]) => [name, adapter.permissionModes || ['default']]))
     const state = this.db.snapshot()
+    state.notifications = notificationSettings(this.db)
+    state.desktopNotificationsSupported = Boolean(this.showNotification)
     labelLegacySubagents(this.db, state.tasks, state.messages)
     for (const account of state.accounts) account.bindingRevision = this.bindingRevisions.get(account.id) || 0
     return { ...state, permissionModes, channels: this.channels.snapshot(), schedules: this.schedules.snapshot(), nativeThreads: this.db.all('SELECT chatId,botId,threadId,cwd FROM threads') }
@@ -569,6 +573,11 @@ export class Workspace {
         return this.accounts.cancelLogin(p, context.window)
       case 'removeAccount':
         return this.accountOperation(this.accounts.remove(p))
+      case 'syncNotificationLanguage':
+        return syncNotificationLanguage(this.db, p.language)
+      case 'setNotificationSetting':
+        setNotificationSetting(this.db, p)
+        break
       case 'finishOnboarding':
         this.db.run("INSERT OR REPLACE INTO settings VALUES ('onboarded','yes')")
         break
@@ -1061,6 +1070,7 @@ export class Workspace {
               chatId, bot.id, nativeThreadId, groupCutoff)
           }
         })
+        notifyTask(this, id, 'completed')
       }
     } catch (e) {
       if (!this.closed && !controller.signal.aborted) {
@@ -1073,6 +1083,7 @@ export class Workspace {
           stamp(),
           id,
         )
+        notifyTask(this, id, 'failed')
       }
     } finally {
       flushText()
@@ -1241,6 +1252,7 @@ export class Workspace {
       JSON.stringify(approval),
       id,
     )
+    if (approval.kind !== 'questions') notifyTask(this, id, 'approval')
     this.notify()
     return answer
   }

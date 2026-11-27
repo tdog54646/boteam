@@ -1,3 +1,4 @@
+import { deliverNotification } from './notifications.mjs'
 import { randomUUID } from 'node:crypto'
 import { redact } from './native.mjs'
 import { draftProjectCwd } from './projects.mjs'
@@ -198,6 +199,7 @@ export class Schedules {
         })
       } catch (error) {
         this.db.run("UPDATE schedule_runs SET status='failed',error=? WHERE id=?", redact(error.message || '任务启动失败。'), id)
+        deliverNotification(this.workspace, 'schedule', { status: 'failed', name: job.name })
       }
       this.workspace.notify()
     })())
