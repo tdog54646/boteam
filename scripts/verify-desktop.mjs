@@ -155,6 +155,23 @@ async function verifyProfile(page, nav, main) {
   await page.reload()
   await expect(main.getByRole('heading', { name: '验收用户' })).toBeVisible()
   await expect(main.getByText('@fixture', { exact: true })).toBeVisible()
+  await main.getByRole('button', { name: '分享' }).click()
+  const share = page.getByRole('dialog', { name: '分享个人资料' })
+  await expect(share).toContainText('验收用户\n@fixture')
+  // Capture the copy action without changing the developer's system clipboard.
+  const originalWrite = await app.evaluateHandle(({ clipboard }) => clipboard.writeText)
+  await app.evaluate(({ clipboard }) => {
+    clipboard.writeText = text => { globalThis.copiedProfile = text }
+  })
+  try {
+    await share.getByRole('button', { name: '复制摘要' }).click()
+    await expect(share.getByRole('button', { name: '已复制' })).toBeVisible()
+    expect(await app.evaluate(() => globalThis.copiedProfile)).toContain('累计 Token 数')
+  } finally {
+    await app.evaluate(({ clipboard }, original) => { clipboard.writeText = original }, originalWrite)
+    await originalWrite.dispose()
+  }
+  await page.keyboard.press('Escape')
   await page.getByRole('button', { name: '设置', exact: true }).click()
   await expect(link).toHaveAccessibleName('验收用户')
 }

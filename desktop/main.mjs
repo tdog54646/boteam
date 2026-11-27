@@ -292,6 +292,11 @@ else {
         return shell.openExternal(url)
       }
       if (method === 'stageHtmlPreview') return stageHtmlPreview(payload.html)
+      if (method === 'copyProfileSummary') {
+        if (typeof payload.text !== 'string' || payload.text.length > 2000) throw new Error('个人资料摘要无效。')
+        clipboard.writeText(payload.text)
+        return
+      }
       if (method === 'chatOpenTargets') return chatOpenTargets()
       if (method === 'openChatLink') return openLink(payload.url)
       if (!['openChatWindow', 'showChatDirectory', 'openChatDirectory', 'copyChat', 'shareChat'].includes(method))

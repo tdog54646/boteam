@@ -115,6 +115,15 @@
   padding: 6px 0;
 }
 .profile-insights dd { text-align: end; overflow-wrap: anywhere; }
+.profile-share-preview {
+  padding: 14px 16px;
+  background: var(--under);
+  border-radius: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+  user-select: text;
+}
 .profile-loading, .profile-load-error { margin-top: 44px; }
 .profile-loading { text-align: center; color: var(--subtle); }
 @container (max-width: 650px) {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { LockKeyhole, Pencil, Puzzle } from "lucide-react";
+import { Check, Copy, LockKeyhole, Pencil, Puzzle, Share } from "lucide-react";
 import { usePreferences } from "./preferences";
 import { Button, errorText, Field, Modal, Notice, Spinner } from "./ui";
 import { describeModel } from "./NativeModelPicker";
@@ -51,6 +51,30 @@ function EditProfile({ onClose }) {
   </Modal>;
 }
 
+function ShareProfile({ summary, invoke, onClose }) {
+  const { t } = usePreferences();
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+  async function copy() {
+    try {
+      await invoke("copyProfileSummary", { text: summary });
+      setCopied(true);
+      setError("");
+    } catch {
+      setError(t("无法访问剪贴板，请选中摘要后复制。", "Clipboard unavailable. Select the summary to copy it."));
+    }
+  }
+  return <Modal title={t("分享个人资料", "Share profile")} onClose={onClose}>
+    <p className="profile-share-preview">{summary}</p>
+    <Notice>{error}</Notice>
+    <div className="form-actions">
+      <Button variant="primary" icon={copied ? Check : Copy} onClick={copy}>
+        <span aria-live="polite">{copied ? t("已复制", "Copied") : t("复制摘要", "Copy summary")}</span>
+      </Button>
+    </div>
+  </Modal>;
+}
+
 export function ProfilePage({ state, invoke }) {
   const { profile, language, t } = usePreferences();
   const [dialog, setDialog] = useState(null);
@@ -94,12 +118,15 @@ export function ProfilePage({ state, invoke }) {
     [t("已探索技能数", "Distinct skills used"), number.format(stats.uniqueSkills)],
     [t("使用的技能总数", "Total skill uses"), number.format(stats.skillUses)],
   ] : [];
+  const identity = profile.displayName + "\n@" + profile.username;
+  const summary = [identity, ...metrics.map(({ label, value }) => label + " · " + value)].join("\n");
   return <>
     <div className="profile-toolbar" data-scrolled={scrolled || undefined}>
       <button type="button" onClick={() => setDialog("edit")}><Pencil size={16}/>{t("编辑", "Edit")}</button>
       <span className="profile-visibility" title={t("个人资料仅在此设备上可见", "Your profile is only visible on this device")}>
         <LockKeyhole size={14}/>{t("私有", "Private")}
       </span>
+      <button type="button" onClick={() => setDialog("share")}><Share size={16}/>{t("分享", "Share")}</button>
     </div>
     <div className="page-scroll profile-scroll" onScroll={e => setScrolled(e.currentTarget.scrollTop > 0)}>
       <article className="profile-page" aria-label={t("个人资料", "Profile")}>
@@ -144,5 +171,6 @@ export function ProfilePage({ state, invoke }) {
       </article>
     </div>
     {dialog === "edit" && <EditProfile onClose={() => setDialog(null)}/>}
+    {dialog === "share" && <ShareProfile summary={summary} invoke={invoke} onClose={() => setDialog(null)}/>}
   </>;
 }
