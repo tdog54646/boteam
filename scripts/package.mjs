@@ -1,8 +1,8 @@
-import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { packager } from '@electron/packager'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
+import { bundleId, macSigning, verifyMacSignature } from './mac-signing.mjs'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const pty = '/node_modules/node-pty'
@@ -26,11 +26,12 @@ function ignore(file) {
   if (packages.has(modulePath)) return false
   return !runtimeDirs.some(dir => dir === file || dir.startsWith(file + '/') || file.startsWith(dir + '/'))
 }
-const result = await packager({
+const out = resolve(process.argv[2] || join(root, 'release'))
+const signing = process.platform === 'darwin' ? await macSigning() : null
+const options = {
   dir: root,
-  out: process.argv[2] || join(root, 'release'),
   name: 'BoTeam',
-  appBundleId: 'local.boteam.desktop',
+  appBundleId: bundleId,
   protocols: [{ name: 'BoTeam 聊天', schemes: ['boteam'] }],
   icon: join(root, 'assets/BoTeam.icns'),
   platform: process.platform,
@@ -39,16 +40,31 @@ const result = await packager({
   asar: { unpackDir: 'node_modules/node-pty', unpack: '**/*.node' },
   prune: false,
   ignore,
-})
-if (process.platform === 'darwin') {
-  for (const folder of result) {
-    const bundle = join(folder, 'BoTeam.app')
-    execFileSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', bundle], {
-      stdio: 'inherit',
-    })
-    execFileSync('/usr/bin/codesign', ['--verify', '--strict', '--deep', bundle], {
-      stdio: 'inherit',
-    })
-  }
 }
-console.log(result.join('\n'))
+if (signing) {
+  // Finish signing and verification before replacing a working installation.
+  mkdirSync(out, { recursive: true })
+  const staging = mkdtempSync(join(out, '.package-'))
+  const previous = join(staging, 'previous')
+  try {
+    const [folder] = await packager({ ...options, out: staging, osxSign: signing.osxSign })
+    const bundle = join(folder, 'BoTeam.app')
+    signing.sign?.(bundle)
+    verifyMacSignature(bundle, signing.verifyRequirement)
+    const target = join(out, basename(folder))
+    if (existsSync(target)) renameSync(target, previous)
+    try {
+      renameSync(folder, target)
+    } catch (error) {
+      if (existsSync(previous) && !existsSync(target)) renameSync(previous, target)
+      throw error
+    }
+    rmSync(previous, { recursive: true, force: true })
+    console.log(target)
+  } finally {
+    if (!existsSync(previous)) rmSync(staging, { recursive: true, force: true })
+  }
+} else {
+  const result = await packager({ ...options, out })
+  console.log(result.join('\n'))
+}

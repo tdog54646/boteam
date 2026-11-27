@@ -4,7 +4,7 @@ BoTeam 是本地优先的 macOS 订阅 Bot 工作台。给一个具体订阅账�
 
 ## 打开与开始使用
 
-在 Apple Silicon Mac 上双击本项目交付的 `release/BoTeam-darwin-arm64/BoTeam.app`。本机版本采用本地临时签名。
+在 Apple Silicon Mac 上双击本项目交付的 `release/BoTeam-darwin-arm64/BoTeam.app`。从旧版升级后，macOS 可能首次询问是否允许访问「BoTeam Safe Storage」。选择「始终允许」后，后续使用同一签名身份的版本会沿用这次授权。
 
 1. 首次启动时核对检测到的身份、登录来源和运行状态。勾选账号并点击「导入并继续」。其他已登录配置可以通过「选择其他配置目录」检测。
 2. 为第一个 Bot 命名，在「模型」和「推理强度」中选择该账号原生工具列出的选项，也可以沿用原生默认。可选工作目录，最后点击「创建并开始聊天」。
