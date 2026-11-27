@@ -25,8 +25,8 @@ function copyTimeline(db, sourceId, chatId, nativeForks) {
     if (messageIds.has(m.replyToMessageId)) linkQuote.run(messageIds.get(m.replyToMessageId), messageIds.get(m.id))
   }
   const copyTask = db.db.prepare(`INSERT INTO tasks
-    (id,chatId,botId,accountId,messageId,status,tool,identity,error,events,approval,createdAt,verifiedKey,runSettings,groupCutoff,startedAt,completedAt,authExpired)
-    SELECT ?,?,botId,accountId,?,status,tool,identity,error,events,NULL,createdAt,verifiedKey,runSettings,groupCutoff,startedAt,completedAt,authExpired
+    (id,chatId,botId,accountId,messageId,status,tool,identity,error,events,approval,createdAt,verifiedKey,runSettings,groupCutoff,startedAt,completedAt,authExpired,inherited)
+    SELECT ?,?,botId,accountId,?,status,tool,identity,error,events,NULL,createdAt,verifiedKey,runSettings,groupCutoff,startedAt,completedAt,authExpired,1
     FROM tasks WHERE id=?`)
   const copyAgentEntries = db.db.prepare(`INSERT INTO subagent_entries(taskId,agentId,entryId,role,text,meta)
     SELECT ?,agentId,entryId,role,text,meta FROM subagent_entries WHERE taskId=? ORDER BY rowid`)

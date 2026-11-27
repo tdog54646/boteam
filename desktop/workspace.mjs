@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { Database } from './database.mjs'
+import { profileStats } from './profile-stats.mjs'
 import { beginChatTitle, applyNativeTitle, suggestChatTitle } from './chat-titles.mjs'
 import { WorkspacePanel } from './workspace-panel.mjs'
 import { attachmentPreview } from './panel-files.mjs'
@@ -515,6 +516,8 @@ export class Workspace {
         return this.channels.action(method, p, context.window)
       case 'snapshot':
         return this.snapshot()
+      case 'profileStats':
+        return profileStats(this.db)
       case 'agentTranscript':
         return agentEntries(this.db, p)
       case 'refreshSubagents':
@@ -846,8 +849,8 @@ export class Workspace {
           ...(slash && { slashCommand: slash.name }),
           ...(extensionIds.length && { extensionIds, extensionLabels }), ...(goalObjective && { goalObjective, planMode: false }) }
         this.db.run(
-          `INSERT INTO tasks(id,chatId,botId,accountId,messageId,status,tool,createdAt,runSettings,groupCutoff)
-          VALUES(?,?,?,?,?,'queued',?,?,?,?)`,
+          `INSERT INTO tasks(id,chatId,botId,accountId,messageId,status,tool,createdAt,runSettings,groupCutoff,inherited)
+          VALUES(?,?,?,?,?,'queued',?,?,?,?,0)`,
           id,
           chatId,
           bot.id,

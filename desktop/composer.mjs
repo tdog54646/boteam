@@ -249,32 +249,35 @@ export class ComposerSettings {
         : (prev.priorDurationMs || 0) + (prev.durationMs || 0)
     const turnCount = !prev ? 1 : sameTask ? prev.turnCount || 1 : (prev.turnCount || 1) + 1
     const model = redact(value.model || prev?.model || '').slice(0, 500)
-    this.db.run(
-      `INSERT OR REPLACE INTO token_metrics(
-        chatId,botId,lastTaskId,inputTokens,cachedInputTokens,cacheCreationTokens,
-        outputTokens,reasoningTokens,durationMs,tokensPerSecond,cacheHitPercent,
-        priorInputTokens,priorCachedTokens,priorOutputTokens,priorDurationMs,
-        turnCount,model,updatedAt
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      chatId,
-      botId,
-      safeTaskId,
-      inputTokens,
-      cachedInputTokens,
-      cacheCreationTokens,
-      outputTokens,
-      reasoningTokens,
-      durationMs,
-      tokensPerSecond,
-      cacheHitPercent,
-      priorInputTokens,
-      priorCachedTokens,
-      priorOutputTokens,
-      priorDurationMs,
-      turnCount,
-      model,
-      new Date().toISOString(),
-    )
+    this.db.transaction(() => {
+      this.db.run(
+        `INSERT OR REPLACE INTO token_metrics(
+          chatId,botId,lastTaskId,inputTokens,cachedInputTokens,cacheCreationTokens,
+          outputTokens,reasoningTokens,durationMs,tokensPerSecond,cacheHitPercent,
+          priorInputTokens,priorCachedTokens,priorOutputTokens,priorDurationMs,
+          turnCount,model,updatedAt
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        chatId,
+        botId,
+        safeTaskId,
+        inputTokens,
+        cachedInputTokens,
+        cacheCreationTokens,
+        outputTokens,
+        reasoningTokens,
+        durationMs,
+        tokensPerSecond,
+        cacheHitPercent,
+        priorInputTokens,
+        priorCachedTokens,
+        priorOutputTokens,
+        priorDurationMs,
+        turnCount,
+        model,
+        new Date().toISOString(),
+      )
+      if (safeTaskId) this.db.run('UPDATE tasks SET totalTokens=? WHERE id=?', inputTokens + outputTokens, safeTaskId)
+    })
   }
   recordQuota(accountId, value) {
     if (!Array.isArray(value?.windows)) return null

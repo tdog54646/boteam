@@ -16,6 +16,7 @@ import {
   usageUpdateMetrics,
 } from '../desktop/adapters/antigravity-metrics.mjs'
 import { Workspace } from '../desktop/workspace.mjs'
+import { profileStats } from '../desktop/profile-stats.mjs'
 
 function encodeVarint(num) {
   let n = BigInt(num)
@@ -325,6 +326,44 @@ test('Workspace persists live in-turn metrics without double-counting and accumu
   assert.equal(m.sessionOutputTokens, 1_000) // 400 + 600
   assert.equal(m.sessionTokensPerSecond, 100) // 1000 / 10s
 
+  const dates = [new Date(2026, 2, 7, 12), new Date(2026, 2, 8, 12)]
+  for (const [index, task] of app.snapshot().tasks.entries()) {
+    const settings = { effort: 'high', extensionIds: ['skill:review','plugin:design'],
+      extensionLabels: ['Review','Design'] }
+    app.db.run('UPDATE tasks SET startedAt=?,completedAt=?,runSettings=? WHERE id=?',
+      dates[index].toISOString(), new Date(+dates[index] + 5_000 * (index + 1)).toISOString(),
+      JSON.stringify(settings), task.id)
+  }
+  const branch = await app.handle('forkChat', { chatId })
+  const stats = await app.handle('profileStats')
+  assert.deepEqual(stats.dailyTokens, [{ date:'2026-03-07', tokens:20_400 }, { date:'2026-03-08', tokens:30_600 }])
+  assert.equal(stats.totalTokens, 51_000)
+  assert.equal(stats.undatedTokens, 0)
+  assert.equal(stats.peakTokens, 30_600)
+  assert.equal(stats.longestTaskMs, 10_000)
+  assert.equal(stats.longestStreak, 2)
+  assert.equal(profileStats(app.db, new Date(2026, 2, 9)).currentStreak, 2)
+  assert.equal(profileStats(app.db, new Date(2026, 2, 10)).currentStreak, 0)
+  assert.equal(stats.runCount, 2)
+  assert.deepEqual(stats.topEffort, { id:'high', count:2, percent:100 })
+  assert.deepEqual(stats.topPlugins, [{ id:'plugin:design', label:'Design', count:2 }])
+  assert.equal(stats.uniqueSkills, 1)
+  assert.equal(stats.skillUses, 2)
+
+  // Before per-task metrics were stored, only the latest turn was dated.
+  // An old workspace also had no marker distinguishing a fork's copied tasks.
+  app.db.db.exec('ALTER TABLE tasks DROP COLUMN totalTokens; ALTER TABLE tasks DROP COLUMN inherited;')
+  await app.close()
+  app = new Workspace({ root, adapters: { codex: adapter } })
+  const legacy = await app.handle('profileStats')
+  assert.equal(legacy.totalTokens, 51_000)
+  assert.equal(legacy.undatedTokens, 20_400)
+  assert.deepEqual(legacy.dailyTokens, [{ date:'2026-03-08', tokens:30_600 }])
+  assert.equal(legacy.runCount, 2)
+  assert.equal(legacy.skillUses, 2)
+
   await app.handle('deleteChat', { chatId })
   assert.equal(app.snapshot().tokenMetrics.length, 0)
+  assert.equal((await app.handle('profileStats')).runCount, 0)
+  assert.equal(app.snapshot().tasks.filter(task => task.chatId === branch).length, 2)
 })

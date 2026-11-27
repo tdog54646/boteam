@@ -199,6 +199,17 @@ export class Database {
       this.db.exec('ALTER TABLE composer_settings ADD COLUMN planMode INTEGER NOT NULL DEFAULT 0')
     const columns = this.all('PRAGMA table_info(bots)').map((column) => column.name)
     this.transaction(() => {
+      if (!taskColumns.includes('totalTokens')) this.db.exec('ALTER TABLE tasks ADD COLUMN totalTokens INTEGER')
+      if (!taskColumns.includes('inherited')) this.db.exec('ALTER TABLE tasks ADD COLUMN inherited INTEGER')
+      // Old backups can also supply rows without the two profile fields. A fork
+      // copied the original task timestamps, but allocated new message/task IDs.
+      this.db.exec(`UPDATE tasks AS t SET inherited=EXISTS(
+        SELECT 1 FROM chat_forks f JOIN tasks p ON p.chatId=f.sourceChatId AND p.botId=t.botId
+        WHERE f.chatId=t.chatId AND p.accountId=t.accountId AND p.createdAt=t.createdAt
+          AND p.startedAt IS t.startedAt AND p.completedAt IS t.completedAt
+      ) WHERE inherited IS NULL;
+      UPDATE tasks SET totalTokens=m.inputTokens+m.outputTokens FROM token_metrics m
+        WHERE tasks.id=m.lastTaskId AND tasks.totalTokens IS NULL AND tasks.inherited=0;`)
       if (!this.all('PRAGMA table_info(projects)').some(c => c.name === 'sectionId'))
         this.db.exec('ALTER TABLE projects ADD COLUMN sectionId TEXT REFERENCES chat_sections(id) ON DELETE SET NULL')
       if (!this.get("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='chat_title_requests'")) {
