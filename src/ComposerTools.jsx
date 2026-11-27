@@ -490,7 +490,7 @@ export function ComposerTools({
     effort,
     account?.provider, tr,
   );
-  const permission = settings.permission || "default";
+  const permission = settings.permission ?? actionCatalog.inheritedPermission;
   const providerModes = state.permissionModes?.[account?.provider] || [
     "default",
   ];
@@ -689,12 +689,12 @@ export function ComposerTools({
         trigger={permissionLabel(permission, account?.provider, tr)}
       >
         <ApprovalMenu
-          modes={menuModes}
+          modes={actionCatalog.hasPermissionDefault ? ["inherit", ...menuModes] : menuModes}
           provider={account?.provider}
-          value={permission}
+          value={actionCatalog.hasPermissionDefault && settings.permission == null ? "inherit" : permission}
           busy={busy}
           memberPicker={groupPicker}
-          onChoose={(mode) => save({ permission: mode })}
+          onChoose={(mode) => save({ permission: mode === "inherit" ? null : mode })}
           catalogError={actionCatalog.error || actions?.note}
           retry={actionCatalog.retry}
           onLearn={() => {

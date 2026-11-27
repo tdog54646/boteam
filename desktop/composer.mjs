@@ -30,17 +30,74 @@ export class ComposerSettings {
       throw new Error('该 Bot 不属于当前会话。')
     return bot
   }
+  defaultPermission(bot, projectId) {
+    return this.db.get(`SELECT coalesce(p.permission,b.permission,'default') AS mode FROM accounts a
+      LEFT JOIN project_permission_defaults p ON p.provider=a.provider AND p.projectId=?
+      LEFT JOIN bot_permission_defaults b ON b.botId=? WHERE a.id=?`,
+      projectId ?? null, bot.id, bot.accountId)?.mode ?? 'default'
+  }
+  async setDefaultPermission({ botId, projectId, provider, permission, expected }) {
+    const project = projectId != null
+    if (project === (botId != null) || expected !== null && typeof expected !== 'string')
+      throw new Error('请选择 Bot 或项目的默认权限。')
+    let bot
+    if (project) {
+      if (typeof projectId !== 'string' || !this.db.get('SELECT 1 FROM projects WHERE id=?', projectId))
+        throw new Error('项目已不存在。')
+      if (typeof provider !== 'string' || !Object.hasOwn(this.workspace.adapters, provider))
+        throw new Error('请选择项目使用的原生工具。')
+      bot = this.db.get(`SELECT b.* FROM bots b JOIN accounts a ON a.id=b.accountId
+        WHERE a.provider=? AND b.archived=0 AND json_extract(a.info,'$.status')='ready' ORDER BY b.rowid LIMIT 1`, provider)
+    } else {
+      bot = this.workspace.bot(botId)
+      provider = this.db.account(bot.accountId).provider
+    }
+    if (permission !== null) {
+      this.validateMode(provider, permission)
+      await this.validateNativePermission(provider, permission, { botId: bot?.id, ...(project && { catalogProject: { projectId } }) })
+      this.workspace.lifetime.signal.throwIfAborted()
+    }
+    this.db.transaction(() => {
+      if (project && !this.db.get('SELECT 1 FROM projects WHERE id=?', projectId)) throw new Error('项目已不存在。')
+      if (!project) this.workspace.bot(botId)
+      const table = project ? 'project_permission_defaults' : 'bot_permission_defaults'
+      const where = project ? 'projectId=? AND provider=?' : 'botId=?'
+      const keys = project ? [projectId,provider] : [botId]
+      const current = this.db.get(`SELECT permission FROM ${table} WHERE ${where}`, ...keys)?.permission ?? null
+      if (current !== expected) throw new Error('默认权限已在其他窗口更改，请重新选择。')
+      if (permission === null) this.db.run(`DELETE FROM ${table} WHERE ${where}`, ...keys)
+      else this.db.run(`INSERT OR REPLACE INTO ${table} VALUES(${keys.map(() => '?').join(',')},?)`, ...keys, permission)
+    })
+    this.workspace.notify()
+  }
+  validateMode(provider, permission) {
+    if (!(this.workspace.adapters[provider]?.permissionModes || ['default']).includes(permission))
+      throw new Error('此原生工具不支持所选权限模式。')
+  }
+  async validateNativePermission(provider, permission, scope, checkPlan = false) {
+    const autoReview = permission === 'auto-review'
+    const workspaceAuto = permission === 'workspace-auto' && provider === 'antigravity'
+    if (!checkPlan && !autoReview && !workspaceAuto) return
+    if (!scope.botId) throw new Error('请先绑定可用的 Bot 以核实此工具的原生权限。')
+    const capabilities = await this.workspace.composerActions({ ...scope, refresh: true })
+    if (checkPlan && !capabilities.plan) throw new Error('当前原生工具未提供计划模式。')
+    if (autoReview && !capabilities.autoReview) throw new Error('当前原生工具未提供自动审批。')
+    if (workspaceAuto && !capabilities.workspaceAuto) throw new Error('当前 Antigravity 未提供工作区自动执行。')
+  }
   read(chatId, bot) {
     const row = this.db.get(
       'SELECT * FROM composer_settings WHERE chatId=? AND botId=?',
       chatId,
       bot.id,
     )
+    const explicit = row?.permission
+    const permission = explicit && explicit !== 'inherit' ? explicit
+      : this.defaultPermission(bot, this.db.get('SELECT projectId FROM chat_projects WHERE chatId=?', chatId)?.projectId)
     return {
       model: row?.model ?? bot.model,
       effort: row?.effort ?? bot.effort,
-      permission: row?.permission || 'default',
-      planMode: Boolean(row?.planMode) || row?.permission === 'plan',
+      permission,
+      planMode: Boolean(row?.planMode) || permission === 'plan',
     }
   }
   async set(p) {
@@ -61,23 +118,11 @@ export class ComposerSettings {
     const hasPermission = Object.hasOwn(p, 'permission')
     if (!(hasModel || hasEffort || hasPermission || hasPlan)) throw new Error('请选择要更改的会话设置。')
     if (hasPlan && typeof p.planMode !== 'boolean') throw new Error('计划模式设置无效。')
-    if (
-      hasPermission &&
-      !(adapter.permissionModes || ['default']).includes(
-        p.permission,
-      )
-    )
-      throw new Error('此原生工具不支持所选权限模式。')
-    const previous = draft ? { ...bot, permission: 'default' } : this.read(chatId, bot)
+    if (hasPermission && p.permission !== null) this.validateMode(account.provider, p.permission)
+    const previous = draft ? { ...bot, permission: this.defaultPermission(bot, draft.projectId) } : this.read(chatId, bot)
     const planIsPermission = adapter.permissionModes?.includes('plan')
-    if ((hasPlan && p.planMode && (!planIsPermission || adapter.composerActions)) ||
-        p.permission === 'auto-review' || (p.permission === 'workspace-auto' && account.provider === 'antigravity')) {
-      const capabilities = await this.workspace.composerActions({ chatId, botId, draft, refresh: true })
-      if (hasPlan && p.planMode && !capabilities.plan) throw new Error('当前原生工具未提供计划模式。')
-      if (p.permission === 'auto-review' && !capabilities.autoReview) throw new Error('当前原生工具未提供自动审批。')
-      if (p.permission === 'workspace-auto' && account.provider === 'antigravity' && !capabilities.workspaceAuto)
-        throw new Error('当前 Antigravity 未提供工作区自动执行。')
-    }
+    const checkPlan = hasPlan && p.planMode && (!planIsPermission || adapter.composerActions)
+    await this.validateNativePermission(account.provider, p.permission, { chatId, botId, draft }, checkPlan)
     const model = hasModel ? (p.model ?? bot.model) : previous.model
     const effort = hasEffort ? (p.effort ?? bot.effort) : previous.effort
     if (hasModel || hasEffort) {
@@ -87,7 +132,7 @@ export class ComposerSettings {
     return chatId => {
       this.member(chatId, botId)
       this.db.run(
-        'INSERT OR IGNORE INTO composer_settings(chatId,botId) VALUES(?,?)',
+        "INSERT OR IGNORE INTO composer_settings(chatId,botId,permission) VALUES(?,?,'inherit')",
         chatId,
         botId,
       )
@@ -108,7 +153,7 @@ export class ComposerSettings {
       if (hasPermission) {
         this.db.run(
           'UPDATE composer_settings SET permission=? WHERE chatId=? AND botId=?',
-          p.permission,
+          p.permission ?? 'inherit',
           chatId,
           botId,
         )

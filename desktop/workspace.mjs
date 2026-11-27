@@ -34,12 +34,12 @@ function actionCatalogKey(scope) {
   return JSON.stringify([catalogKey(scope.account), scope.cwd, scope.threadId,
     scope.bot.model || scope.account.model, scope.bot.effort, scope.permission, scope.bot.planMode || false])
 }
-function draftActionSettings(input, bot, adapter) {
+function draftActionSettings(input, bot, adapter, defaultPermission) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('草稿会话设置无效。')
   const model = input.model ?? bot.model, effort = input.effort ?? bot.effort
   if (typeof model !== 'string' || model.length > 500 || typeof effort !== 'string' || effort.length > 120)
     throw new Error('请选择原生工具列出的模型和思考强度。')
-  const permission = Object.hasOwn(input, 'permission') ? input.permission : 'default'
+  const permission = input.permission ?? defaultPermission
   if (!(adapter.permissionModes || ['default']).includes(permission))
     throw new Error('此原生工具不支持所选权限模式。')
   if (input.planMode !== undefined && typeof input.planMode !== 'boolean') throw new Error('计划模式设置无效。')
@@ -201,8 +201,8 @@ export class Workspace {
     if (catalogProject && (chatId || draft || !catalogProject.projectId))
       throw new Error('项目目录只能用于未绑定会话的设置查询。')
     const cwd = catalogProject ? draftProjectCwd(this.db, catalogProject) : this.chatDirectory(chatId, bot, draft)
-    const settings = chatId ? this.composer.read(chatId, bot) : draft && draftSettings !== undefined
-      ? draftActionSettings(draftSettings, bot, this.adapters[account.provider]) : {}
+    const settings = chatId ? this.composer.read(chatId, bot) : draft
+      ? draftActionSettings(draftSettings === undefined ? {} : draftSettings, bot, this.adapters[account.provider], this.composer.defaultPermission(bot, draft.projectId)) : {}
     return {
       account, bot: { ...bot, ...settings }, chatId: chatId || draft?.id, cwd, threadId: thread?.threadId || null,
       permission: settings.permission || 'default', signal: this.lifetime.signal,
@@ -532,6 +532,8 @@ export class Workspace {
         return this.accountOperation(this.attachments.thumbnail(p.scope, p.id, this.makeThumbnail))
       case 'attachmentPreview':
         return this.accountOperation(attachmentPreview(this.attachments, p, this.makeThumbnail))
+      case 'setDefaultPermission':
+        return this.accountOperation(this.composer.setDefaultPermission(p))
       case 'setComposerSettings':
         return this.accountOperation(this.composer.set(p))
       case 'composerActions':

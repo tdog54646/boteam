@@ -9,7 +9,11 @@ export function useComposerActions({ state, chat, draft, bot, projectCwd, draftS
   const settings = draftSettings || state.composerSettings?.find(s => s.chatId === chatId && s.botId === botId);
   const model = settings?.model ?? bot?.model;
   const effort = settings?.effort ?? bot?.effort;
-  const permission = settings?.permission || "default";
+  const projectId = draft?.projectId ?? chat?.projectId;
+  const configuredDefault = state.projectPermissionDefaults?.find(item => item.projectId === projectId && item.provider === account?.provider)?.permission
+    ?? state.botPermissionDefaults?.find(item => item.botId === botId)?.permission;
+  const inheritedPermission = configuredDefault ?? "default";
+  const permission = settings?.permission ?? inheritedPermission;
   const planMode = Boolean(settings?.planMode || permission === "plan");
   const id = JSON.stringify([
     chatId || draft?.id, botId, chat?.projectId || draft?.projectId, projectCwd,
@@ -34,6 +38,7 @@ export function useComposerActions({ state, chat, draft, bot, projectCwd, draftS
   const result = useNativeCatalog({ id, binding, fallbackKey, enabled, query, refreshOnEntry: true });
   return {
     ...result,
+    hasPermissionDefault: configuredDefault != null, inheritedPermission, permission, planMode,
     scope: JSON.stringify([id, binding]),
     error: !enabled && botId ? account?.reason || "请先核实此账号的原生登录。" : result.error,
   };

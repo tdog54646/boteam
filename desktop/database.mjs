@@ -69,6 +69,13 @@ export class Database {
         id TEXT PRIMARY KEY,name TEXT NOT NULL,pinned INTEGER NOT NULL DEFAULT 0,
         sectionId TEXT REFERENCES chat_sections(id) ON DELETE SET NULL
       );
+      CREATE TABLE IF NOT EXISTS bot_permission_defaults(
+        botId TEXT PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,permission TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS project_permission_defaults(
+        projectId TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,permission TEXT NOT NULL,
+        PRIMARY KEY(projectId,provider)
+      );
       CREATE TABLE IF NOT EXISTS project_folders(
         projectId TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,path TEXT NOT NULL,position INTEGER NOT NULL,
         PRIMARY KEY(projectId,path),UNIQUE(projectId,position)
@@ -301,8 +308,10 @@ export class Database {
       byMessage.get(messageId).push(file.kind === 'folder' ? { ...file, fileCount, skippedCount } : file)
     }
     return {
+      botPermissionDefaults: this.all('SELECT * FROM bot_permission_defaults'),
+      projectPermissionDefaults: this.all('SELECT * FROM project_permission_defaults'),
       composerSettings: this.all('SELECT * FROM composer_settings').map(row => ({
-        ...row, planMode: Boolean(row.planMode) || row.permission === 'plan',
+        ...row, permission: row.permission === 'inherit' ? null : row.permission, planMode: Boolean(row.planMode) || row.permission === 'plan',
       })),
       contextUsage: this.all('SELECT * FROM context_usage'),
       tokenMetrics: this.all('SELECT * FROM token_metrics').map(row => {

@@ -489,12 +489,7 @@ export function Composer({
         } else if (action === "goal") {
           setSlashDialog({ action, bot: slashTarget, args });
         } else if (action === "plan") {
-          const settings = settingsByBot[botId] || state.composerSettings?.find(
-            (s) => s.chatId === chat?.id && s.botId === botId,
-          );
-          const planMode = !(
-            settings?.planMode || settings?.permission === "plan"
-          );
+          const planMode = !actions.planMode;
           await saveSettings(botId, { planMode });
           setSlashDialog({
             action,
@@ -594,7 +589,7 @@ export function Composer({
       const settings = { ...previous[botId], ...patch };
       if (state.permissionModes?.[provider]?.includes("plan")) {
         if (patch.planMode) settings.permission = "plan";
-        else if (patch.planMode === false && settings.permission === "plan") settings.permission = "default";
+        else if (patch.planMode === false && (settings.permission ?? actions.inheritedPermission) === "plan") settings.permission = "default";
         if (patch.permission !== undefined || patch.planMode !== undefined) settings.planMode = settings.permission === "plan";
       }
       return { ...previous, [botId]: settings };

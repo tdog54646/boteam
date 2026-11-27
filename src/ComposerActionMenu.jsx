@@ -20,6 +20,11 @@ import {
 } from "lucide-react";
 
 const permissions = (tr) => ({
+  inherit: {
+    title: tr("使用项目或 Bot 默认权限", "Use project or bot default"),
+    detail: tr("跟随设置中的工具审批与文件访问选项", "Follow tool approval and file access settings"),
+    icon: ShieldCheck,
+  },
   default: {
     title: tr("默认权限", "Default permissions"),
     detail: tr("由原生工具在需要时请求批准", "Let the CLI request approval when needed"),

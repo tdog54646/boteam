@@ -568,3 +568,38 @@ test('settings catalogs and MCP status use registered project folders without cr
   assert.deepEqual((await app.handle('slashInfo', projectScope)).lines, [primary])
   assert.equal((await app.handle('composerActions', scope)).extensions[0].id, folder)
 })
+
+test('project and bot permission defaults reach draft and chat scopes without replacing explicit chat choices', async t => {
+  const seen = []
+  const { app, bot, other, dm } = await fixture(t, {
+    permissionModes: ['default', 'read-only', 'full'],
+    async run({ permission, emit, bot, chatId }) {
+      seen.push(permission)
+      emit({ type:'identity', key:'owner', value:'owner' })
+      emit({ type:'session', value: chatId + bot.id })
+    },
+  })
+  const projectId = await app.handle('createProject', { name: '项目', folders: [app.root] })
+  await app.handle('setDefaultPermission', { botId: bot, permission: 'read-only', expected: null })
+  const draft = { id: randomUUID(), kind: 'group', projectId, members: [bot, other] }
+  assert.equal(app.nativeContext({ botId: bot, draft, settings: { model: '' } }).permission, 'read-only')
+  assert.equal(app.composer.read(dm, app.bot(bot)).permission, 'read-only')
+  await app.handle('setComposerSettings', { chatId: dm, botId: bot, model: '' })
+  await app.handle('setDefaultPermission', { projectId, provider: 'codex', permission: 'full', expected: null })
+  assert.equal(app.nativeContext({ botId: other, draft }).permission, 'full')
+  const chatId = await app.handle('createChat', draft)
+  assert.equal(app.composer.read(chatId, app.bot(bot)).permission, 'full')
+  await app.handle('setComposerSettings', { chatId, botId: bot, permission: 'default' })
+  await app.handle('setDefaultPermission', { projectId, provider: 'codex', permission: null, expected: 'full' })
+  await app.handle('setDefaultPermission', { botId: bot, permission: 'full', expected: 'read-only' })
+  assert.equal(app.composer.read(chatId, app.bot(bot)).permission, 'default')
+  assert.equal(app.composer.read(dm, app.bot(bot)).permission, 'full')
+  await app.handle('setComposerSettings', { chatId, botId:bot, permission:null })
+  assert.equal(app.composer.read(chatId, app.bot(bot)).permission, 'full')
+  await app.handle('setDefaultPermission', { botId: bot, permission:'read-only', expected:'full' })
+  await app.handle('send', { chatId, recipients: [bot], text:'read only' })
+  await Promise.all(app.lanes.values())
+  assert.deepEqual(seen, ['read-only'])
+  await assert.rejects(app.handle('setDefaultPermission', { botId: bot, permission: 'default', expected: null }))
+  await assert.rejects(app.handle('setDefaultPermission', { botId: bot, permission: 'unsupported', expected: 'read-only' }))
+})
