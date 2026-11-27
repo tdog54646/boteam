@@ -1,7 +1,7 @@
 import React, { useRef, useState } from "react";
 import {
-  Archive, Bell, Blocks, Bot, Cable, FolderTree, Gauge, GitBranch, MessagesSquare,
-  Search, Settings, ShieldCheck, Sun, WalletCards, ScanLine, X,
+  Archive, Bell, Blocks, Bot, Cable, DatabaseBackup, FolderTree, Gauge, GitBranch,
+  HardDrive, MessagesSquare, Search, Settings, ShieldCheck, Sun, WalletCards, ScanLine, X,
 } from "lucide-react";
 import { ShortcutSymbol } from "./ui";
 import { useLanguage } from "./preferences";
@@ -23,6 +23,8 @@ const groups = [
   ] },
   { title: ["数据与隐私", "Data & privacy"], items: [
     ["archived", Archive, "已归档会话", "Archived chats", "聊天 恢复 取消归档 永久删除 archive restore delete"],
+    ["storage", HardDrive, "设备存储", "Device storage", "空间 占用 附件 聊天 清理缓存 cache attachments disk space"],
+    ["backup", DatabaseBackup, "备份与恢复", "Backup & restore", "工作台数据 导出 导入 迁移 还原 import export backup recovery"],
   ] },
   { title: ["集成", "Integrations"], items: [
     ["integrations-channels", MessagesSquare, "频道配置", "Channels setup", "接入 访问控制 投递设置 配对 飞书 钉钉 企业微信 微信 Discord Telegram WeCom WeChat WhatsApp Feishu Lark QQ DingTalk"],

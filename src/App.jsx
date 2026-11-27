@@ -25,6 +25,7 @@ import { ArchivedChats, HistoryButtons, SidebarTitlebar, WorkspaceNavigation } f
 import { SettingsNavigation, settingsPages } from "./SettingsNavigation";
 import { AppSettings } from "./AppSettings";
 import { CodingSettings } from "./CodingSettings";
+import { DataSettings } from "./DataSettings";
 import { IntegrationSettings } from "./IntegrationSettings";
 import { usePreferences } from "./preferences";
 import { shortcutFromEvent } from "./shortcuts";
@@ -634,6 +635,8 @@ export default function App() {
           <AppSettings key={page} page={page} state={state} invoke={invoke} refresh={refresh}/>
         ) : ["usage", "integrations-channels", "extensions", "mcp"].includes(page) ? (
           <IntegrationSettings key={page} page={page} state={state} invoke={invoke} refresh={refresh} open={setDialog} select={select}/>
+        ) : ["storage", "backup"].includes(page) ? (
+          <DataSettings key={page} page={page} state={state} invoke={invoke} refresh={refresh}/>
         ) : ["permissions", "directories", "worktrees"].includes(page) ? (
           <CodingSettings key={page} page={page} state={state} invoke={invoke} refresh={refresh} open={setDialog} select={select}/>
         ) : page === "archived" ? (
