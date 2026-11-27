@@ -8,6 +8,7 @@ import * as antigravity from './adapters/antigravity.mjs'
 import { discoverySources, locate, redact } from './native.mjs'
 import { platformById } from './channels/catalog.mjs'
 import { Workspace } from './workspace.mjs'
+import { applyWorkspaceRestore, exportWorkspaceBackup, readStorageUsage, stageWorkspaceRestore } from './settings-data.mjs'
 import { configurePanelBrowser } from './panel-browser.mjs'
 import { PanelTerminals } from './panel-terminals.mjs'
 import { chatText, linkedChatId, requireChat } from './chat-transfer.mjs'
@@ -61,6 +62,7 @@ else {
     })
     // Release native sessions owned by a closed, reloaded or crashed renderer.
     const resetRenderer = () => {
+      context.storageRead?.abort()
       workspace.accounts.cancelAllLogins(window)
       workspace.channels.cancelSetupsForWindow(window)
       context.terminals.close()
@@ -108,6 +110,13 @@ else {
     else if (workspace) focus(currentWindow() || openWindow())
   })
   app.whenReady().then(async () => {
+    try {
+      await applyWorkspaceRestore(app.getPath('userData'))
+    } catch (error) {
+      dialog.showErrorBox('BoTeam · 恢复备份', error.message)
+      app.quit()
+      return
+    }
     setupPreviewProtocol()
     const notify = () => {
       if (!refresh)
@@ -191,6 +200,74 @@ else {
         await shell.openExternal(url.href)
       },
     })
+    let dataOperation = null
+    let restoring = false
+    const busyForRestore = () => workspace.closed || workspace.running.size > 0 || workspace.lanes.size > 0 ||
+      workspace.threadEdits.size > 0 || workspace.accounts.logins.size > 0 || workspace.channels.setups.size > 0 ||
+      [...windows.values()].some(({terminals}) => [...terminals.sessions.values()].some(session => !session.exited)) ||
+      !!workspace.db.get("SELECT 1 FROM tasks WHERE status IN ('queued','running','approval') LIMIT 1")
+    async function dataAction(context, method, payload) {
+      const english = payload.language === 'en'
+      const tr = (zh, en) => english ? en : zh
+      const session = context.window.webContents.session
+      if (method === 'data:cancel-storage') {
+        context.storageRead?.abort()
+        return
+      }
+      if (method === 'data:storage') {
+        context.storageRead?.abort()
+        const scan = new AbortController()
+        context.storageRead = scan
+        try { return { ...await readStorageUsage(workspace.root, scan.signal), cache: await session.getCacheSize() } }
+        finally { if (context.storageRead === scan) context.storageRead = null }
+      }
+      if (method === 'data:cancel') {
+        if (dataOperation?.owner === context) dataOperation.controller.abort(new Error(tr('操作已取消。','Operation canceled.')))
+        return
+      }
+      if (method === 'data:clear-cache') { await session.clearCache(); return true }
+      if (!['data:export','data:restore'].includes(method)) throw new Error('未知的数据操作。')
+      if (dataOperation) throw new Error('另一项备份操作仍在进行。')
+      const controller = new AbortController()
+      dataOperation = { owner: context, controller }
+      const filters = [{ name: 'BoTeam', extensions: ['boteam'] }]
+      const run = async () => {
+        if (method === 'data:export') {
+          const result = await dialog.showSaveDialog(context.window, {
+            title: tr('导出工作台备份','Export workspace backup'),
+            defaultPath: 'BoTeam-' + new Date().toISOString().slice(0,10) + '.boteam', filters,
+          })
+          if (result.canceled || !result.filePath) return null
+          controller.signal.throwIfAborted()
+          await exportWorkspaceBackup(workspace.root, result.filePath, controller.signal)
+          return { path: result.filePath }
+        }
+        const result = await dialog.showOpenDialog(context.window, {
+          title: tr('选择 BoTeam 备份','Choose a BoTeam backup'), properties:['openFile'], filters,
+        })
+        if (result.canceled || !result.filePaths[0]) return null
+        const answer = await dialog.showMessageBox(context.window,{
+          type:'warning', title: tr('恢复工作台','Restore workspace'),
+          message: tr('用此备份替换当前工作台并重新启动？','Replace this workspace with the backup and restart?'),
+          detail: tr('当前聊天、Bot、项目、附件和内置工作目录将被替换。如需保留当前数据，请先导出备份。恢复后请重新连接频道并检查定时任务。',
+            'Current chats, bots, projects, attachments and managed working folders will be replaced. Export a backup first to retain this workspace. Reconnect channels and review paused schedules after restoring.'),
+          buttons:[tr('取消','Cancel'),tr('恢复并重启','Restore and restart')], defaultId:0, cancelId:0,
+        })
+        if (answer.response !== 1) return null
+        const available = () => !busyForRestore() && workspace.pendingAccounts.size <= 1
+        if (!available()) throw new Error('请先结束当前任务、登录、终端和文件操作，再恢复备份。')
+        restoring = true
+        try {
+          controller.signal.throwIfAborted()
+          await stageWorkspaceRestore(workspace.root, result.filePaths[0], available, controller.signal)
+          app.relaunch()
+          setImmediate(() => app.quit())
+          return { restarting: true }
+        } catch (error) { restoring = false; throw error }
+      }
+      try { return await workspace.accountOperation(run()) }
+      finally { dataOperation = null }
+    }
     const localHandler = (action) => async (event, ...args) => {
       const context = windows.get(event.sender)
       if (
@@ -200,6 +277,7 @@ else {
       )
         throw new Error('只允许本地工作台发起请求。')
       try {
+        if (restoring && args[0] !== 'data:cancel' && args[0] !== 'data:cancel-storage') throw new Error('正在恢复工作台备份。')
         if (workspace.closed) throw new Error('工作台正在关闭。')
         return await action(context, ...args)
       } catch (error) {
@@ -207,6 +285,7 @@ else {
       }
     }
     ipcMain.handle('workspace:invoke', localHandler(async (context, method, payload = {}) => {
+      if (typeof method === 'string' && method.startsWith('data:')) return dataAction(context, method, payload)
       if (method === 'channelOpenGuide') {
         const url = payload.id === 'feishu' && payload.region === 'lark' ? 'https://open.larksuite.com/app' : platformById(payload.id).guide
         if (!url) throw new Error('该平台没有设置指南。')
