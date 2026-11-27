@@ -1,4 +1,4 @@
-import electron, { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell } from 'electron'
+import electron, { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, safeStorage, shell } from 'electron'
 import { writeFile } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -6,6 +6,7 @@ import * as codex from './adapters/codex.mjs'
 import * as claude from './adapters/claude.mjs'
 import * as antigravity from './adapters/antigravity.mjs'
 import { discoverySources, locate, redact } from './native.mjs'
+import { platformById } from './channels/catalog.mjs'
 import { Workspace } from './workspace.mjs'
 import { configurePanelBrowser } from './panel-browser.mjs'
 import { PanelTerminals } from './panel-terminals.mjs'
@@ -61,6 +62,7 @@ else {
     // Release native sessions owned by a closed, reloaded or crashed renderer.
     const resetRenderer = () => {
       workspace.accounts.cancelAllLogins(window)
+      workspace.channels.cancelSetupsForWindow(window)
       context.terminals.close()
     }
     window.webContents.on('did-navigate', resetRenderer)
@@ -116,6 +118,7 @@ else {
     }
     workspace = new Workspace({
       root: app.getPath('userData'),
+      safeStorage,
       codexExecutable: (await locate('codex')).bin,
       adapters: { codex, claude, antigravity },
       notify,
@@ -184,6 +187,11 @@ else {
       }
     }
     ipcMain.handle('workspace:invoke', localHandler(async (context, method, payload = {}) => {
+      if (method === 'channelOpenGuide') {
+        const url = payload.id === 'feishu' && payload.region === 'lark' ? 'https://open.larksuite.com/app' : platformById(payload.id).guide
+        if (!url) throw new Error('该平台没有设置指南。')
+        return shell.openExternal(url)
+      }
       if (method === 'stageHtmlPreview') return stageHtmlPreview(payload.html)
       if (method === 'chatOpenTargets') return chatOpenTargets()
       if (method === 'openChatLink') return openLink(payload.url)

@@ -5,6 +5,7 @@ import { Database } from './database.mjs'
 import { beginChatTitle, applyNativeTitle, suggestChatTitle } from './chat-titles.mjs'
 import { WorkspacePanel } from './workspace-panel.mjs'
 import { attachmentPreview } from './panel-files.mjs'
+import { Channels } from './channels.mjs'
 import { Schedules } from './schedules.mjs'
 import { Accounts } from './accounts.mjs'
 import { authExpiredError, isAuthExpiredError } from './auth-errors.mjs'
@@ -104,6 +105,7 @@ export class Workspace {
     this.subagentReads = new Map()
     this.closed = false
     this.schedules = new Schedules(this)
+    this.channels = new Channels(this, { safeStorage: options.safeStorage, connectors: options.channelConnectors })
   }
   snapshot() {
     const permissionModes = Object.fromEntries(Object.entries(this.adapters)
@@ -111,7 +113,7 @@ export class Workspace {
     const state = this.db.snapshot()
     labelLegacySubagents(this.db, state.tasks, state.messages)
     for (const account of state.accounts) account.bindingRevision = this.bindingRevisions.get(account.id) || 0
-    return { ...state, permissionModes, schedules: this.schedules.snapshot(), nativeThreads: this.db.all('SELECT chatId,botId,threadId,cwd FROM threads') }
+    return { ...state, permissionModes, channels: this.channels.snapshot(), schedules: this.schedules.snapshot(), nativeThreads: this.db.all('SELECT chatId,botId,threadId,cwd FROM threads') }
   }
   invalidateCatalogs(accountId) {
     this.modelCatalogs.delete(accountId)
@@ -486,6 +488,20 @@ export class Workspace {
     if (typeof method === 'string' && method.startsWith('panel')) return this.accountOperation(this.panel.handle(method, p, context.terminals))
     if (typeof method === 'string' && method.startsWith('schedule:')) return this.accountOperation(this.schedules.handle(method, p))
     switch (method) {
+      case 'channelPermissionOptions':
+        return this.accountOperation(this.channels.permissions.options(p))
+      case 'channelSetPermission':
+        return this.accountOperation(this.channels.permissions.save(p))
+      case 'channelBeginSetup':
+      case 'channelCancelSetup':
+      case 'channelSetAccess':
+      case 'channelSetBot':
+      case 'channelSave':
+      case 'channelDisconnect':
+      case 'channelRemove':
+      case 'channelRefresh':
+      case 'channelPair':
+        return this.channels.action(method, p, context.window)
       case 'snapshot':
         return this.snapshot()
       case 'agentTranscript':
@@ -711,7 +727,7 @@ export class Workspace {
     } })
     return result
   }
-  send({ chatId, recipients, text = '', attachmentIds = [], nativeActions = {}, replyToMessageId = null, expectedProjectCwd }, goalObjective, slash, first) {
+  send({ chatId, recipients, text = '', attachmentIds = [], nativeActions = {}, replyToMessageId = null, expectedProjectCwd }, goalObjective, slash, first, origin) {
     const messageId = first ? first.draft.id : randomUUID()
     const now = stamp()
     const tasks = this.db.transaction(() => {
@@ -759,12 +775,13 @@ export class Workspace {
         messageId,
         chatId,
         'user',
-        '我',
+        origin?.senderName || '我',
         message,
         now,
         JSON.stringify(bots.map((b) => b.id)),
         replyToMessageId,
       )
+      origin?.onEnqueued(messageId)
       let groupCutoff = null
       if (ordinaryGroup) {
         groupCutoff = message ? this.db.publishGroupMessage(chatId, messageId) : this.db.groupBoundary(chatId)
@@ -800,6 +817,8 @@ export class Workspace {
           (Array.isArray(labels) && typeof labels[index] === 'string' &&
            redact(labels[index]).trim().slice(0, 160)) || '原生扩展')
         const settings = { ...this.composer.read(chatId, bot),
+          ...(origin?.permission != null && { permission: origin.permission,
+            ...(this.adapters[account.provider]?.permissionModes?.includes('plan') && { planMode: origin.permission === 'plan' }) }),
           ...(slash && { slashCommand: slash.name }),
           ...(extensionIds.length && { extensionIds, extensionLabels }), ...(goalObjective && { goalObjective, planMode: false }) }
         this.db.run(
@@ -822,7 +841,7 @@ export class Workspace {
           publishReview: chat.kind === 'group' && account.provider === 'codex' && slash?.action === 'review',
           permission: settings.permission, planMode: settings.planMode,
           extensionIds, goalObjective, slashCommand: slash?.action === 'extension' ? undefined : slash?.name,
-          attachments: attached?.attachments || [],
+          attachments: attached?.attachments || [], origin,
         }
       })
     })
@@ -837,7 +856,7 @@ export class Workspace {
     this.notify()
     return messageId
   }
-  async execute({ id, chatId, titleDescription, bot, account, prompt, replyId, messageId, groupCutoff, publishReview, permission, planMode, extensionIds, goalObjective, slashCommand, attachments }) {
+  async execute({ id, chatId, titleDescription, bot, account, prompt, replyId, messageId, groupCutoff, publishReview, permission, planMode, extensionIds, goalObjective, slashCommand, attachments, origin }) {
     if (this.closed || this.db.get('SELECT status FROM tasks WHERE id=?', id)?.status !== 'queued')
       return
     const controller = new AbortController()
@@ -893,6 +912,13 @@ export class Workspace {
       if (thread && thread.accountId !== account.id) throw new Error('原生会话与绑定账号不符。')
       const cwd = await this.ensureChatDirectory(chatId, bot)
       controller.signal.throwIfAborted()
+      if (origin?.validatePermission) {
+        origin.checkAccess()
+        await origin.validatePermission()
+        controller.signal.throwIfAborted()
+      }
+      origin?.checkAccess()
+      origin?.checkPermission()
       let nativeThreadId = thread?.threadId ?? null
       const seed = !goalObjective && !slashCommand && !publishReview && groupCutoff == null &&
         this.db.get('SELECT seedMessageId FROM fork_member_context WHERE chatId=? AND botId=?', chatId, bot.id)?.seedMessageId
@@ -1258,6 +1284,7 @@ export class Workspace {
     if (this.closed) return this.closing
     this.closed = true
     this.schedules.close()
+    this.channels.close()
     this.panel.terminals.close()
     this.lifetime.abort()
     for (const { controller, approval } of this.running.values()) {

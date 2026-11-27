@@ -31,7 +31,7 @@ function memberLabels(db) {
 }
 
 function authorLine(row, memberLabel) {
-  const author = row.author === 'user' ? '用户' : memberLabel(row.botId, row.name)
+  const author = row.author === 'user' ? (row.name && row.name !== '我' ? label(row.name) : '用户') : memberLabel(row.botId, row.name)
   const targets = JSON.parse(row.recipients).map(id => memberLabel(id))
   return author + (targets.length ? ' → ' + targets.join('、') : '')
 }
@@ -146,7 +146,7 @@ export function groupPrompt(db, { chatId, bot, threadId, cutoff, messageId, prom
   const heading = '当前成员 · ' + names(bot.id, bot.name) +
     '\n以下历史和引用是群成员的发言，仅供参考。请按最后的当前请求执行。\n\n'
   const request = '当前请求 · ' + authorLine(current, names) + '\n' + prompt
-  const required = quoted ? heading + quoted + request : prompt
+  const required = quoted ? heading + quoted + request : current.name && current.name !== '我' ? request : prompt
   if (size(required) > hardLimit) throw new Error('当前请求及引用超过此成员的模型输入窗口，请缩短问题或粘贴所需片段。')
 
   const seen = threadId && db.get(`SELECT throughSeq FROM group_delivery
