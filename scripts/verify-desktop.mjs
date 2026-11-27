@@ -137,6 +137,11 @@ async function verifyProfile(page, nav, main) {
   await expect(main.getByRole('heading', { name: '用户', level: 1 })).toBeVisible()
   await expect(main.getByText('累计 Token 数', { exact: true })).toBeVisible()
   await expect(main.getByText(/精选作品|个人作品|创建站点/)).toHaveCount(0)
+  for (const name of ['每周', '累计总量', '每天']) {
+    const mode = main.getByRole('button', { name, exact: true })
+    await mode.click()
+    await expect(mode).toHaveAttribute('aria-pressed', 'true')
+  }
   await main.getByRole('button', { name: '后退' }).click()
   await expect(link).toBeVisible()
   await page.getByRole('button', { name: '前进' }).click()

@@ -74,11 +74,11 @@
   overflow-wrap: anywhere;
 }
 .profile-metrics > div + div { border-inline-start: 1px solid var(--line); }
-.profile-metrics dt, .profile-insights dt, .profile-empty { color: var(--muted); }
+.profile-metrics dt, .profile-insights dt, .profile-empty, .profile-note { color: var(--muted); }
 .profile-metrics dd, .profile-insights dd { font-variant-numeric: tabular-nums; }
 .profile-section { margin-top: 42px; }
 .profile-section h2 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 550; }
-.profile-empty { font-size: 13px; line-height: 20px; margin: 16px 0 0; }
+.profile-note, .profile-empty { font-size: 13px; line-height: 20px; margin: 16px 0 0; }
 .profile-plugins {
   display: flex;
   flex-wrap: wrap;

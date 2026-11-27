@@ -46,7 +46,7 @@ export function SettingsNavigation({ page, select, searchRef }) {
   const results = useRef(null);
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const profileGroup = { title: ["个人资料", "Profile"], items: [
-    ["profile", ProfileAvatar, profile.displayName, profile.displayName, `${profile.username} 头像 用户名 Token 统计 avatar username stats`],
+    ["profile", ProfileAvatar, profile.displayName, profile.displayName, `${profile.username} 头像 用户名 Token 活动 统计 avatar username activity stats`],
   ] };
   const filtered = [profileGroup, ...groups].map(({title, items}) => ({
     title,

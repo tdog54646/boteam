@@ -4,6 +4,7 @@ import { usePreferences } from "./preferences";
 import { Button, errorText, Field, Modal, Notice, Spinner } from "./ui";
 import { describeModel } from "./NativeModelPicker";
 import { ProfileAvatar } from "./ProfileAvatar";
+import { ProfileActivity } from "./ProfileActivity";
 import "./profile.css";
 
 function formatDuration(ms, t) {
@@ -117,6 +118,13 @@ export function ProfilePage({ state, invoke }) {
               <dt>{label}</dt><dd>{value}</dd>
             </div>)}
           </dl>
+          <section className="profile-section">
+            <ProfileActivity daily={stats.dailyTokens}/>
+            {stats.undatedTokens > 0 && <p className="profile-note">
+              {t(`另有 ${number.format(stats.undatedTokens)} 个历史 Token 仅计入累计用量。`,
+                `${number.format(stats.undatedTokens)} historical tokens are included only in total usage.`)}
+            </p>}
+          </section>
           <section className="profile-section">
             <h2>{t("热门插件", "Top plugins")}</h2>
             {stats.topPlugins.length ? <ul className="profile-plugins">
