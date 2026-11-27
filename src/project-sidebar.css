@@ -1,9 +1,7 @@
 .project-sidebar {
   --rail-muted: color-mix(in srgb, var(--fg) 61%, var(--surface));
 }
-@media (prefers-color-scheme: light) {
-  .project-sidebar { --selected: #eeefef; }
-}
+:root[data-appearance="light"] .project-sidebar { --selected: #eeefef; }
 .project-sidebar .sidebar-titlebar .icon-btn:first-child { margin-right: auto; }
 .project-sidebar .sidebar-titlebar { padding-right: 12px; }
 .project-sidebar .rail-primary, .project-sidebar .rail-history, .project-sidebar .rail-settings { padding-left: 10px; padding-right: 10px; }
@@ -101,9 +99,7 @@
 .project-dialog-footer .project-remove { color: var(--danger); background: color-mix(in srgb,var(--danger) 8%,var(--surface)); border-color: transparent; margin-right: auto; }
 .project-dialog-footer .project-remove:hover { background: color-mix(in srgb,var(--danger) 13%,var(--surface)); }
 .project-remove-message { color: var(--muted); font-size: 14px; line-height: 1.6; }
-@media (prefers-color-scheme: dark) {
-  .project-sidebar .quick-bot-icon { color: #96bf9e; }
-}
+:root[data-appearance="dark"] .project-sidebar .quick-bot-icon { color: #96bf9e; }
 @media (max-width: 620px) {
   .project-sidebar .rail-primary, .project-sidebar .rail-history, .project-sidebar .rail-settings { padding-left: 6px; padding-right: 6px; }
   .workbench-heading { gap: 1px; }
@@ -119,10 +115,8 @@
 .project-dialog-footer .btn.project-cancel { color: var(--muted); background: transparent; }
 .project-dialog-footer .btn.project-cancel:hover { background: var(--hover); }
 .search-result-project { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--subtle); }
-@media (prefers-color-scheme: dark) {
-  .project-dialog-shell .modal-veil { background: rgb(0 0 0 / 34%); }
-  .project-dialog-shell .modal { box-shadow: var(--popover-shadow); }
-}
+:root[data-appearance="dark"] .project-dialog-shell .modal-veil { background: rgb(0 0 0 / 34%); }
+:root[data-appearance="dark"] .project-dialog-shell .modal { box-shadow: var(--popover-shadow); }
 .chat-action-menu.cam-project { width: min(174px, calc(100vw - 10px)); padding: 4px; border-radius: 12px; background: var(--surface); }
 .cam-project button { min-height: 28px; padding: 3px 8px; }
 .cam-project button:disabled { opacity: .43; }

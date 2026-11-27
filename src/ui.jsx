@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useEffect, useRef } from "react";
 import {
   Asterisk,
@@ -36,10 +37,10 @@ export const errorText = (error) =>
     "",
   );
 const statusNames = {
-  ready: "可运行",
-  login: "需要登录",
-  missing: "未安装",
-  blocked: "执行受限",
+  ready: ["可运行", "Ready"],
+  login: ["需要登录", "Sign-in required"],
+  missing: ["未安装", "Not installed"],
+  blocked: ["执行受限", "Restricted"],
 };
 
 export function Brand() {
@@ -68,10 +69,11 @@ export function ProviderIcon({ provider, size = "normal" }) {
   );
 }
 export function Status({ status, label }) {
+  const tr = useLanguage();
   return (
     <span className={`status ${status || "unknown"}`}>
       <i />
-      {label || statusNames[status] || "待核实"}
+      {label || tr(...(statusNames[status] || ["待核实", "Unverified"]))}
     </span>
   );
 }
@@ -119,6 +121,7 @@ export function Notice({ children }) {
   ) : null;
 }
 export function Modal({ title, subtitle, children, onClose, wide = false }) {
+  const tr = useLanguage();
   const ref = useRef(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -175,7 +178,7 @@ export function Modal({ title, subtitle, children, onClose, wide = false }) {
             <h2>{title}</h2>
             {subtitle && <p>{subtitle}</p>}
           </div>
-          <IconButton icon={X} label="关闭" onClick={onClose} />
+          <IconButton icon={X} label={tr("关闭", "Close")} onClick={onClose} />
         </header>
         {children}
       </section>

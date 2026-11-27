@@ -34,29 +34,27 @@
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --canvas: #181818;
-    --surface: #282828;
-    --sidebar: #1c2225;
-    --under: #1e1e1e;
-    --fg: #dfdfdf;
-    --line: rgb(255 255 255 / 8%);
-    --line-strong: rgb(255 255 255 / 16%);
-    --hover: rgb(255 255 255 / 5%);
-    --selected: rgb(255 255 255 / 9%);
-    --accent: #71adff;
-    --success: #69be8a;
-    --warning: #e2b373;
-    --danger: #f18e8e;
-    --solid: #ececec;
-    --on-solid: #171717;
-    --popover-shadow:
-      0 0 0 0.5px rgb(255 255 255 / 15%), 0 7px 40px rgb(0 0 0 / 42%);
-    --composer-shadow:
-      0 0 0 0.5px rgb(255 255 255 / 16%), 0 3px 7.5px #0000000a,
-      0 0 20px #0000000d;
-  }
+:root[data-appearance="dark"] {
+  --canvas: #181818;
+  --surface: #282828;
+  --sidebar: #1c2225;
+  --under: #1e1e1e;
+  --fg: #dfdfdf;
+  --line: rgb(255 255 255 / 8%);
+  --line-strong: rgb(255 255 255 / 16%);
+  --hover: rgb(255 255 255 / 5%);
+  --selected: rgb(255 255 255 / 9%);
+  --accent: #71adff;
+  --success: #69be8a;
+  --warning: #e2b373;
+  --danger: #f18e8e;
+  --solid: #ececec;
+  --on-solid: #171717;
+  --popover-shadow:
+    0 0 0 0.5px rgb(255 255 255 / 15%), 0 7px 40px rgb(0 0 0 / 42%);
+  --composer-shadow:
+    0 0 0 0.5px rgb(255 255 255 / 16%), 0 3px 7.5px #0000000a,
+    0 0 20px #0000000d;
 }
 *,
 *::before,
