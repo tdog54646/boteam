@@ -23,6 +23,7 @@ import { ChannelNavigation, Channels } from "./Channels";
 import { ScheduleNavigation, SchedulesPage, scheduleCreatePages } from "./Schedules";
 import { ArchivedChats, HistoryButtons, SidebarTitlebar, WorkspaceNavigation } from "./WorkspaceNavigation";
 import { SettingsNavigation, settingsPages } from "./SettingsNavigation";
+import { AppSettings } from "./AppSettings";
 import { useLanguage } from "./preferences";
 import { hasComposerDraft, pruneComposerDrafts } from "./composerDrafts";
 import {
@@ -378,6 +379,11 @@ export default function App() {
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
   }, [ready, state.onboarded, dialog, newChat, page]);
+  const language = t("zh-CN", "en");
+  useEffect(() => {
+    if (ready && state.desktopNotificationsSupported)
+      invoke("syncNotificationLanguage", { language }).catch(e => setError(errorText(e)));
+  }, [ready, language, state.desktopNotificationsSupported]);
   const wizard = ready && !state.onboarded;
   const chat = state.chats.find((c) => c.id === chatIdForPage(page));
   const agents = useMemo(() => listSubagents(chat?.id, state.tasks, state.bots, state.accounts),
@@ -623,6 +629,8 @@ export default function App() {
           <Channels state={state} invoke={invoke} refreshSnapshot={refresh} select={select}/>
         ) : schedulePage ? (
           <SchedulesPage state={state} page={page} invoke={invoke} select={select} refresh={refresh} open={setDialog}/>
+        ) : ["general", "appearance", "notifications"].includes(page) ? (
+          <AppSettings key={page} page={page} state={state} invoke={invoke} refresh={refresh}/>
         ) : page === "archived" ? (
           <ArchivedChats state={state} select={select} action={actions.act}/>
         ) : page === "local-accounts" ? (

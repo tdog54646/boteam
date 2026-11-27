@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Contrast, Globe, Type } from "lucide-react";
 import { ActionMenu } from "./ActionMenu";
-import { choices, usePreferences } from "./preferences";
+import { choices, preferenceLabels, usePreferences } from "./preferences";
 import "./user-menu.css";
 
 export function UserMenu() {
@@ -10,16 +10,7 @@ export function UserMenu() {
   const { t } = prefs;
   const user = t("用户", "User");
   const initial = t("用", "U");
-  const labels = {
-    system: t("跟随系统", "System"),
-    light: t("浅色", "Light"),
-    dark: t("深色", "Dark"),
-    small: t("小", "Small"),
-    standard: t("标准", "Standard"),
-    large: t("大", "Large"),
-    "zh-CN": "简体中文",
-    en: "English",
-  };
+  const labels = preferenceLabels(t);
   const sections = [
     ["theme", t("主题", "Theme"), Contrast],
     ["fontSize", t("字号", "Font size"), Type],

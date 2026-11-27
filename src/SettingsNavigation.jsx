@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { Archive, Bot, Search, Settings, WalletCards, ScanLine, X } from "lucide-react";
+import { Archive, Bell, Bot, Search, Settings, Sun, WalletCards, ScanLine, X } from "lucide-react";
 import { useLanguage } from "./preferences";
 
 const groups = [
@@ -9,6 +9,11 @@ const groups = [
   { title: ["账号管理", "Accounts"], items: [
     ["accounts", WalletCards, "订阅账号", "Subscription accounts", "订阅账号 添加 搜索 账号维护 备注 状态 绑定 Bot 重新授权 移除 CLI 登录 sign in subscription reauthorize"],
     ["local-accounts", ScanLine, "本机配置", "Local configurations", "检测 导入本机账号 订阅账号来源 授权 原生 CLI 登录 Codex Claude Code Antigravity import local accounts scan profiles"],
+  ] },
+  { title: ["应用", "App"], items: [
+    ["general", Settings, "常规", "General", "界面语言 简体中文 英文 英语 English language"],
+    ["appearance", Sun, "外观", "Appearance", "视觉样式 配色模式 主题 字号 字体大小 浅色 深色 暗色 夜间 跟随系统 visual style color mode theme font size light dark system"],
+    ["notifications", Bell, "通知", "Notifications", "任务完成 运行失败 等待审批 定时任务 桌面提醒 approval failed complete schedule alerts"],
   ] },
   { title: ["数据与隐私", "Data & privacy"], items: [
     ["archived", Archive, "已归档会话", "Archived chats", "聊天 恢复 取消归档 永久删除 archive restore delete"],

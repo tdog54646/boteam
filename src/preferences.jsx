@@ -6,6 +6,18 @@ export const choices = {
   fontSize: ["small", "standard", "large"],
   language: ["zh-CN", "en"],
 };
+export function preferenceLabels(t) {
+  return {
+    system: t("跟随系统", "System"),
+    light: t("浅色", "Light"),
+    dark: t("深色", "Dark"),
+    small: t("小", "Small"),
+    standard: t("标准", "Standard"),
+    large: t("大", "Large"),
+    "zh-CN": "简体中文",
+    en: "English",
+  };
+}
 const defaults = { theme: "system", fontSize: "standard", language: "zh-CN" };
 const fontScales = { small: 0.92, standard: 1, large: 1.15 };
 const chinese = (zh) => zh;
