@@ -35,6 +35,12 @@
     "vite": "^8.3.8"
   },
   "dependencies": {
-    "node-pty": "1.1.0"
+    "@larksuiteoapi/node-sdk": "1.77.0",
+    "@tencent-connect/qqbot-nodejs": "1.0.6",
+    "@wecom/aibot-node-sdk": "1.0.7",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "node-pty": "1.1.0",
+    "qrcode": "1.5.4",
+    "re2js": "2.10.0"
   }
 }
