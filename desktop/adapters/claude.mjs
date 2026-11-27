@@ -318,6 +318,9 @@ const builtins = new Set([
   'AskUserQuestion',
   'ExitPlanMode',
 ])
+function toolName(name) {
+  return builtins.has(name) ? name : '原生工具'
+}
 function claudeToolEvent(block, status = 'running') {
   const name = block?.name
   const input = block?.input || {}
@@ -805,7 +808,7 @@ async function nativeSession(
       if (message.type === 'control_request') {
         const req = message.request || {}
         const detail = actionDetail(req)
-        const label = builtins.has(req.tool_name) ? req.tool_name : '原生工具'
+        const label = toolName(req.tool_name)
         let ok = false
         if (req.subtype === 'can_use_tool') {
           if (

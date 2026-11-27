@@ -282,6 +282,14 @@ async function observeAgents(t, frames, prepare, afterClose = [], { signal, onEv
   return events
 }
 
+test('Claude can finish turns that invoke a generic built-in or an unfamiliar tool', async t => {
+  const events = await observeAgents(t, [
+    nativeAssistant([agentTool('generic', 'Choose an option', 'AskUserQuestion')]),
+    nativeAssistant([agentTool('custom', 'Record a task', 'TodoWrite')]),
+  ])
+  assert.deepEqual(events.filter(e => e.callId && e.status === 'running').map(e => e.label), ['AskUserQuestion', '原生工具'])
+})
+
 test('Claude forwards visible child messages from Agent and nested Task without duplicating parent streaming', async t => {
   const userId = '12ffa329-fcd8-42c4-926b-4d57fc8bde06'
   const answerId = '22ffa329-fcd8-42c4-926b-4d57fc8bde06'
