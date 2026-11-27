@@ -1,7 +1,7 @@
 import React, { useRef, useState } from "react";
 import {
-  Archive, Bell, Blocks, Bot, Cable, Gauge, MessagesSquare, Search, Settings,
-  Sun, WalletCards, ScanLine, X,
+  Archive, Bell, Blocks, Bot, Cable, FolderTree, Gauge, GitBranch, MessagesSquare,
+  Search, Settings, ShieldCheck, Sun, WalletCards, ScanLine, X,
 } from "lucide-react";
 import { ShortcutSymbol } from "./ui";
 import { useLanguage } from "./preferences";
@@ -28,6 +28,11 @@ const groups = [
     ["integrations-channels", MessagesSquare, "频道配置", "Channels setup", "接入 访问控制 投递设置 配对 飞书 钉钉 企业微信 微信 Discord Telegram WeCom WeChat WhatsApp Feishu Lark QQ DingTalk"],
     ["extensions", Blocks, "插件与技能", "Plugins & skills", "扩展 应用 已安装 plugin skills apps extensions"],
     ["mcp", Cable, "MCP 服务器", "MCP servers", "工具 连接状态 认证 MCP servers tools status"],
+  ] },
+  { title: ["编码与权限", "Coding & permissions"], items: [
+    ["permissions", ShieldCheck, "工具审批与文件访问", "Tool & file permissions", "Bot 项目 默认权限 授权 沙箱 只读 approval sandbox access permissions"],
+    ["directories", FolderTree, "工作目录", "Working directories", "Bot 项目 默认目录 实际生效目录 文件夹 文件路径 project folder cwd directory"],
+    ["worktrees", GitBranch, "Git 工作树", "Git worktrees", "分支 项目 工作区 Git worktree branch repository"],
   ] },
 ];
 export const settingsPages = groups.flatMap(group => group.items.map(([id]) => id));
