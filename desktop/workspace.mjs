@@ -5,6 +5,7 @@ import { Database } from './database.mjs'
 import { beginChatTitle, applyNativeTitle, suggestChatTitle } from './chat-titles.mjs'
 import { WorkspacePanel } from './workspace-panel.mjs'
 import { attachmentPreview } from './panel-files.mjs'
+import { Schedules } from './schedules.mjs'
 import { Accounts } from './accounts.mjs'
 import { authExpiredError, isAuthExpiredError } from './auth-errors.mjs'
 import { redact } from './native.mjs'
@@ -102,6 +103,7 @@ export class Workspace {
     this.running = new Map()
     this.subagentReads = new Map()
     this.closed = false
+    this.schedules = new Schedules(this)
   }
   snapshot() {
     const permissionModes = Object.fromEntries(Object.entries(this.adapters)
@@ -109,7 +111,7 @@ export class Workspace {
     const state = this.db.snapshot()
     labelLegacySubagents(this.db, state.tasks, state.messages)
     for (const account of state.accounts) account.bindingRevision = this.bindingRevisions.get(account.id) || 0
-    return { ...state, permissionModes, nativeThreads: this.db.all('SELECT chatId,botId,threadId,cwd FROM threads') }
+    return { ...state, permissionModes, schedules: this.schedules.snapshot(), nativeThreads: this.db.all('SELECT chatId,botId,threadId,cwd FROM threads') }
   }
   invalidateCatalogs(accountId) {
     this.modelCatalogs.delete(accountId)
@@ -482,6 +484,7 @@ export class Workspace {
   async handle(method, p = {}, context = {}) {
     if (this.closed) throw new Error('工作台已关闭。')
     if (typeof method === 'string' && method.startsWith('panel')) return this.accountOperation(this.panel.handle(method, p, context.terminals))
+    if (typeof method === 'string' && method.startsWith('schedule:')) return this.accountOperation(this.schedules.handle(method, p))
     switch (method) {
       case 'snapshot':
         return this.snapshot()
@@ -1254,6 +1257,7 @@ export class Workspace {
   close() {
     if (this.closed) return this.closing
     this.closed = true
+    this.schedules.close()
     this.panel.terminals.close()
     this.lifetime.abort()
     for (const { controller, approval } of this.running.values()) {
