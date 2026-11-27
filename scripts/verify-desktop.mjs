@@ -4,6 +4,7 @@ import { mkdtemp, rm, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
+import { Workspace } from '../desktop/workspace.mjs'
 
 const live = process.argv.includes('--live-codex')
 const executable = process.env.BOTEAM_TEST_EXECUTABLE
@@ -22,6 +23,88 @@ async function launch() {
   page.setDefaultTimeout(25_000)
   return page
 }
+async function seedChannelHistory() {
+  const workspace = new Workspace({ root: userData, adapters: {} })
+  const chatId = 'fixture-telegram-chat'
+  const title = 'Telegram 验收会话'
+  const message = '这条历史消息来自隔离工作区。'
+  try {
+    workspace.db.transaction(() => {
+      workspace.db.run('INSERT INTO accounts(id,provider,identity,info) VALUES(?,?,?,?)',
+        'fixture-account', 'claude', 'fixture', JSON.stringify({ status: 'blocked' }))
+      workspace.db.run('INSERT INTO bots(id,accountId,name,cwd) VALUES(?,?,?,?)',
+        'fixture-bot', 'fixture-account', title, '')
+      for (const provider of ['codex', 'antigravity']) {
+        workspace.db.run('INSERT INTO accounts(id,provider,identity,info) VALUES(?,?,?,?)',
+          provider, provider, 'fixture', JSON.stringify({ status: 'blocked' }))
+        workspace.db.run('INSERT INTO bots(id,accountId,name,cwd) VALUES(?,?,?,?)',
+          provider, provider, provider, '')
+      }
+      // Mimic an existing offline binding without starting an IM transport.
+      workspace.db.run('INSERT INTO channels(id,botId,enabled,credentials,generation) VALUES(?,?,0,?,?)',
+        'telegram', 'fixture-bot', Buffer.alloc(0), 'fixture-generation')
+      workspace.insertChat(chatId, { kind: 'direct', members: ['fixture-bot'] })
+      workspace.db.run('INSERT INTO channel_chats(channel,identity,room,sender,botId,chatId) VALUES(?,?,?,?,?,?)',
+        'telegram', 'fixture', 'room', 'sender', 'fixture-bot', chatId)
+      workspace.db.run('INSERT INTO messages(id,chatId,author,name,text,createdAt,recipients) VALUES(?,?,?,?,?,?,?)',
+        'fixture-message', chatId, 'user', '频道用户', message, new Date().toISOString(), JSON.stringify(['fixture-bot']))
+    })
+    return { title, message }
+  } finally {
+    await workspace.close()
+  }
+}
+
+async function verifyChannelPermissions(page) {
+  const manage = page.locator('[data-channel="telegram"]').getByRole('button')
+  await manage.click()
+  const dialog = page.getByRole('dialog')
+  const bot = dialog.getByRole('combobox', { name: '接收消息的 Bot' })
+  const permission = dialog.getByRole('combobox', { name: '操作权限' })
+  for (const [id, mode, excluded] of [
+    ['fixture-bot', 'edits', 'full'],
+    ['codex', 'read-only', 'edits'],
+    ['antigravity', 'edits', 'full'],
+  ]) {
+    await bot.selectOption(id)
+    await expect(permission).toBeEnabled()
+    await expect(permission.locator(`option[value="${mode}"]`)).toHaveCount(1)
+    await expect(permission.locator(`option[value="${excluded}"]`)).toHaveCount(0)
+    await permission.selectOption(mode)
+    await expect.poll(() => page.evaluate(async () =>
+      (await window.boteam.invoke('snapshot')).channels.find(c => c.id === 'telegram')?.permission)).toBe(mode)
+  }
+  await page.keyboard.press('Escape')
+  await manage.click()
+  await expect(permission).toHaveValue('edits')
+  await page.keyboard.press('Escape')
+}
+
+async function verifyScheduledTask(page) {
+  const sidebar = page.locator('.schedule-sidebar')
+  const main = page.getByRole('main')
+  await expect(sidebar.getByText('暂无任何定时任务')).toBeVisible()
+  await expect(main.getByRole('heading', { name: '安排任务' })).toBeVisible()
+  const templateNames = ['寻找周末读物', '价格提醒', '查找音乐演出', '帮我安排周末', '每周饮食计划', '每周财务状况更新']
+  for (const name of templateNames)
+    await expect(main.getByRole('button', { name: new RegExp(name) })).toBeVisible()
+  await main.getByRole('button', { name: /寻找周末读物/ }).click()
+  const name = page.getByLabel('任务名称', { exact: true })
+  await expect(name).toHaveValue('寻找周末读物')
+  await expect(page.getByRole('combobox', { name: '频率', exact: true })).toHaveValue('weekly')
+  const title = '周末读物验收'
+  await name.fill(title)
+  await page.getByRole('button', { name: '创建任务', exact: true }).click()
+  await expect(sidebar.getByText(title, { exact: true })).toBeVisible()
+  await expect(main.getByRole('heading', { name: title, exact: true })).toBeVisible()
+  await page.reload()
+  await expect(main.getByRole('heading', { name: title, exact: true })).toBeVisible()
+  await main.getByRole('button', { name: '暂停', exact: true }).click()
+  await expect(main.getByRole('button', { name: '启用', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '定时任务', exact: true }).click()
+  await expect(main.getByRole('heading', { name: '安排任务' })).toBeVisible()
+}
+
 async function selectNativeSettings(page) {
   const catalog = await page.evaluate(async () => {
     const { accounts } = await window.boteam.invoke('snapshot')
@@ -131,17 +214,130 @@ try {
     console.log(`通过桌面导入、原生选项选择（${settings.model} · ${settings.effort}）、真实 Codex 私聊、运行身份、重启后设置保留及原生续聊。`)
   } else {
     await page.getByRole('button', { name: '暂时跳过' }).click()
+    await page.getByRole('button', { name: '设置', exact: true }).click()
     await page.getByRole('button', { name: '账号管理', exact: true }).click()
+    await page.getByRole('button', { name: '首页', exact: true }).click()
     await page.getByRole('button', { name: '新建对话', exact: true }).click()
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(page.getByRole('heading', { name: '连接你的 AI 账号' })).toBeVisible()
     expect(await page.evaluate(async () => (await window.boteam.invoke('snapshot')).chats.length)).toBe(0)
+    await page.getByRole('button', { name: '设置', exact: true }).click()
     await page.getByRole('button', { name: '账号管理', exact: true }).click()
     await expect(page.getByRole('heading', { name: '账号管理', exact: true })).toBeVisible()
     await app.close()
     page = await launch()
     await expect(page.getByRole('heading', { name: '账号管理', exact: true })).toBeVisible()
-    console.log('通过：桌面应用首次启动、跳过向导、账号页和重启恢复。')
+    const button = name => page.getByRole('button', { name, exact: true })
+    await button('首页').click()
+    const sidebar = page.locator('.sidebar')
+    const sideButton = name => sidebar.getByRole('button', { name, exact: true })
+    await expect(sideButton('新建对话')).toBeVisible()
+    const homeWidth = (await sidebar.boundingBox()).width
+    const titlebar = sidebar.locator('.sidebar-titlebar')
+    const homeTitlebar = await titlebar.boundingBox()
+    const configLink = sidebar.getByRole('button', { name: /频道配置/ })
+
+    await button('频道').click()
+    await expect(configLink).toBeVisible()
+    await expect(sideButton('新建对话')).toHaveCount(0)
+    expect((await sidebar.boundingBox()).width).toBe(homeWidth)
+    expect(await titlebar.boundingBox()).toEqual(homeTitlebar)
+    await sideButton('后退').click()
+    await expect(button('首页')).toHaveAttribute('aria-current', 'page')
+    await expect(sideButton('新建对话')).toBeVisible()
+    await sideButton('前进').click()
+    await expect(configLink).toBeVisible()
+
+    const cards = page.locator('.channel-card')
+    const platformNames = ['WeChat', 'WeCom', 'QQ', 'Feishu / Lark', 'DingTalk', 'Telegram', 'Discord', 'WhatsApp']
+    await expect(cards).toHaveCount(platformNames.length)
+    for (const name of platformNames) {
+      await expect(sideButton(name)).toBeVisible()
+      await expect(cards.getByRole('button', { name: '配置 ' + name, exact: true })).toBeVisible()
+    }
+    const catalogSearch = page.getByRole('searchbox', { name: '搜索频道' })
+    await catalogSearch.fill('WeCom')
+    await expect(cards).toHaveCount(1)
+    await expect(sideButton('Telegram')).toBeVisible()
+    await cards.getByRole('button', { name: '配置 WeCom' }).click()
+    const channelDialog = page.getByRole('dialog')
+    await expect(channelDialog.getByRole('textbox', { name: /Bot ID/i })).toBeVisible()
+    await expect(channelDialog.locator('input[type=password]')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(channelDialog).toHaveCount(0)
+    await catalogSearch.fill('')
+    await sideButton('搜索频道会话').click()
+    const chatSearch = sidebar.getByRole('searchbox', { name: '搜索频道会话' })
+    await chatSearch.fill('Telegram')
+    await expect(sideButton('Telegram')).toBeVisible()
+    await expect(sideButton('WeCom')).toHaveCount(0)
+    await expect(cards).toHaveCount(platformNames.length)
+    await sideButton('搜索频道会话').click()
+    await expect(chatSearch).toHaveCount(0)
+    await expect(sideButton('WeCom')).toBeVisible()
+
+    await sideButton('有会话').click()
+    await expect(sideButton('Telegram')).toHaveCount(0)
+    await sideButton('已连接').click()
+    await expect(sideButton('Telegram')).toHaveCount(0)
+    await sideButton('全部').click()
+    const telegramGroup = sideButton('Telegram')
+    await telegramGroup.focus()
+    await telegramGroup.press('Enter')
+    await expect(telegramGroup).toHaveAttribute('aria-expanded', 'true')
+    await expect(sidebar.getByText('暂无会话', { exact: true })).toBeVisible()
+    await expect(cards).toHaveCount(platformNames.length)
+    await telegramGroup.press('Space')
+    await expect(telegramGroup).toHaveAttribute('aria-expanded', 'false')
+    await sideButton('收起侧栏').click()
+    await expect(sidebar).toHaveCount(0)
+    await button('展开侧栏').click()
+    await expect(configLink).toBeVisible()
+
+    const initialSize = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize())
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(800, 560))
+    await expect(configLink).toBeInViewport()
+    await button('配置 WeCom').click()
+    await expect(channelDialog).toBeInViewport()
+    await page.keyboard.press('Escape')
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await app.evaluate(({ BrowserWindow }, [width, height]) => BrowserWindow.getAllWindows()[0].setSize(width, height), initialSize)
+    await button('首页').click()
+    await expect(sideButton('新建对话')).toBeVisible()
+    await expect(configLink).toHaveCount(0)
+
+    await button('频道').click()
+    await app.close()
+    const history = await seedChannelHistory()
+    page = await launch()
+    const channelSidebar = page.locator('.sidebar')
+    const telegram = channelSidebar.getByRole('button', { name: 'Telegram', exact: true })
+    await expect(telegram).toBeVisible()
+    if (await telegram.getAttribute('aria-expanded') === 'false') await telegram.click()
+    const channelChat = channelSidebar.getByRole('button', { name: history.title, exact: true })
+    await channelChat.click()
+    await expect(channelChat).toHaveAttribute('aria-current', 'page')
+    await expect(button('频道')).toHaveAttribute('aria-current', 'page')
+    const main = page.getByRole('main')
+    await expect(main.getByRole('log').getByRole('article').filter({ hasText: history.message })).toBeVisible()
+    await channelSidebar.getByRole('button', { name: /频道配置/ }).click()
+    await expect(main.locator('.channel-card')).toHaveCount(platformNames.length)
+    await verifyChannelPermissions(page)
+    await button('设置').click()
+    await button('Bot 管理').click()
+    await expect(page.getByRole('heading', { name: 'Bot 管理', exact: true })).toBeVisible()
+    await button('定时任务').click()
+    await expect(page.getByRole('heading', { name: '定时任务', exact: true })).toBeVisible()
+    await verifyScheduledTask(page)
+    await button('用户').click()
+    await page.getByRole('menuitem', { name: '语言' }).hover()
+    await page.getByRole('menuitemradio', { name: 'English' }).click()
+    await page.reload()
+    await expect(button('Schedules')).toHaveAttribute('aria-current', 'page')
+    await button('Settings').click()
+    await button('Archived chats').click()
+    await expect(page.getByText('No archived chats', { exact: true })).toBeVisible()
+    console.log('通过：首次启动、账号与 Bot 设置、频道聊天与操作权限、定时任务模板与管理、语言偏好及重启恢复。')
   }
 } finally {
   await app?.close().catch(() => {})
