@@ -59,6 +59,10 @@ npm start
 
 `npm test` 运行离线回归测试。`npm run verify:desktop` 打开临时数据目录中的真实桌面窗口，验证首次启动、跳过向导和重启。`npm run package` 在 `release/` 生成可独立打开的应用。如果打包时 BoTeam 已经打开，等当前任务结束后按 ⌘Q 退出，再打开新包。仅重新双击会唤回原进程，群聊功能更新和旧消息迁移要在新版启动后才会生效。
 
+macOS 本机打包首次会下载并校验固定版本的 `rcodesign`，在 `~/Library/Application Support/BoTeam Build/identity.pem` 创建该用户专属的签名证书和私钥。后续打包会复用它。请妥善保管这个文件，迁移构建机器时通过安全方式恢复并设为权限 `600`。更换签名身份后，系统会重新请求钥匙串授权。
+
+正式分发可将 `BOTEAM_MAC_SIGN_IDENTITY` 设为钥匙串中的 `Developer ID Application` 证书名称或 SHA-1 指纹后打包，后续版本使用同一开发团队。可用 `node scripts/verify-mac-keychain.mjs 旧版.app 新版.app` 在独立测试钥匙串验证两个不同构建之间的授权。
+
 已登录可用 Codex 订阅的开发者还可以运行以下验收。它会在界面为 Bot 选择原生模型和推理强度，使用订阅发送两条短消息，并在中间退出、重启应用。验收检查原生工具确认的设置、实际账号及上文回忆，最后清理临时数据。
 
 ```sh
