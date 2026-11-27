@@ -190,7 +190,7 @@ export class Workspace {
     }
     throw new Error('原生工作目录已不存在，请恢复目录或新建会话。')
   }
-  nativeContext({ chatId, botId, draft, settings: draftSettings }) {
+  nativeContext({ chatId, botId, draft, settings: draftSettings, catalogProject }) {
     const bot = chatId ? this.composer.member(chatId, botId) : this.bot(botId)
     const account = this.db.account(bot.accountId)
     if (this.accounts.updating.has(account.id) || account.status !== 'ready')
@@ -198,7 +198,9 @@ export class Workspace {
     const thread = chatId && this.db.get(
       'SELECT threadId,cwd,accountId FROM threads WHERE chatId=? AND botId=?', chatId, botId)
     if (thread && thread.accountId !== account.id) throw new Error('原生会话与绑定账号不符。')
-    const cwd = this.chatDirectory(chatId, bot, draft)
+    if (catalogProject && (chatId || draft || !catalogProject.projectId))
+      throw new Error('项目目录只能用于未绑定会话的设置查询。')
+    const cwd = catalogProject ? draftProjectCwd(this.db, catalogProject) : this.chatDirectory(chatId, bot, draft)
     const settings = chatId ? this.composer.read(chatId, bot) : draft && draftSettings !== undefined
       ? draftActionSettings(draftSettings, bot, this.adapters[account.provider]) : {}
     return {
@@ -234,7 +236,7 @@ export class Workspace {
       catalogs = new Map()
       this.actionCatalogs.set(accountId, catalogs)
     }
-    const slot = JSON.stringify([p.chatId || null, p.draft?.id || null, p.botId])
+    const slot = JSON.stringify([p.chatId || null, p.draft?.id || null, p.botId, p.catalogProject ? scope.cwd : null])
     const key = actionCatalogKey(scope)
     let entry = catalogs.get(slot)
     if (entry?.key !== key) entry = { key, result: null, pending: null }
@@ -267,10 +269,14 @@ export class Workspace {
   }
   async slashInfo(p) {
     const name = slashName(p.name)
+    const accountId = this.bot(p.botId).accountId
+    const revision = this.bindingRevisions.get(accountId)
     const scope = await this.nativeScope(p)
     const adapter = this.adapters[scope.account.provider]
     if (!adapter.slashInfo) throw new Error('此工具未提供该命令的状态面板。')
     const result = await adapter.slashInfo(scope, { name })
+    if (revision !== this.bindingRevisions.get(accountId) || actionCatalogKey(scope) !== actionCatalogKey(this.nativeContext(p)))
+      throw new Error('账号或工作目录已变化，请重新读取状态。')
     return { title: required(result.title, 200),
       lines: result.lines.slice(0, 300).map(line => redact(String(line)).slice(0, 1000)) }
   }

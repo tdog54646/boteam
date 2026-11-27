@@ -540,3 +540,31 @@ test('fork binds an independent direct thread to its source member and keeps bot
     assert.equal(reopened.snapshot().chats.filter(c => c.sourceChatId === group).length, 1)
   } finally { await reopened.close() }
 })
+
+test('settings catalogs and MCP status use registered project folders without creating chats', async t => {
+  const { app, bot, dm } = await fixture(t, {
+    composerActions: async scope => ({ extensions: [{ id: scope.cwd, label: scope.bot.name }], slashCommands: [] }),
+    slashInfo: async scope => ({ title: 'MCP', lines: [scope.cwd] }),
+  })
+  const directory = await mkdtemp(join(tmpdir(), 'boteam-settings-scope-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const projectId = await app.handle('createProject', { name: 'Scope', folders: [directory] })
+  const folder = app.snapshot().projects.find(p => p.id === projectId).folders[0]
+  const before = app.snapshot().chats.length
+  const scope = { botId: bot, catalogProject: { projectId, folder } }
+  const result = await app.handle('composerActions', scope)
+  assert.equal(result.extensions[0].id, folder)
+  assert.deepEqual(await app.handle('slashInfo', { ...scope, name: 'mcp' }), { title: 'MCP', lines: [folder] })
+  assert.equal(app.snapshot().chats.length, before)
+  await assert.rejects(app.handle('composerActions', { ...scope, chatId: dm }), /会话/)
+  await assert.rejects(app.handle('composerActions', { ...scope, catalogProject: { projectId, folder: tmpdir() } }), /项目/)
+  const second = await mkdtemp(join(tmpdir(), 'boteam-settings-scope-'))
+  t.after(() => rm(second, { recursive: true, force: true }))
+  const projectScope = { botId: bot, catalogProject: { projectId }, name: 'mcp' }
+  assert.deepEqual((await app.handle('slashInfo', projectScope)).lines, [folder])
+  await app.handle('updateProject', { projectId, name: 'Scope', folders: [second, folder] })
+  const primary = app.snapshot().projects.find(p => p.id === projectId).folders[0]
+  assert.notEqual(primary, folder)
+  assert.deepEqual((await app.handle('slashInfo', projectScope)).lines, [primary])
+  assert.equal((await app.handle('composerActions', scope)).extensions[0].id, folder)
+})
