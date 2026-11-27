@@ -1,25 +1,32 @@
 import React, { useState } from "react";
-import { Bot, ChevronDown, WalletCards, Plus, UsersRound } from "lucide-react";
+import { Bot, BotMessageSquare, ChevronDown, WalletCards, Plus, UsersRound } from "lucide-react";
 import { Button, accountLabel, ProviderIcon } from "./ui";
+import { useLanguage } from "./preferences";
 import { Composer } from "./Composer";
 
 export function Home({ state, invoke, open, draft, members, setSelection, firstProject,
   onSent, onNewDraft, sourceControl, onDraftFiles }) {
+  const t = useLanguage();
+  const project = state.projects.find(p => p.id === firstProject?.projectId);
   const bots = state.bots.filter((b) => !b.archived);
   const [busy, setBusy] = useState(false);
   const bot = members[0];
   const group = draft?.kind === "group";
   const account = state.accounts.find((a) => a.id === bot?.accountId);
+  let heading = state.accounts.length ? t("创建你的第一个 Bot", "Create your first bot") : t("连接你的 AI 账号", "Connect your AI account");
+  if (group) heading = draft.name || t("新群聊", "New group chat");
+  else if (draft) {
+    if (!bot) heading = t("此 Bot 已归档", "This bot is archived");
+    else if (project) heading = t(`你想让我们在 ${project.name} 中构建什么？`, `What should we build in ${project.name}?`);
+    else heading = t("有什么需要帮忙？", "What can we help you with?");
+  }
   return (
-    <div className="home">
+    <div className={draft ? "home home-draft" : "home"}>
       <div className="home-stack">
-        <h1>
-          {draft
-            ? group ? draft.name || "新群聊" : bot ? "有什么需要帮忙？" : "此 Bot 已归档"
-            : state.accounts.length
-              ? "创建你的第一个 Bot"
-              : "连接你的 AI 账号"}
-        </h1>
+        <div className="home-heading">
+          <BotMessageSquare className="home-mark" size={47} strokeWidth={1.35} aria-hidden="true"/>
+          <h1>{heading}</h1>
+        </div>
         {draft ? (
           <Composer
             key={draft.legacyHome ? "home:" + draft.members[0] : draft.id}
@@ -38,8 +45,8 @@ export function Home({ state, invoke, open, draft, members, setSelection, firstP
           <>
             <p className="home-description">
               {state.accounts.length
-                ? "选择订阅账号并为 Bot 命名，即可开始聊天。"
-                : "导入本机已登录的订阅账号，创建可以私聊和加入群聊的 Bot。"}
+                ? t("选择订阅账号并为 Bot 命名，即可开始聊天。", "Choose a CLI account and name your bot to start chatting.")
+                : t("导入本机已登录的订阅账号，创建可以私聊和加入群聊的 Bot。", "Import a local CLI account to create a bot for direct or group chats.")}
             </p>
             <Button
               variant="primary"
@@ -48,7 +55,7 @@ export function Home({ state, invoke, open, draft, members, setSelection, firstP
                 open({ type: state.accounts.length ? "bot" : "import" })
               }
             >
-              {state.accounts.length ? "创建 Bot" : "导入本机账号"}
+              {state.accounts.length ? t("创建 Bot", "Create bot") : t("导入本机账号", "Import local account")}
             </Button>
           </>
         )}
@@ -57,12 +64,12 @@ export function Home({ state, invoke, open, draft, members, setSelection, firstP
             provider={state.accounts.find(a => a.id === member.accountId)?.provider} />{member.name}</span>)}</div>}
         {bot && !group && (
           <div className="home-context">
-            {setSelection ? <label className="bot-picker" title="选择接收 Bot">
+            {setSelection ? <label className="bot-picker" title={t("选择接收 Bot", "Select recipient bot")}>
               <Bot size={15} />
               <span>{bot.name}</span>
               <ChevronDown size={12} />
               <select
-                aria-label="选择接收 Bot"
+                aria-label={t("选择接收 Bot", "Select recipient bot")}
                 value={bot.id}
                 disabled={busy}
                 onChange={(e) => setSelection(e.target.value)}
@@ -83,7 +90,7 @@ export function Home({ state, invoke, open, draft, members, setSelection, firstP
             </span>
             <button onClick={() => open({ type: "chat", kind: "group", projectId: firstProject?.projectId })}>
               <UsersRound size={14} />
-              新建群聊
+              {t("新建群聊", "New group chat")}
             </button>
           </div>
         )}

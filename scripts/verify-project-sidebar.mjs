@@ -110,7 +110,7 @@ try {
   async function assertProjectDraftView() {
     await expect(creation).toHaveCount(0)
     await expect(groupCreation).toHaveCount(0)
-    await expect(page.getByRole('heading', { name: '有什么需要帮忙？', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: `你想让我们在 ${projectName} 中构建什么？`, exact: true })).toBeVisible()
     await expect(projectChip).toHaveAccessibleDescription(projectName)
     await expect(button('新建群聊')).toBeVisible()
   }
