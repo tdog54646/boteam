@@ -45,15 +45,16 @@ if (args.includes('/usage')) {
   const sessions = new Map()
   const send = (frame) => console.log(JSON.stringify({ jsonrpc: '2.0', ...frame }))
   let promptId, promptCalls = 0
-  function config(s) {
+  const supportedModes = state.modes || ['default', 'plan', 'accept-edits']
+  function config(s, listedModes = supportedModes) {
     return [
-      {
+      ...(listedModes ? [{
         id: 'mode',
         category: 'mode',
         type: 'select',
         currentValue: s.mode || 'default',
-        options: (state.modes || ['default', 'plan', 'accept-edits']).map((value) => ({ value, name: value })),
-      },
+        options: listedModes.map((value) => ({ value, name: value })),
+      }] : []),
       {
         id: 'model',
         category: 'model',
@@ -153,28 +154,43 @@ if (args.includes('/usage')) {
         method !== 'session/new'
           ? { model: 'gemini-flash', effort: 'low', mode: 'accept-edits' }
           : (state.initialSession || { model: 'gemini-pro', effort: 'high' })
+      if (method !== 'session/new') current.listedModes = state.restoredModes
       sessions.set(sessionId, current)
+      if (state.traceSessions) save({ method, sessionId })
       if (state.commands) setTimeout(() => send({
         method: 'session/update', params: { sessionId,
           update: { sessionUpdate: 'available_commands_update', availableCommands: state.commands } },
       }), 15)
       reply = {
         sessionId,
-        configOptions: config(current),
+        configOptions: config(current, current.listedModes),
         _meta: { antigravity: { tier: { name: state.acpPlan || state.plan } } },
       }
+      if (state.legacyModes) reply.modes = {
+        currentModeId: current.mode || 'default',
+        availableModes: state.legacyModes.map(id => ({ id, name: id })),
+      }
     }
-    if (method === 'session/close') sessions.delete(params.sessionId)
+    if (method === 'session/close') {
+      sessions.delete(params.sessionId)
+      if (state.traceSessions) save({ method, sessionId: params.sessionId })
+    }
     if (method === 'session/set_config_option') {
       if (params.configId === 'model') {
         session.model = params.value
         session.effort = 'low'
       } else if (params.configId === 'mode') {
-        session.mode = params.value
         if (state.recordModeChanges) save({ method, params })
+        if (!(state.acceptedModes || supportedModes).includes(params.value)) {
+          send({ id, error: { code: -32602, message: 'Unsupported permission mode' } })
+          return
+        }
+        if (!state.ignoreModeChange) session.mode = params.value
       }
       else session.effort = params.value
-      reply = { configOptions: config(session) }
+      if (params.configId !== 'mode' && Object.hasOwn(state, 'modesAfterSelection'))
+        session.listedModes = state.modesAfterSelection
+      reply = { configOptions: config(session, params.configId === 'mode' ? supportedModes : session.listedModes) }
     }
     if (method === 'session/list') {
       reply = { sessions: [{ sessionId: 'foreign', title: 'foreign' },

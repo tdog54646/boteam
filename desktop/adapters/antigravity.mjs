@@ -344,16 +344,18 @@ function select(options, category) {
   return { key: config?.id, current: config?.currentValue, items }
 }
 
-async function configure(request, id, configs, category, value) {
+async function configure(request, id, configs, category, value, sessionModeKey) {
   if (!value) return configs
   const picker = select(configs, category)
   const label = { model: '模型', thought_level: '推理档位', mode: '权限模式' }[category]
-  if (!picker.key || !picker.items.some((x) => x.id === value))
+  const listed = picker.items.some(item => item.id === value)
+  const key = picker.key || sessionModeKey
+  if (!key || (!listed && !sessionModeKey))
     throw new Error(`此订阅当前不支持选择的 Antigravity ${label}。`)
-  if (picker.current === value) return configs
+  if (listed && picker.current === value) return configs
   const reply = await request('session/set_config_option', {
     sessionId: id,
-    configId: picker.key,
+    configId: key,
     value,
   })
   if (select(reply?.configOptions, category).current !== value)
@@ -377,7 +379,7 @@ async function withFreshSession(request, capabilities, profile, plan, read, cwd 
   })
   const id = verifiedSession(reply, plan)
   try {
-    return await read(id, reply.configOptions)
+    return await read(id, reply.configOptions, reply.modes)
   } finally {
     if (capabilities?.sessionCapabilities?.close) await request('session/close', { sessionId: id })
   }
@@ -387,12 +389,14 @@ export async function composerActions({ account, cwd, signal }) {
   const { profile, found } = await verify(account, signal, { allowCache: true })
   const updates = commandUpdates()
   return withAcp(profile, signal, updates.observe, (request, capabilities) =>
-    withFreshSession(request, capabilities, profile, found.plan, async (id, configs) => {
+    withFreshSession(request, capabilities, profile, found.plan, async (id, configs, nativeModes) => {
       const modes = select(configs, 'mode').items
+      const offers = value => modes.some(mode => mode.id === value) ||
+        nativeModes?.availableModes?.some(mode => mode.id === value) === true
       const commands = await updates.read(id)
-      const plan = modes.some(mode => mode.id === 'plan')
+      const plan = offers('plan')
       return {
-        plan, workspaceAuto: modes.some(mode => mode.id === 'auto'),
+        plan, workspaceAuto: offers('auto'),
         goal: false, autoReview: false, maxExtensions: 1,
         extensions: await sessionSkills(commands, profile, cwd),
         slashCommands: sessionSlashCommands(commands, plan),
@@ -718,9 +722,11 @@ export async function run({
     id = verifiedSession(reply, found.plan, threadId)
     let configs = await configure(request, id, reply.configOptions, 'model', targetModel)
     configs = await configure(request, id, configs, 'thought_level', targetEffort)
-    // Reapply the default too: a native resumed session can remember plan or accept-edits.
-    if (planMode || permission !== 'default' || select(configs, 'mode').key)
-      configs = await configure(request, id, configs, 'mode', planMode ? 'plan' : permissions[permission])
+    // Resume/load and subsequent model changes can return a partial picker. Ask
+    // the target session to confirm the requested mode before sending the prompt.
+    const modeKey = select(reply.configOptions, 'mode').key
+    if (threadId || planMode || permission !== 'default' || modeKey || reply.modes || select(configs, 'mode').key)
+      configs = await configure(request, id, configs, 'mode', effectiveMode, modeKey || 'mode')
     if (slashCommand) {
       const plan = select(configs, 'mode').items.some(mode => mode.id === 'plan')
       prompt = slashPrompt(sessionSlashCommands(await updates.read(id), plan), slashCommand, prompt, 'Antigravity')

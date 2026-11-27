@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline'
 import { invocation } from './antigravity-profile.mjs'
 import { inputWindowError } from './usage.mjs'
 
-function rpcError(error, method) {
+function rpcError(error, method, configId) {
   if (method === 'session/prompt') {
     const overflow = inputWindowError(error?.message)
     if (overflow) return overflow
@@ -18,6 +18,8 @@ function rpcError(error, method) {
     })
   if (/quota|limit|429|resource.exhausted/i.test(error?.message))
     return new Error('Antigravity 订阅额度或速率已达上限。')
+  if (method === 'session/set_config_option' && configId === 'mode' && error?.code === -32602)
+    return new Error('当前 Antigravity 会话未接受所选权限模式。请在频道管理或聊天输入框中更改操作权限后重试。')
   if (method === 'session/resume' && (
     error?.code === -32601 || (error?.code === -32603 && /load it with.*session\/load/i.test(error.message))
   ))
@@ -122,7 +124,7 @@ export async function withAcp(profile, signal, handle, work, options = {}) {
     if (!waiter) return
     clearTimeout(waiter.timer)
     pending.delete(msg.id)
-    if (msg.error) waiter.reject(rpcError(msg.error, waiter.method))
+    if (msg.error) waiter.reject(rpcError(msg.error, waiter.method, waiter.configId))
     else if (waiter.method === 'session/load') {
       // ACP replays session/update before the load response. Finish processing
       // those frames while the task is still suppressing history and approvals.
@@ -145,7 +147,7 @@ export async function withAcp(profile, signal, handle, work, options = {}) {
             const error = new Error('Antigravity 原生请求超时。')
             if (optionalTimeout) { pending.delete(id); reject(error) } else fail(error)
           }, optionalTimeout || timeout)
-      pending.set(id, { resolve, reject, timer, method })
+      pending.set(id, { resolve, reject, timer, method, configId: params?.configId })
       write({ id, method, params })
     })
   }

@@ -197,6 +197,45 @@ test('clearing both selectors restores native defaults on a resumed session', ma
   )
 })
 
+test('workspace auto requires native confirmation on the original Antigravity thread', mac, async t => {
+  const { account, cwd, seen, state } = await setup(t)
+  Object.assign(account, await adapter.detect(account))
+  const modes = ['default', 'accept-edits', 'auto', 'plan']
+  const settings = { modes, traceSessions: true, recordModeChanges: true }
+  const args = { account, cwd, permission: 'workspace-auto', prompt: 'first', emit() {}, approve: () => false }
+  const calls = async () => (await seen()).trim().split('\n').map(line => JSON.parse(line))
+  await state(settings)
+  await adapter.run(args)
+  const first = (await calls()).find(call => call.method === 'session/prompt')
+  assert.equal(first.mode, 'auto')
+  const threadId = first.params.sessionId
+
+  for (const [name, overrides, fails] of [
+    ['resume with auto only in the legacy picker', { modes: ['default'], restoredModes: ['default'], legacyModes: modes, acceptedModes: modes }],
+    ['load with auto only in the fresh picker', { loadOnly: true, restoredModes: ['default'], legacyModes: ['default'] }],
+    ['model and effort changes omit the previously advertised mode', { modesAfterSelection: null }],
+    ['native mode write rejected', { restoredModes: [], acceptedModes: ['default'] }, true],
+    ['native mode write unconfirmed', { restoredModes: [], ignoreModeChange: true }, true],
+  ]) await t.test(name, async () => {
+    await state({ ...settings, ...overrides })
+    const offset = (await calls()).length
+    const run = adapter.run({ ...args, threadId, prompt: 'continue' })
+    if (fails) await assert.rejects(run)
+    else await run
+
+    const records = (await calls()).slice(offset)
+    const restored = records.filter(r => ['session/resume', 'session/load'].includes(r.method))
+    assert.deepEqual(restored.map(r => r.sessionId), [threadId])
+    const changes = records.filter(r => r.method === 'session/set_config_option' && r.params.value === 'auto')
+    assert.deepEqual(changes.map(r => r.params.sessionId), [threadId], 'ask the target CLI to confirm auto')
+    const prompts = records.filter(r => r.method === 'session/prompt')
+    assert.deepEqual(prompts.map(r => [r.params.sessionId, r.mode]), fails ? [] : [[threadId, 'auto']])
+    const closed = new Set(records.filter(r => r.method === 'session/close').map(r => r.sessionId))
+    assert.ok(records.filter(r => r.method === 'session/new').every(r => closed.has(r.sessionId)),
+      'temporary catalog sessions must not become replacement threads')
+  })
+})
+
 test('scoped native slash catalog and permissions are rechecked by the actual ACP session', mac, async (t) => {
   const { account, cwd, state, seen } = await setup(t)
   Object.assign(account, await adapter.detect(account))
@@ -217,6 +256,10 @@ test('scoped native slash catalog and permissions are rechecked by the actual AC
   const first = JSON.parse((await seen()).split('\n')[0])
   assert.equal(first.params.prompt[0].text, '/check-copy draft')
   assert.equal(first.mode, 'auto')
+  await state({ commands, modes: ['default'], legacyModes: ['default', 'plan', 'auto'] })
+  const legacy = await adapter.composerActions({ account, cwd })
+  assert.equal(legacy.workspaceAuto, true)
+  assert.equal(legacy.plan, true)
   const count = (await seen()).length
   await state({ commands: [], modes: ['default'] })
   await assert.rejects(adapter.run(args), /不可用/)
