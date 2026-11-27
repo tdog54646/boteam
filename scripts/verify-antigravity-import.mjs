@@ -124,6 +124,7 @@ async function verify() {
   const candidates = () => page.locator('.account-discovery')
   const row = email => candidates().locator('.detected-account').filter({hasText:email})
   const openDiscovery = async () => {
+    await page.getByRole('button',{name:'设置',exact:true}).click()
     await page.getByRole('button',{name:'账号管理',exact:true}).click()
     await page.getByRole('button',{name:'检测本机账号',exact:true}).click()
   }

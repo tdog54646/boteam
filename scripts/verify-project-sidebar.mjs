@@ -489,7 +489,11 @@ try {
   await expect.poll(async () => (await snapshot(page)).chats.filter(c => c.archived).map(c => c.id).sort())
     .toEqual(projectChats.map(c => c.id).sort())
   await expect(projectRow()).toBeVisible()
-  await expect(region('已归档')).toBeVisible()
+  await expect(region('已归档')).toHaveCount(0)
+  await button('设置').click()
+  await button('已归档会话').click()
+  await expect(page.locator('.archived-chat-row')).toHaveCount(projectChats.length)
+  await button('首页').click()
 
   await openProjectMenu()
   await item(projectMenu(), '移除项目').click()

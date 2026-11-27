@@ -19,6 +19,10 @@ import { Onboarding } from "./Onboarding";
 import { Sidebar, ChatSearch } from "./Sidebar";
 import { ProjectActionDialog, ProjectDialog } from "./ProjectDialog";
 import { Home } from "./Home";
+import { ChannelNavigation, Channels } from "./Channels";
+import { ScheduleNavigation, SchedulesPage, scheduleCreatePages } from "./Schedules";
+import { ArchivedChats, HistoryButtons, SettingsNavigation, SidebarTitlebar, WorkspaceNavigation, settingsPages } from "./WorkspaceNavigation";
+import { useLanguage } from "./preferences";
 import { hasComposerDraft, pruneComposerDrafts } from "./composerDrafts";
 import {
   PANEL_MAX_WIDTH,
@@ -46,7 +50,11 @@ const empty = {
 const invoke = (method, payload = {}) => window.boteam.invoke(method, payload);
 const initialChat = window.boteam?.initialChatId;
 const navigationStorage = initialChat ? sessionStorage : localStorage;
-const builtInPages = new Set(["home", "accounts", "bots"]);
+const builtInPages = new Set(["home", "schedules", "channels", ...settingsPages, ...scheduleCreatePages]);
+const schedulePrefix = "schedule:";
+const channelChatPrefix = "channel-chat:";
+const normalizePage = id => id === "channel-chats" ? "channels" : id;
+const chatIdForPage = page => page.startsWith(channelChatPrefix) ? page.slice(channelChatPrefix.length) : page;
 const defaultBotKey = "boteam:quick-bot";
 const draftStorageKey = "boteam:chat-drafts";
 function invokeWithDraft(draft, method, payload = {}) {
@@ -67,12 +75,14 @@ function readDrafts() {
   } catch { return {}; }
 }
 export default function App() {
+  const t = useLanguage();
+  const lastSettingsPage = useRef("archived");
   const [state, setState] = useState(empty);
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
   const [page, setPage] = useState(
-    () => navigationStorage.getItem("boteam:page") || initialChat || "home",
+    () => normalizePage(navigationStorage.getItem("boteam:page") || initialChat || "home"),
   );
   const [dialog, setDialog] = useState(null);
   const [collapsed, setCollapsed] = useState(false);
@@ -155,6 +165,7 @@ export default function App() {
       if (!hasLaunched.current) {
         hasLaunched.current = true;
         const lastPage = navigationStorage.getItem("boteam:page");
+        if (lastPage === "channel-chats") navigationStorage.setItem("boteam:page", "channels");
         // A reload can interrupt navigation after the first message has committed.
         const savedIds = new Set(snapshot.chats.map(chat => chat.id));
         const activeBots = snapshot.bots.filter(bot => !bot.archived);
@@ -183,7 +194,7 @@ export default function App() {
           setPage(target);
           navigationStorage.setItem("boteam:page", target);
         }
-        const opened = snapshot.chats.find(chat => chat.id === currentPage.current);
+        const opened = snapshot.chats.find(chat => chat.id === chatIdForPage(currentPage.current));
         if (initialChat && opened?.unread) {
           invoke("setChatUnread", { chatId: opened.id, unread: false }).catch(e => setError(errorText(e)));
         }
@@ -191,7 +202,11 @@ export default function App() {
       const savedChatIds = new Set(snapshot.chats.map(c => c.id));
       const draftKeys = new Set(Object.keys(draftPages.current));
       pruneComposerDrafts(savedChatIds, draftKeys);
-      const accessible = new Set([...builtInPages, ...draftKeys, ...savedChatIds]);
+      const channelChatIds = new Set((snapshot.channels || []).flatMap(channel => (channel.chats || []).map(chat => chat.id)));
+      const channelPages = snapshot.chats.filter(chat => !chat.archived && channelChatIds.has(chat.id))
+        .map(chat => channelChatPrefix + chat.id);
+      const schedulePages = (snapshot.schedules || []).map(job => schedulePrefix + job.id);
+      const accessible = new Set([...builtInPages, ...draftKeys, ...savedChatIds, ...channelPages, ...schedulePages]);
       setDialog(current => (current?.type === "project" || current?.type === "projectAction") && current.id &&
         !snapshot.projects?.some(project => project.id === current.id) ? null : current);
       const retired = new Set(before.chats.filter(c => !accessible.has(c.id)).map(c => c.id));
@@ -204,13 +219,15 @@ export default function App() {
       const valid = previous.filter(id => accessible.has(id));
       let index = previous.slice(0, historyPosition.current + 1).filter(id => accessible.has(id)).length - 1;
       if (!accessible.has(currentPage.current)) {
-        const fallback = valid[index] || "home";
-        if (index < 0) { valid.unshift(fallback); index = 0; }
+        let fallback = valid[index] || "home";
+        if (currentPage.current.startsWith(channelChatPrefix)) fallback = "channels";
+        if (currentPage.current.startsWith(schedulePrefix)) fallback = "schedules";
+        if (valid[index] !== fallback) valid.splice(++index, 0, fallback);
         currentPage.current = fallback;
         setPage(fallback);
         navigationStorage.setItem("boteam:page", fallback);
       }
-      if (valid.length !== previous.length || index !== historyPosition.current || valid[0] !== previous[0]) {
+      if (valid.length !== previous.length || index !== historyPosition.current || valid[index] !== previous[index]) {
         trail.current = valid;
         historyPosition.current = Math.max(0, index);
         setPosition(historyPosition.current);
@@ -236,8 +253,9 @@ export default function App() {
     setPage(id);
     navigationStorage.setItem("boteam:page", id);
     setDialog(null);
-    if (latest.current.chats.find(chat => chat.id === id)?.unread) {
-      invoke("setChatUnread", { chatId: id, unread: false }).catch(e => setError(errorText(e)));
+    const chatId = chatIdForPage(id);
+    if (latest.current.chats.find(chat => chat.id === chatId)?.unread) {
+      invoke("setChatUnread", { chatId, unread: false }).catch(e => setError(errorText(e)));
     }
   }, []);
   function move(direction) {
@@ -247,7 +265,8 @@ export default function App() {
     setPosition(index);
     visit(trail.current[index]);
   }
-  const select = useCallback(id => {
+  const select = useCallback(destination => {
+    const id = normalizePage(destination);
     const index = historyPosition.current;
     if (trail.current[index] !== id) {
       trail.current = [...trail.current.slice(0, index + 1), id];
@@ -257,7 +276,8 @@ export default function App() {
     visit(id);
   }, [visit]);
   useEffect(() => window.boteam?.onOpenChat?.(select), [select]);
-  const actions = useChatActions({ state, page, currentPage, dialog, setDialog, invoke, select, refresh, setError });
+  const openChannelChat = id => select(channelChatPrefix + id);
+  const actions = useChatActions({ state, page: chatIdForPage(page), currentPage, dialog, setDialog, invoke, select, refresh, setError });
   const close = () => setDialog(current => current?.returnTo || null);
   async function finishDialog() {
     await refresh();
@@ -268,7 +288,8 @@ export default function App() {
       setError(errorText(e));
       if (!latest.current.chats.some(c => c.id === id)) return;
     }
-    select(id);
+    if (currentPage.current === channelChatPrefix + id) openChannelChat(id);
+    else select(id);
   }
   async function finishDraft(chatId) {
     try { await refresh(); } catch (e) { setError(errorText(e)); }
@@ -336,7 +357,7 @@ export default function App() {
   useEffect(() => {
     function key(e) {
       if (e.defaultPrevented || e.repeat || e.shiftKey || e.altKey ||
-          !(e.metaKey || e.ctrlKey) || !ready || !state.onboarded || dialog)
+          !(e.metaKey || e.ctrlKey) || !ready || !state.onboarded || dialog || document.querySelector('[aria-modal="true"], dialog[open]'))
         return;
       const key = e.key.toLowerCase();
       if (!["b", "k", "n"].includes(key)) return;
@@ -349,7 +370,7 @@ export default function App() {
     return () => document.removeEventListener("keydown", key);
   }, [ready, state.onboarded, dialog, newChat]);
   const wizard = ready && !state.onboarded;
-  const chat = state.chats.find((c) => c.id === page);
+  const chat = state.chats.find((c) => c.id === chatIdForPage(page));
   const agents = useMemo(() => listSubagents(chat?.id, state.tasks, state.bots, state.accounts),
     [chat?.id, state.tasks, state.bots, state.accounts]);
   const nativeAgents = agents.filter(agent => agent.id.startsWith("agy:"));
@@ -423,17 +444,24 @@ export default function App() {
   const dialogAccount =
     dialog?.id && state.accounts.find((a) => a.id === dialog.id);
   const dialogProject = dialog?.id && state.projects.find(p => p.id === dialog.id);
-  const draftTitle = draft && !draft.legacyHome && (draft.name || (draft.kind === "group" ? "新群聊" : panelMembers[0]?.name));
-  const pageTitle = wizard
-    ? "初始设置"
-    : page === "bots"
-      ? "Bot 管理"
-      : page === "accounts"
-        ? "账号管理"
-        : chat?.name || draftTitle || "新对话";
+  const draftTitle = draft && !draft.legacyHome && (draft.name || (draft.kind === "group" ? t("新群聊", "New group chat") : panelMembers[0]?.name));
+  const channelPage = page === "channels";
+  const schedulePage = page === "schedules" || page.startsWith(schedulePrefix);
+  const section = !wizard && (settingsPages.includes(page) || chat?.archived) ? "settings"
+    : !wizard && (channelPage || page.startsWith(channelChatPrefix)) ? "channels" : !wizard && schedulePage ? "schedules" : "home";
+  const settingsPage = chat?.archived ? "archived" : page;
+  useEffect(() => {
+    if (settingsPages.includes(settingsPage)) lastSettingsPage.current = settingsPage;
+  }, [settingsPage]);
+  const hasSecondary = !collapsed;
+  const history = { back: position > 0, forward: position + 1 < trail.current.length, move };
+  const pageTitle = wizard ? t("初始设置", "Initial setup") : chat?.name || draftTitle || ({
+    bots: t("Bot 管理", "Bots"), accounts: t("账号管理", "CLI accounts"), archived: t("已归档会话", "Archived chats"),
+    schedules: t("定时任务", "Schedules"), channels: t("频道", "Channels"),
+  }[page]) || t("新对话", "New chat");
   const shellClasses = [
     "shell",
-    collapsed ? "sidebar-closed" : "",
+    !hasSecondary ? "sidebar-closed no-secondary-sidebar" : "",
     sidebarWidth != null ? "has-custom-rail" : "",
     panelWidth != null ? "has-custom-panel" : "",
   ]
@@ -442,7 +470,7 @@ export default function App() {
   const shellStyle = {
     ...(sidebarWidth != null ? { "--custom-rail-width": `${sidebarWidth}px` } : {}),
     ...(panelWidth != null ? { "--custom-panel-width": `${panelWidth}px` } : {}),
-    "--active-rail-width": collapsed ? "0px" : "var(--rail-width)",
+    "--active-rail-width": hasSecondary ? "calc(var(--nav-width) + var(--rail-width))" : "var(--nav-width)",
   };
   const getLeftResizerBounds = () => {
     const vw = typeof window !== "undefined" ? window.innerWidth : 1260;
@@ -451,15 +479,16 @@ export default function App() {
         ? shellRef.current?.querySelector(".workspace-panel")?.getBoundingClientRect()
         : null;
     const reservedRight = panelRect ? Math.min(panelRect.width, Math.floor(vw * 0.48)) : 0;
+    const navWidth = shellRef.current?.querySelector(".workspace-navigation")?.offsetWidth || 0;
     return {
       min: SIDEBAR_MIN_WIDTH,
-      max: Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.floor(vw * 0.44), vw - reservedRight - 300)),
+      max: Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.floor(vw * 0.44), vw - navWidth - reservedRight - 300)),
     };
   };
   const getRightResizerBounds = () => {
     const vw = typeof window !== "undefined" ? window.innerWidth : 1260;
     const sidebarRect = !collapsed ? shellRef.current?.querySelector(".sidebar")?.getBoundingClientRect() : null;
-    const reservedLeft = sidebarRect ? sidebarRect.width : 0;
+    const reservedLeft = (sidebarRect?.width || 0) + (shellRef.current?.querySelector(".workspace-navigation")?.offsetWidth || 0);
     return {
       min: PANEL_MIN_WIDTH,
       max: Math.max(PANEL_MIN_WIDTH, Math.min(PANEL_MAX_WIDTH, vw - reservedLeft - 300)),
@@ -467,9 +496,10 @@ export default function App() {
   };
   return (
     <div ref={shellRef} className={shellClasses} style={shellStyle}>
-      {!collapsed && (
+      <WorkspaceNavigation section={section} select={select} settingsPage={section === "settings" ? settingsPage : lastSettingsPage.current} disabled={wizard || !ready}/>
+      {hasSecondary && (
         <>
-          <Sidebar
+          {section === "home" ? <Sidebar
             state={state}
             invoke={invoke}
             refresh={refresh}
@@ -485,15 +515,17 @@ export default function App() {
             open={setDialog}
             disabled={wizard || !ready}
             collapse={() => setCollapsed(true)}
-            history={{
-              back: position > 0,
-              forward: position + 1 < trail.current.length,
-              move,
-            }}
-          />
+            history={history}
+          /> : <aside className={"sidebar " + (section === "settings" ? "context-sidebar" : section === "channels" ? "project-sidebar channel-sidebar" : "project-sidebar schedule-sidebar")} aria-label={t("侧栏", "Sidebar")}>
+            <SidebarTitlebar collapse={() => setCollapsed(true)} history={history} disabled={!ready}/>
+            {section === "channels" && <ChannelNavigation state={state} activeChatId={chat?.id} onOverview={() => select("channels")}
+              onOpenChat={openChannelChat} onChatMenu={actions.showMenu}/>}
+            {section === "schedules" && <ScheduleNavigation state={state} page={page} select={select}/>}
+            {section === "settings" && <SettingsNavigation page={settingsPage} select={select}/>}
+          </aside>}
           <PaneResizer
             side="left"
-            label="调整侧边栏宽度"
+            label={t("调整侧边栏宽度", "Resize sidebar")}
             value={sidebarWidth}
             min={SIDEBAR_MIN_WIDTH}
             max={SIDEBAR_MAX_WIDTH}
@@ -514,21 +546,22 @@ export default function App() {
           {collapsed && (
             <IconButton
               icon={PanelLeftOpen}
-              label="展开侧栏"
+              label={t("展开侧栏", "Expand sidebar")}
               onClick={() => setCollapsed(false)}
             />
           )}
-          <div className="window-title">{pageTitle}</div>
+          {!hasSecondary && <div className="window-history"><HistoryButtons history={history} disabled={wizard || !ready}/></div>}
+          {section !== "schedules" && <div className="window-title">{pageTitle}</div>}
           <div className="header-actions">
             {!wizard && (chat || draft)?.kind === "group" && (
               <button
                 className="header-action"
                 onClick={() => setDialog({ type: chat ? "group" : "draftGroup", id: (chat || draft).id })}
-                aria-label="群聊设置"
-                title="群聊设置"
+                aria-label={t("群聊设置", "Group chat settings")}
+                title={t("群聊设置", "Group chat settings")}
               >
                 <UsersRound size={15} />
-                {(chat || draft).members.length} 位成员
+                {(chat || draft).members.length} {t("位成员", "members")}
               </button>
             )}
             {workPage && <ChatToolbar key={panelKey} chat={chat} draftChat={draft?.legacyHome ? null : draft} members={panelMembers} state={state} agents={agents}
@@ -542,7 +575,7 @@ export default function App() {
             <CircleAlert size={16} />
             <span>{error}</span>
             <IconButton
-              label="关闭提示"
+              label={t("关闭提示", "Dismiss")}
               icon={X}
               onClick={() => setError("")}
             />
@@ -560,7 +593,7 @@ export default function App() {
                       refresh().catch((e) => setLoadError(errorText(e)))
                     }
                   >
-                    重试
+                    {t("重试", "Try again")}
                   </Button>
                 )}
               </>
@@ -576,6 +609,12 @@ export default function App() {
             finishWizard={finishWizard}
             busy={busy}
           />
+        ) : channelPage ? (
+          <Channels state={state} invoke={invoke} refreshSnapshot={refresh} select={select}/>
+        ) : schedulePage ? (
+          <SchedulesPage state={state} page={page} invoke={invoke} select={select} refresh={refresh} open={setDialog}/>
+        ) : page === "archived" ? (
+          <ArchivedChats state={state} select={select} action={actions.act}/>
         ) : page === "accounts" ? (
           <div className="page-scroll">
             <AccountList
@@ -624,7 +663,7 @@ export default function App() {
       {workPage && panelVisible && !panel?.expanded && (
         <PaneResizer
           side="right"
-          label="调整右侧面板宽度"
+          label={t("调整右侧面板宽度", "Resize workspace panel")}
           value={panelWidth}
           min={PANEL_MIN_WIDTH}
           max={PANEL_MAX_WIDTH}
@@ -649,7 +688,7 @@ export default function App() {
         anchor={actions.menu.anchor} variant={actions.menu.variant} chat={actions.menuChat}
         sections={state.chatSections} projects={state.projects} openTargets={actions.openTargets} onAction={actions.act} onClose={actions.closeMenu} />}
       {actions.notice && <div className="chat-action-status" role="status">{actions.notice}</div>}
-      {dialog?.type === "directory" && <Modal title="选择工作目录" onClose={close}>
+      {dialog?.type === "directory" && <Modal title={t("选择工作目录", "Select working directory")} onClose={close}>
         <div className="member-list">{dialog.directories.map(({ botId, names, directory }, index) =>
           <button type="button" key={botId} data-autofocus={index === 0 || undefined} className="member-row"
             onClick={() => { close(); actions.act(dialog.action, { id: dialog.id }, { ...dialog.payload, botId }); }}>
@@ -661,7 +700,7 @@ export default function App() {
           action={dialog.action} invoke={invoke} onClose={close} onDone={finishDialog} />
       )}
       {dialog?.type === "search" && (
-        <Modal title="搜索对话" onClose={close}>
+        <Modal title={t("搜索对话", "Search chats")} onClose={close}>
           <ChatSearch state={state} select={select} />
         </Modal>
       )}
@@ -679,8 +718,8 @@ export default function App() {
       )}
       {dialog?.type === "import" && (
         <Modal
-          title="导入本机账号"
-          subtitle="选择原生工具配置，导入已识别的订阅账号。"
+          title={t("导入本机账号", "Import local accounts")}
+          subtitle={t("选择原生工具配置，导入已识别的订阅账号。", "Choose a local CLI configuration to import a subscription account.")}
           onClose={close}
           wide
         >
@@ -706,7 +745,7 @@ export default function App() {
         />
       )}
       {dialog?.type === "bot" && (
-        <Modal title={dialogBot ? "编辑 Bot" : "创建 Bot"} onClose={close}>
+        <Modal title={dialogBot ? t("编辑 Bot", "Edit bot") : t("创建 Bot", "Create bot")} onClose={close}>
           {state.accounts.length ? (
             <BotForm
               initial={dialogBot}
@@ -724,15 +763,15 @@ export default function App() {
             <>
               <div className="plain-note">
                 <UserRound size={18} />
-                先连接一个订阅账号，再为 Bot 选择身份。
+                {t("先连接一个订阅账号，再为 Bot 选择身份。", "Connect a CLI account to create a bot.")}
               </div>
               <div className="form-actions">
-                <Button onClick={close}>取消</Button>
+                <Button onClick={close}>{t("取消", "Cancel")}</Button>
                 <Button
                   variant="primary"
                   onClick={() => setDialog({ type: "import", returnTo: dialog })}
                 >
-                  导入账号
+                  {t("导入账号", "Import account")}
                 </Button>
               </div>
             </>
@@ -748,7 +787,7 @@ export default function App() {
           chat={
             dialog.type === "group"
               ? state.chats.find((c) => c.id === dialog.id)
-              : dialog.type === "draftGroup" && draft?.id === dialog.id ? { ...draft, name: draft.name || "新群聊" } : undefined
+              : dialog.type === "draftGroup" && draft?.id === dialog.id ? { ...draft, name: draft.name || t("新群聊", "New group chat") } : undefined
           }
           {...state}
           invoke={invoke}
@@ -766,17 +805,18 @@ export default function App() {
   );
 }
 function RemoveBot({ bot, onClose, onDone }) {
+  const t = useLanguage();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   return (
     <Modal
-      title={`移除 ${bot.name}？`}
-      subtitle="Bot 将被归档并停止接收新任务，已有聊天记录会保留。"
+      title={t(`移除 ${bot.name}？`, `Remove ${bot.name}?`)}
+      subtitle={t("Bot 将被归档并停止接收新任务，已有聊天记录会保留。", "The bot will be archived and stop receiving tasks. Existing chats will be kept.")}
       onClose={onClose}
     >
       <Notice>{error}</Notice>
       <div className="form-actions">
-        <Button onClick={onClose}>取消</Button>
+        <Button onClick={onClose}>{t("取消", "Cancel")}</Button>
         <Button
           variant="danger"
           busy={busy}
@@ -792,7 +832,7 @@ function RemoveBot({ bot, onClose, onDone }) {
             }
           }}
         >
-          确认移除
+          {t("确认移除", "Remove")}
         </Button>
       </div>
     </Modal>

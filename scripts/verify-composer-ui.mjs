@@ -1158,6 +1158,7 @@ async function verify() {
     assert.deepEqual(sent.attachments.map(a => a.name), [noteName, folderName, '添加的文本.txt', '编辑器选区.txt', '草图.png'])
     assert.deepEqual(state.tasks.filter(t => t.messageId === sent.id).map(t => [t.botId,t.status]), [[first,'done']])
     assert.equal(state.composerSettings.find(s => s.botId === second).effort, 'high')
+    await button('设置').click()
     await button('账号管理').click()
     await expect(page.getByRole('heading', {name:'账号管理',exact:true})).toBeVisible()
     await page.reload()

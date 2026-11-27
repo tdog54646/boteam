@@ -1,0 +1,51 @@
+.shell { --nav-width: 54px; }
+.workspace-navigation {
+  --nav-surface: color-mix(in srgb, var(--fg) 4%, var(--sidebar));
+  --nav-tile: color-mix(in srgb, var(--fg) 6%, var(--nav-surface));
+  flex: 0 0 var(--nav-width);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: calc(var(--toolbar-height) + 5px) 0 10px;
+  background: var(--nav-surface);
+  position: relative;
+  -webkit-app-region: drag;
+}
+.workspace-navigation::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  inset-block: var(--toolbar-height) 0;
+  width: 1px;
+  background: var(--line);
+  pointer-events: none;
+}
+.workspace-navigation button { position: relative; -webkit-app-region: no-drag; }
+.workspace-destination {
+  width: 36px; height: 36px; display: grid; place-items: center;
+  color: var(--subtle); border-radius: 9px;
+}
+.workspace-destination:is(:hover, :focus-visible):enabled,
+.workspace-destination[aria-current=page] { color: var(--fg); background: var(--nav-tile); }
+.workspace-navigation-bottom { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.shell .sidebar-titlebar { padding-inline: max(8px, calc(85px - var(--nav-width))) 12px; }
+.shell .sidebar-titlebar .icon-btn:first-child { margin-right: auto; }
+.shell.no-secondary-sidebar .topbar,
+.shell.no-secondary-sidebar .wp-expanded .wp-header { padding-left: max(10px, calc(84px - var(--nav-width))); }
+.main .topbar .window-history { display: flex; gap: 1px; margin-right: 8px; }
+.settings-navigation { padding: 7px 10px; }
+.settings-navigation h2 { margin: 3px 8px 16px; font-size: 17px; line-height: 26px; font-weight: 620; }
+.settings-navigation .rail-row { margin-bottom: 2px; }
+.archive-page .account-search input { height: 36px; }
+.archived-chat-link { display: flex; align-items: center; min-width: 0; flex: 1; gap: 12px; border-radius: 5px; }
+.archived-chat-link:hover strong { text-decoration: underline; }
+.archived-chat-link .row-copy { min-width: 0; overflow-wrap: anywhere; }
+.archived-chat-link > svg, .archived-chat-row time { color: var(--subtle); }
+.archived-chat-row time { font-size: 12px; }
+.archived-chat-row .row-copy strong { font-weight: 545; }
+@media (max-width: 900px) {
+  .shell { --nav-width: 46px; }
+  .archived-chat-row { padding-inline: 10px; gap: 8px; }
+  .archived-chat-row time { display: none; }
+}

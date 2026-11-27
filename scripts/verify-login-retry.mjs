@@ -61,13 +61,13 @@ async function launchFixture() {
     finish: (index, email) => attempts[index].finish(email),
   }
   const original = Workspace.prototype.handle
-  Workspace.prototype.handle = function(method, payload) {
+  Workspace.prototype.handle = function(method, payload, context) {
     if (this.adapters.codex !== adapter) {
       for (const key of Object.keys(this.adapters)) this.adapters[key] = adapter
       this.accounts.discoverySources = async provider => [join(root, '..', 'external-' + provider)]
       this.accounts.locate = async (provider, source) => ({ source, bin: '/fixture/' + provider })
     }
-    return original.call(this, method, payload)
+    return original.call(this, method, payload, context)
   }
   await import('../desktop/main.mjs')
 }
@@ -92,6 +92,7 @@ async function verify() {
     const waitForAttempt = index => expect.poll(async () => (await states())[index]).toBe('waiting')
 
     await page.getByRole('button', { name: '暂时跳过' }).click()
+    await page.getByRole('button', { name: '设置', exact: true }).click()
     await page.getByRole('button', { name: '账号管理', exact: true }).click()
     await add()
     await start()
@@ -142,6 +143,7 @@ async function verify() {
     await start()
     await waitForAttempt(7)
     await page.reload()
+    await page.getByRole('button', { name: '设置', exact: true }).click()
     await page.getByRole('button', { name: '账号管理', exact: true }).click()
     await add()
     await start()

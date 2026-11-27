@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Archive, Bot, ChevronDown, ChevronLeft, ChevronRight, Ellipsis, Folder, FolderOpen,
-  FolderPlus, House, ListFilter, MessageSquare, PanelLeftClose, Pin, PinOff, Search,
-  Settings, SlidersHorizontal, SquarePen, UsersRound, WalletCards,
+  Bot, ChevronDown, Ellipsis, Folder, FolderOpen,
+  FolderPlus, House, ListFilter, MessageSquare, Pin, PinOff, Search,
+  Settings, SlidersHorizontal, SquarePen, UsersRound,
 } from "lucide-react";
 import { IconButton, Notice, accountLabel, errorText, identityLabel, providerName } from "./ui";
 import { ChatRows, MenuItem, SidebarPopup, SidebarSection, shortDate } from "./SidebarParts";
+import { SidebarTitlebar } from "./WorkspaceNavigation";
+import { useLanguage } from "./preferences";
 import { ProjectMenu } from "./ProjectMenu";
+import { ChatRowTitle } from "./ChatRowTitle";
 import "./project-sidebar.css";
 
 const preferenceKey = "boteam.sidebar.preferences.v1";
@@ -14,11 +17,12 @@ function preferences() {
   try { return JSON.parse(localStorage.getItem(preferenceKey)) || {}; }
   catch { return {}; }
 }
-const navigation = [[House, "首页", "home"], [Bot, "Bot 管理", "bots"], [WalletCards, "账号管理", "accounts"]];
-const filters = [["all", "全部"], ["unread", "未读"], ["running", "进行中"]];
+
 
 export function Sidebar({ state, page, select, open, disabled, collapse, history, onChatMenu, onChatAction,
   menuChatId, invoke, refresh, onNewChat, homeBot, onSelectBot, dialogOpen }) {
+  const t = useLanguage();
+  const filters = [["all", t("全部", "All")], ["unread", t("未读", "Unread")], ["running", t("进行中", "Running")]];
   const [prefs, setPrefs] = useState(preferences);
   const [popup, setPopup] = useState(null);
   const [error, setError] = useState("");
@@ -34,16 +38,14 @@ export function Sidebar({ state, page, select, open, disabled, collapse, history
   const sections = state.chatSections || [];
   const filter = prefs.filter || "all";
   const grouped = prefs.grouped !== false;
-  const recentArchived = prefs.recentArchived === true;
   const active = disabled ? [] : chats.filter(c => !c.archived);
   const matches = c => filter === "all" || (filter === "unread" ? c.unread : runningIds.has(c.id));
   const pinned = active.filter(c => c.pinned && matches(c));
   const regular = active.filter(c => !c.pinned && matches(c));
-  const archived = disabled ? [] : chats.filter(c => c.archived && matches(c));
   const projectIds = new Set(projects.map(p => p.id));
   const sectionIds = new Set(sections.map(s => s.id));
   const free = regular.filter(c => !sectionIds.has(c.sectionId));
-  const recent = (recentArchived ? archived : free.filter(c => !grouped || prefs.recentProjects || !projectIds.has(c.projectId)))
+  const recent = free.filter(c => !grouped || prefs.recentProjects || !projectIds.has(c.projectId))
     .slice().sort((a, b) => prefs.sort === "created" ? b.creationOrder - a.creationOrder : b.updatedAt.localeCompare(a.updatedAt));
   const rowProps = { selected: page, select, runningIds, onChatAction, menuChatId, onChatMenu: (...args) => { dismiss(); onChatMenu(...args); } };
   useEffect(() => {
@@ -143,69 +145,57 @@ export function Sidebar({ state, page, select, open, disabled, collapse, history
     });
   }
 
-  return <aside className="sidebar project-sidebar" aria-label="侧栏" onKeyDown={e => {
+  return <aside className="sidebar project-sidebar" aria-label={t("侧栏", "Sidebar")} onKeyDown={e => {
     if (e.key === "ArrowDown" && e.target.matches('button[aria-haspopup="menu"], button[aria-haspopup="dialog"]') && (!popup || popup.type === "project")) {
       e.preventDefault(); e.target.click();
     }
   }}>
-    <div className="sidebar-titlebar">
-      <IconButton label="收起侧栏" icon={PanelLeftClose} onClick={collapse}/>
-      <IconButton label="后退" icon={ChevronLeft} disabled={!history.back || disabled} onClick={() => history.move(-1)}/>
-      <IconButton label="前进" icon={ChevronRight} disabled={!history.forward || disabled} onClick={() => history.move(1)}/>
-    </div>
-    <nav className="rail-primary" aria-label="工作台">
+    <SidebarTitlebar collapse={collapse} history={history} disabled={disabled}/>
+    <nav className="rail-primary" aria-label={t("工作台", "Workspace")}>
       <div className="workbench-heading">
-        <button className="workbench-switch" aria-label="切换工作台" aria-haspopup="menu" aria-expanded={popup?.type === "workbench"}
+        <button className="workbench-switch" aria-label={t("切换工作台", "Switch workspace")} aria-haspopup="menu" aria-expanded={popup?.type === "workbench"}
           disabled={disabled} onClick={e => show(e, "workbench")}>BoTeam <ChevronDown size={14}/></button>
-        <IconButton label="整理侧边栏" icon={ListFilter} aria-haspopup="menu" aria-expanded={popup?.type === "layout"}
+        <IconButton label={t("整理侧边栏", "Organize sidebar")} icon={ListFilter} aria-haspopup="menu" aria-expanded={popup?.type === "layout"}
           className={filter !== "all" || !grouped ? "option-active" : ""} disabled={disabled} onClick={e => show(e, "layout")}/>
-        <IconButton label="搜索对话" icon={Search} disabled={disabled} onClick={() => choose(() => open({ type: "search" }))}/>
+        <IconButton label={t("搜索对话", "Search chats")} icon={Search} disabled={disabled} onClick={() => choose(() => open({ type: "search" }))}/>
       </div>
-      <button className="rail-row" aria-label="新建对话" disabled={disabled} onClick={() => choose(() => onNewChat())}>
-        <SquarePen/><span>新建对话</span><kbd>⌘ N</kbd>
+      <button className="rail-row" aria-label={t("新建对话", "New chat")} disabled={disabled} onClick={() => choose(() => onNewChat())}>
+        <SquarePen/><span>{t("新建对话", "New chat")}</span><kbd>⌘ N</kbd>
       </button>
-      {homeBot && <button type="button" className="rail-row sidebar-quick-bot" aria-label="选择默认 Bot"
-        aria-description={`当前 Bot 为 ${homeBot.name}`} title={`选择默认 Bot · ${homeBot.name}`}
+      {homeBot && <button type="button" className="rail-row sidebar-quick-bot" aria-label={t("选择默认 Bot", "Select default bot")}
+        aria-description={homeBot.name} title={t("选择默认 Bot", "Select default bot") + " · " + homeBot.name}
         disabled={disabled} aria-haspopup="menu" aria-expanded={popup?.type === "bot"}
         onClick={e => show(e, "bot")}>
         <Bot className="quick-bot-icon" size={16} aria-hidden="true"/><span>{homeBot.name}</span><ChevronDown className="sidebar-bot-chevron"/>
       </button>}
     </nav>
-    <nav className="rail-history" aria-label="聊天列表">
-      {(pinned.length > 0 || (grouped && projects.some(p => p.pinned))) && <SidebarSection title="置顶" {...disclosure("pinned")}>
+    <nav className="rail-history" aria-label={t("聊天列表", "Chat list")}>
+      {(pinned.length > 0 || (grouped && projects.some(p => p.pinned))) && <SidebarSection title={t("置顶", "Pinned")} {...disclosure("pinned")}>
         <ChatRows {...rowProps} chats={pinned}/>{grouped && projectRows(projects.filter(p => p.pinned))}
       </SidebarSection>}
       {sections.map(s => <SidebarSection key={s.id} title={s.name} {...disclosure("section:" + s.id)}>
         <ChatRows {...rowProps} chats={regular.filter(c => c.sectionId === s.id)}/>
         {grouped && projectRows(projects.filter(p => !p.pinned && p.sectionId === s.id))}
       </SidebarSection>)}
-      {grouped && <SidebarSection title="项目" {...disclosure("projects")} actions={
-        <IconButton icon={FolderPlus} label="导入本地项目" className="project-import" disabled={disabled || picking} onClick={importProject}/>}>
+      {grouped && <SidebarSection title={t("项目", "Projects")} {...disclosure("projects")} actions={
+        <IconButton icon={FolderPlus} label={t("导入本地项目", "Import local project")} className="project-import" disabled={disabled || picking} onClick={importProject}/>}>
         {projectRows(projects.filter(p => !p.pinned && !sectionIds.has(p.sectionId)))}
       </SidebarSection>}
-      <SidebarSection title="最近" {...disclosure("recent")} actions={<>
-        <IconButton label="最近聊天选项" icon={SlidersHorizontal} aria-haspopup="menu" aria-expanded={popup?.type === "recent"}
-          className={recentArchived || prefs.recentProjects || prefs.sort === "created" ? "option-active" : ""} disabled={disabled} onClick={e => show(e, "recent")}/>
-        <IconButton label="开始新聊天" icon={SquarePen} disabled={disabled} onClick={() => choose(() => onNewChat())}/>
+      <SidebarSection title={t("最近", "Recent")} {...disclosure("recent")} actions={<>
+        <IconButton label={t("最近聊天选项", "Recent chat options")} icon={SlidersHorizontal} aria-haspopup="menu" aria-expanded={popup?.type === "recent"}
+          className={prefs.recentProjects || prefs.sort === "created" ? "option-active" : ""} disabled={disabled} onClick={e => show(e, "recent")}/>
+        <IconButton label={t("开始新聊天", "Start new chat")} icon={SquarePen} disabled={disabled} onClick={() => choose(() => onNewChat())}/>
       </>}>
         <ChatRows {...rowProps} chats={recent}/>
-        {!recent.length && !disabled && <div className="rail-empty">{filter !== "all" ? "没有匹配的聊天" : recentArchived ? "暂无已归档聊天" : "暂无聊天"}</div>}
+        {!recent.length && !disabled && <div className="rail-empty">{filter !== "all" ? t("没有匹配的聊天", "No matching chats") : t("暂无聊天", "No chats yet")}</div>}
       </SidebarSection>
-      {archived.length > 0 && !recentArchived && <SidebarSection title="已归档" {...disclosure("archived", false)}>
-        <ChatRows {...rowProps} chats={archived}/>
-      </SidebarSection>}
     </nav>
     <Notice>{error}</Notice>
-    <nav className="rail-settings" aria-label="管理">
-      {navigation.slice(1).map(([Icon, label, id]) => <button key={id} className="rail-row" disabled={disabled}
-        aria-current={page === id && !disabled ? "page" : undefined} onClick={() => choose(() => select(id))}><Icon/><span>{label}</span></button>)}
-    </nav>
-    {popup?.type === "workbench" && <SidebarPopup popup={popup} close={dismiss} title="切换工作台">
-      {navigation.map(([Icon, label, id]) => <MenuItem key={id} icon={Icon} checked={page === id || (id === "home" && !["bots","accounts"].includes(page))}
-        onClick={() => choose(() => select(id))}>{label}</MenuItem>)}
-      <hr/><MenuItem icon={FolderPlus} onClick={importProject}>导入本地项目</MenuItem>
+    {popup?.type === "workbench" && <SidebarPopup popup={popup} close={dismiss} title={t("切换工作台", "Switch workspace")}>
+      <MenuItem icon={House} checked={true} onClick={() => choose(() => select("home"))}>{t("首页", "Home")}</MenuItem>
+      <hr/><MenuItem icon={FolderPlus} onClick={importProject}>{t("导入本地项目", "Import local project")}</MenuItem>
     </SidebarPopup>}
-    {popup?.type === "bot" && homeBot && <SidebarPopup popup={popup} close={dismiss} title="选择默认 Bot">
+    {popup?.type === "bot" && homeBot && <SidebarPopup popup={popup} close={dismiss} title={t("选择默认 Bot", "Select default bot")}>
       {bots.map(bot => {
         const account = state.accounts.find(a => a.id === bot.accountId);
         const duplicate = bots.some(other => other.id !== bot.id && bot.name === other.name);
@@ -215,20 +205,17 @@ export function Sidebar({ state, page, select, open, disabled, collapse, history
           onClick={() => choose(() => onSelectBot(bot.id))}>{bot.name}</MenuItem>;
       })}
     </SidebarPopup>}
-    {popup?.type === "layout" && <SidebarPopup popup={popup} close={dismiss} title="整理侧边栏">
-      <div className="sidebar-menu-caption">整理侧边栏</div>
-      {[[true, "分项目显示"], [false, "合并显示"]].map(([value,label]) => <MenuItem key={label} checked={grouped === value}
+    {popup?.type === "layout" && <SidebarPopup popup={popup} close={dismiss} title={t("整理侧边栏", "Organize sidebar")}>
+      <div className="sidebar-menu-caption">{t("整理侧边栏", "Organize sidebar")}</div>
+      {[[true, t("分项目显示", "Group by project")], [false, t("合并显示", "Combined list")]].map(([value,label]) => <MenuItem key={label} checked={grouped === value}
         onClick={() => choose(() => update({ grouped: value }))}>{label}</MenuItem>)}
-      <hr/><div className="sidebar-menu-caption">筛选条件</div>
+      <hr/><div className="sidebar-menu-caption">{t("筛选条件", "Filter")}</div>
       {filters.map(([value,label]) => <MenuItem key={value} checked={filter === value} onClick={() => choose(() => update({ filter: value }))}>{label}</MenuItem>)}
     </SidebarPopup>}
-    {popup?.type === "recent" && <SidebarPopup popup={popup} close={dismiss} title="最近聊天选项">
-      <div className="sidebar-menu-caption">筛选条件</div>
-      {[[false, "未归档"], [true, "已归档"]].map(([value,label]) => <MenuItem key={label} checked={recentArchived === value}
-        onClick={() => choose(() => update({ recentArchived: value }))}>{label}</MenuItem>)}
-      {grouped && <><hr/><div className="sidebar-menu-caption">显示</div><MenuItem checked={Boolean(prefs.recentProjects)} onClick={() => choose(() => update({ recentProjects: !prefs.recentProjects }))}>项目中的聊天</MenuItem></>}
-      <hr/><div className="sidebar-menu-caption">排序方式</div>
-      {[["updated","最近更新"],["created","创建时间"]].map(([value,label]) => <MenuItem key={value} checked={(prefs.sort || "updated") === value}
+    {popup?.type === "recent" && <SidebarPopup popup={popup} close={dismiss} title={t("最近聊天选项", "Recent chat options")}>
+      {grouped && <><div className="sidebar-menu-caption">{t("显示", "Show")}</div><MenuItem checked={Boolean(prefs.recentProjects)} onClick={() => choose(() => update({ recentProjects: !prefs.recentProjects }))}>{t("项目中的聊天", "Project chats")}</MenuItem></>}
+      <hr/><div className="sidebar-menu-caption">{t("排序方式", "Sort by")}</div>
+      {[["updated",t("最近更新", "Last updated")],["created",t("创建时间", "Date created")]].map(([value,label]) => <MenuItem key={value} checked={(prefs.sort || "updated") === value}
         onClick={() => choose(() => update({ sort: value }))}>{label}</MenuItem>)}
     </SidebarPopup>}
     {project && popup.type === "projectMenu" && <ProjectMenu project={project} sections={sections} chats={chats}
@@ -236,26 +223,27 @@ export function Sidebar({ state, page, select, open, disabled, collapse, history
     {project && popup.type === "project" && <SidebarPopup popup={popup} close={dismiss} title={project.name + " 项目详情"} card
       onEnter={() => clearTimeout(timer.current)} onLeave={delayClose}>
       <header><Folder size={16}/><strong>{project.name}</strong>
-        <IconButton label={project.pinned ? "取消置顶项目" : "置顶项目"} icon={project.pinned ? PinOff : Pin}
+        <IconButton label={project.pinned ? t("取消置顶项目", "Unpin project") : t("置顶项目", "Pin project")} icon={project.pinned ? PinOff : Pin}
           onClick={() => choose(() => updateProject("setProjectPinned", { projectId: project.id, pinned: !project.pinned }))}/></header>
-      <div className="project-chat-count"><MessageSquare size={15}/><span>{active.filter(c => c.projectId === project.id).length} 次聊天</span></div>
+      <div className="project-chat-count"><MessageSquare size={15}/><span>{active.filter(c => c.projectId === project.id).length} {t("次聊天", "chats")}</span></div>
       {project.folders.length > 0 && <div className="project-card-folders">
         {project.folders.map(folder => <button key={folder} type="button" title={folder}
           onClick={() => choose(() => updateProject("openProjectFolder", {projectId: project.id, folder}))}><Folder size={15}/><span dir="rtl"><bdi dir="ltr">{folder}</bdi></span></button>)}
       </div>}
-      <button type="button" className="project-edit" onClick={() => choose(() => open({ type: "project", id: project.id }))}><Settings size={15}/>编辑项目</button>
+      <button type="button" className="project-edit" onClick={() => choose(() => open({ type: "project", id: project.id }))}><Settings size={15}/>{t("编辑项目", "Edit project")}</button>
     </SidebarPopup>}
   </aside>;
 }
 export function ChatSearch({ state, select }) {
+  const t = useLanguage();
   const [query, setQuery] = useState("");
   const term = query.trim().toLocaleLowerCase();
   const projects = state.projects || [];
   const projectNames = new Map(projects.map(p => [p.id, p.name]));
   const matchedProjects = new Set(projects.filter(p => [p.name, ...p.folders].some(value => value.toLocaleLowerCase().includes(term))).map(p => p.id));
   const matchedMessages = new Set(term ? state.messages.filter(m => m.text?.toLocaleLowerCase().includes(term)).map(m => m.chatId) : []);
-  const results = state.chats.filter(chat => !term || chat.name.toLocaleLowerCase().includes(term)
-    || matchedProjects.has(chat.projectId) || matchedMessages.has(chat.id));
+  const results = state.chats.filter(chat => !chat.archived && (!term || chat.name.toLocaleLowerCase().includes(term)
+    || matchedProjects.has(chat.projectId) || matchedMessages.has(chat.id)));
   return (
     <div className="quick-search">
       <label className="quick-search-input">
@@ -263,8 +251,8 @@ export function ChatSearch({ state, select }) {
         <input
           data-autofocus
           type="search"
-          aria-label="搜索会话名称或消息"
-          placeholder="搜索聊天、消息、项目或文件夹"
+          aria-label={t("搜索会话名称或消息", "Search chat names or messages")}
+          placeholder={t("搜索聊天、消息、项目或文件夹", "Search chats, messages, projects or folders")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -275,15 +263,14 @@ export function ChatSearch({ state, select }) {
           return (
             <button key={chat.id} onClick={() => select(chat.id)}>
               <Icon size={16} />
-              <span>{chat.name}</span>
+              <ChatRowTitle>{chat.name}</ChatRowTitle>
               {projectNames.has(chat.projectId) && <small className="search-result-project">{projectNames.get(chat.projectId)}</small>}
-              {chat.archived && <Archive size={13} aria-label="已归档" />}
               <time>{shortDate(chat.updatedAt)}</time>
             </button>
           );
         })}
         {results.length === 0 && (
-          <p>{term ? "没有找到匹配的对话" : "暂无对话"}</p>
+          <p>{term ? t("没有找到匹配的对话", "No matching chats") : t("暂无对话", "No chats yet")}</p>
         )}
       </div>
     </div>
