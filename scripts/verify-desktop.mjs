@@ -130,13 +130,38 @@ async function verifyKeyboardShortcuts(page, nav, main) {
   await page.keyboard.press('Escape')
 }
 
+async function verifyProfile(page, nav, main) {
+  const link = nav.getByRole('group', { name: '个人资料' }).getByRole('button')
+  await link.click()
+  await expect(nav).toHaveCount(0)
+  await expect(main.getByRole('heading', { name: '用户', level: 1 })).toBeVisible()
+  await expect(main.getByText('累计 Token 数', { exact: true })).toBeVisible()
+  await expect(main.getByText(/精选作品|个人作品|创建站点/)).toHaveCount(0)
+  await main.getByRole('button', { name: '后退' }).click()
+  await expect(link).toBeVisible()
+  await page.getByRole('button', { name: '前进' }).click()
+  const openEdit = main.getByRole('button', { name: '编辑', exact: true })
+  const edit = page.getByRole('dialog', { name: '编辑个人资料' })
+  await openEdit.click()
+  await edit.getByLabel('显示名称').fill('验收用户')
+  await edit.getByLabel('用户名').fill('@fixture')
+  await edit.getByRole('button', { name: '保存' }).click()
+  await expect(edit).toHaveCount(0)
+  await page.reload()
+  await expect(main.getByRole('heading', { name: '验收用户' })).toBeVisible()
+  await expect(main.getByText('@fixture', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '设置', exact: true }).click()
+  await expect(link).toHaveAccessibleName('验收用户')
+}
+
 async function verifySettings(page) {
   const nav = page.getByRole('navigation', { name: '设置分类' })
   const main = page.getByRole('main')
   const search = nav.getByRole('searchbox', { name: '搜索设置' })
-  await expect(nav.getByRole('group')).toHaveCount(6)
+  await expect(nav.getByRole('group')).toHaveCount(7)
   await expect(nav.locator('.settings-category > p').first()).toHaveCSS('font-weight', '400')
-  await expect(nav.locator('.rail-row')).toHaveCount(17)
+  await expect(nav.locator('.rail-row')).toHaveCount(18)
+  await verifyProfile(page, nav, main)
   await search.fill('字号')
   await expect(nav.locator('.rail-row')).toHaveCount(1)
   await search.press('Enter')
@@ -161,7 +186,7 @@ async function verifySettings(page) {
   await search.fill('unmatched fixture')
   await expect(nav.getByRole('status')).toHaveText('没有匹配的设置')
   await search.press('Escape')
-  await expect(nav.locator('.rail-row')).toHaveCount(17)
+  await expect(nav.locator('.rail-row')).toHaveCount(18)
   await verifyKeyboardShortcuts(page, nav, main)
   for (const name of ['本机配置','使用情况','常规','设备存储','备份与恢复','频道配置',
     '插件与技能','MCP 服务器','工具审批与文件访问','Git 工作树','通知']) {
@@ -427,7 +452,7 @@ try {
     await button('定时任务').click()
     await expect(page.getByRole('heading', { name: '定时任务', exact: true })).toBeVisible()
     await verifyScheduledTask(page)
-    await button('用户').click()
+    await button('验收用户').click()
     await page.getByRole('menuitem', { name: '语言' }).hover()
     await page.getByRole('menuitemradio', { name: 'English' }).click()
     await page.reload()

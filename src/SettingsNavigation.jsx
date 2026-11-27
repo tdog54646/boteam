@@ -1,10 +1,11 @@
 import React, { useRef, useState } from "react";
 import {
-  Archive, Bell, Blocks, Bot, Cable, DatabaseBackup, FolderTree, Gauge, GitBranch,
+  Archive, ArrowUpRight, Bell, Blocks, Bot, Cable, DatabaseBackup, FolderTree, Gauge, GitBranch,
   HardDrive, MessagesSquare, Search, Settings, ShieldCheck, Sun, WalletCards, ScanLine, X,
 } from "lucide-react";
 import { ShortcutSymbol } from "./ui";
-import { useLanguage } from "./preferences";
+import { usePreferences } from "./preferences";
+import { ProfileAvatar } from "./ProfileAvatar";
 
 const groups = [
   { title: ["Bot 管理", "Bots"], items: [
@@ -40,11 +41,14 @@ const groups = [
 export const settingsPages = groups.flatMap(group => group.items.map(([id]) => id));
 
 export function SettingsNavigation({ page, select, searchRef }) {
-  const t = useLanguage();
+  const { t, profile } = usePreferences();
   const [query, setQuery] = useState("");
   const results = useRef(null);
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  const filtered = groups.map(({title, items}) => ({
+  const profileGroup = { title: ["个人资料", "Profile"], items: [
+    ["profile", ProfileAvatar, profile.displayName, profile.displayName, `${profile.username} 头像 用户名 Token 统计 avatar username stats`],
+  ] };
+  const filtered = [profileGroup, ...groups].map(({title, items}) => ({
     title,
     items: items.filter(([, , zh, en, keywords]) => {
       const label = [...title, zh, en, keywords].join(" ").toLocaleLowerCase();
@@ -99,6 +103,7 @@ export function SettingsNavigation({ page, select, searchRef }) {
         {items.map(([id, Icon, zh, en]) => <button key={id} type="button" className="rail-row"
           aria-current={page === id ? "page" : undefined} onClick={() => openResult(id)}>
           <Icon size={16} aria-hidden="true"/><span>{t(zh, en)}</span>
+          {id === "profile" && <ArrowUpRight className="profile-link-arrow" size={14} aria-hidden="true"/>}
         </button>)}
       </div>)}
       {!filtered.length && <p className="settings-no-results" role="status">{t("没有匹配的设置", "No matching settings")}</p>}

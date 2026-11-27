@@ -20,11 +20,18 @@ export function preferenceLabels(t) {
     en: "English",
   };
 }
-const defaults = { theme: "system", fontSize: "standard", language: "zh-CN", shortcuts: defaultShortcuts };
+const defaultProfile = { displayName: "", username: "user" };
+const defaults = { theme: "system", fontSize: "standard", language: "zh-CN", shortcuts: defaultShortcuts, profile: defaultProfile };
 const fontScales = { small: 0.92, standard: 1, large: 1.15 };
 const chinese = (zh) => zh;
 const english = (zh, en) => en ?? zh;
 const Preferences = createContext({ ...defaults, appearance: "light", fontScale: 1, t: chinese });
+
+function readProfile(profile) {
+  const displayName = typeof profile?.displayName === "string" ? profile.displayName.trim().slice(0, 60) : "";
+  const username = typeof profile?.username === "string" ? profile.username.trim().replace(/^@+/, "").slice(0, 40) : "";
+  return { displayName, username: username || defaultProfile.username };
+}
 
 function readPreferences() {
   try {
@@ -33,6 +40,7 @@ function readPreferences() {
       ...Object.fromEntries(Object.entries(choices).map(([key, options]) =>
         [key, options.includes(stored[key]) ? stored[key] : defaults[key]])),
       shortcuts: readShortcuts(stored.shortcuts),
+      profile: readProfile(stored.profile),
     };
   } catch { return defaults; }
 }
@@ -80,7 +88,14 @@ export function PreferencesProvider({ children }) {
   function resetShortcuts() {
     persist({ ...readPreferences(), shortcuts: { ...defaultShortcuts } });
   }
-  return <Preferences.Provider value={{ ...prefs, appearance, fontScale, t, update, setShortcut, resetShortcuts }}>{children}</Preferences.Provider>;
+  function saveProfile(profile) {
+    const stored = readPreferences();
+    const next = { ...stored, profile: readProfile({ ...stored.profile, ...profile }) };
+    localStorage.setItem(storageKey, JSON.stringify(next));
+    setPrefs(next);
+  }
+  const profile = { ...prefs.profile, displayName: prefs.profile.displayName || t("用户", "User") };
+  return <Preferences.Provider value={{ ...prefs, profile, appearance, fontScale, t, update, setShortcut, resetShortcuts, saveProfile }}>{children}</Preferences.Provider>;
 }
 
 export const usePreferences = () => useContext(Preferences);

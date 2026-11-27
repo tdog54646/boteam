@@ -23,6 +23,7 @@ import { ChannelNavigation, Channels } from "./Channels";
 import { ScheduleNavigation, SchedulesPage, scheduleCreatePages } from "./Schedules";
 import { ArchivedChats, HistoryButtons, SidebarTitlebar, WorkspaceNavigation } from "./WorkspaceNavigation";
 import { SettingsNavigation, settingsPages } from "./SettingsNavigation";
+import { ProfilePage } from "./ProfilePage";
 import { AppSettings } from "./AppSettings";
 import { CodingSettings } from "./CodingSettings";
 import { DataSettings } from "./DataSettings";
@@ -56,7 +57,7 @@ const empty = {
 const invoke = (method, payload = {}) => window.boteam.invoke(method, payload);
 const initialChat = window.boteam?.initialChatId;
 const navigationStorage = initialChat ? sessionStorage : localStorage;
-const builtInPages = new Set(["home", "schedules", "channels", ...settingsPages, ...scheduleCreatePages]);
+const builtInPages = new Set(["home", "schedules", "channels", "profile", ...settingsPages, ...scheduleCreatePages]);
 const schedulePrefix = "schedule:";
 const channelChatPrefix = "channel-chat:";
 const normalizePage = id => id === "channel-chats" ? "channels" : id;
@@ -367,7 +368,7 @@ export default function App() {
           document.querySelector('[aria-modal="true"], dialog[open]')) return;
       const binding = shortcutFromEvent(e);
       if (!binding) return;
-      if (binding === shortcuts.toggleSidebar) setCollapsed(value => !value);
+      if (binding === shortcuts.toggleSidebar && page !== "profile") setCollapsed(value => !value);
       else if (binding === shortcuts.newChat) newChat();
       else if (binding === shortcuts.searchChats) setDialog({ type: "search" });
       else if (binding === "Mod+F" && settingsPages.includes(page) && (/Mac/i.test(navigator.platform) ? e.metaKey : e.ctrlKey)) {
@@ -464,13 +465,14 @@ export default function App() {
   const draftTitle = draft && !draft.legacyHome && (draft.name || (draft.kind === "group" ? t("新群聊", "New group chat") : panelMembers[0]?.name));
   const channelPage = page === "channels";
   const schedulePage = page === "schedules" || page.startsWith(schedulePrefix);
-  const section = !wizard && (settingsPages.includes(page) || chat?.archived) ? "settings"
+  const profilePage = !wizard && page === "profile";
+  const section = profilePage || (!wizard && (settingsPages.includes(page) || chat?.archived)) ? "settings"
     : !wizard && (channelPage || page.startsWith(channelChatPrefix)) ? "channels" : !wizard && schedulePage ? "schedules" : "home";
   const settingsPage = chat?.archived ? "archived" : page;
   useEffect(() => {
     if (settingsPages.includes(settingsPage)) lastSettingsPage.current = settingsPage;
   }, [settingsPage]);
-  const hasSecondary = !collapsed;
+  const hasSecondary = !collapsed && !profilePage;
   const history = { back: position > 0, forward: position + 1 < trail.current.length, move };
   const pageTitle = wizard ? t("初始设置", "Initial setup") : chat?.name || draftTitle || ({
     bots: t("Bot 管理", "Bots"), accounts: t("账号管理", "CLI accounts"), archived: t("已归档会话", "Archived chats"),
@@ -479,6 +481,7 @@ export default function App() {
   const shellClasses = [
     "shell",
     settingsPages.includes(page) && !wizard ? "settings-shell" : "",
+    profilePage ? "profile-shell" : "",
     !hasSecondary ? "sidebar-closed no-secondary-sidebar" : "",
     sidebarWidth != null ? "has-custom-rail" : "",
     panelWidth != null ? "has-custom-panel" : "",
@@ -514,7 +517,7 @@ export default function App() {
   };
   return (
     <div ref={shellRef} className={shellClasses} style={shellStyle}>
-      <WorkspaceNavigation section={section} select={select} settingsPage={section === "settings" ? settingsPage : lastSettingsPage.current} disabled={wizard || !ready}/>
+      <WorkspaceNavigation section={section} select={select} settingsPage={section === "settings" && !profilePage ? settingsPage : lastSettingsPage.current} disabled={wizard || !ready}/>
       {hasSecondary && (
         <>
           {section === "home" ? <Sidebar
@@ -561,7 +564,7 @@ export default function App() {
       )}
       <main className="main" hidden={panelVisible && panel.expanded}>
         <header className="topbar">
-          {collapsed && (
+          {collapsed && !profilePage && (
             <IconButton
               icon={PanelLeftOpen}
               label={t("展开侧栏", "Expand sidebar")}
@@ -569,7 +572,7 @@ export default function App() {
             />
           )}
           {!hasSecondary && <div className="window-history"><HistoryButtons history={history} disabled={wizard || !ready}/></div>}
-          {section !== "schedules" && !settingsPages.includes(page) && <div className="window-title">{pageTitle}</div>}
+          {section !== "schedules" && !profilePage && !settingsPages.includes(page) && <div className="window-title">{pageTitle}</div>}
           <div className="header-actions">
             {!wizard && (chat || draft)?.kind === "group" && (
               <button
@@ -627,6 +630,8 @@ export default function App() {
             finishWizard={finishWizard}
             busy={busy}
           />
+        ) : profilePage ? (
+          <ProfilePage state={state} invoke={invoke}/>
         ) : channelPage ? (
           <Channels state={state} invoke={invoke} refreshSnapshot={refresh} select={select}/>
         ) : schedulePage ? (

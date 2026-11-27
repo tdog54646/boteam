@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Contrast, Globe, Type } from "lucide-react";
 import { ActionMenu } from "./ActionMenu";
+import { ProfileAvatar } from "./ProfileAvatar";
 import { choices, preferenceLabels, usePreferences } from "./preferences";
 import "./user-menu.css";
 
@@ -8,8 +9,7 @@ export function UserMenu() {
   const [anchor, setAnchor] = useState(null);
   const prefs = usePreferences();
   const { t } = prefs;
-  const user = t("用户", "User");
-  const initial = t("用", "U");
+  const user = prefs.profile.displayName;
   const labels = preferenceLabels(t);
   const sections = [
     ["theme", t("主题", "Theme"), Contrast],
@@ -27,10 +27,10 @@ export function UserMenu() {
     <button type="button" className="user-menu-trigger" aria-label={user}
       aria-haspopup="menu" aria-expanded={!!anchor}
       onClick={e => setAnchor(anchor ? null : { anchor: e.currentTarget })}>
-      <span className="local-user-avatar" aria-hidden="true">{initial}</span>
+      <ProfileAvatar />
     </button>
     {anchor && <ActionMenu label={user} variant="user" anchor={anchor} groups={groups}
-      heading={<><span className="local-user-avatar" aria-hidden="true">{initial}</span>{user}</>}
+      heading={<><ProfileAvatar /><span className="user-menu-name">{user}</span></>}
       onClose={() => setAnchor(null)} onAction={({ payload }) => prefs.update(payload.key, payload.value)} />}
   </>;
 }

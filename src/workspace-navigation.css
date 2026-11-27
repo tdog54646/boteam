@@ -64,12 +64,14 @@
 .settings-navigation .rail-row { min-height: 30px; height: auto; margin-block-end: 1px; padding: 5px 8px; gap: 8px; border-radius: 10px; }
 .settings-navigation .rail-row[aria-current=page] { background: color-mix(in srgb, var(--fg) 6%, var(--sidebar)); }
 .settings-navigation .rail-row:focus-visible { outline: 1px solid var(--muted); outline-offset: -1px; }
+.settings-navigation .local-user-avatar { width: 20px; height: 20px; font-size: 8px; }
+.settings-navigation .profile-link-arrow { margin-inline-start: auto; flex: none; color: var(--subtle); }
 .settings-no-results { margin: 14px 7px; color: var(--muted); font-size: 13px; }
-.settings-shell { --nav-width: 52px; }
+:is(.settings-shell, .profile-shell) { --nav-width: 52px; }
 .settings-shell:not(.has-custom-rail) { --rail-width: clamp(190px, 22vw, 238px); }
 .settings-shell .context-sidebar { border: 0; }
-.settings-shell .workspace-navigation { background: var(--sidebar); }
-.settings-shell .main { border: 1px solid var(--line); border-radius: 14px 0 0 14px; overflow: hidden; }
+:is(.settings-shell, .profile-shell) .workspace-navigation { background: var(--sidebar); }
+:is(.settings-shell, .profile-shell) .main { border: 1px solid var(--line); border-radius: 14px 0 0 14px; overflow: hidden; }
 @media (max-width: 900px) {
   .shell { --nav-width: 46px; }
 }
