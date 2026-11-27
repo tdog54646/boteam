@@ -23,6 +23,24 @@ async function git(cwd, args, { noIndex = false, preview = false, signal } = {})
   }
 }
 
+export async function listGitWorktrees(cwd, signal) {
+  let raw
+  try {
+    raw = await git(cwd, ['worktree', 'list', '--porcelain', '-z'], { signal })
+  } catch (error) {
+    if (error.stderr?.includes('not a git repository')) return []
+    throw error
+  }
+  return raw.split('\0\0').filter(Boolean).map(block => {
+    const fields = Object.fromEntries(block.split('\0').filter(Boolean).map(field => {
+      const space = field.indexOf(' ')
+      return space < 0 ? [field, true] : [field.slice(0,space), field.slice(space + 1)]
+    }))
+    return { path: fields.worktree, branch: fields.branch?.replace(/^refs\/heads\//, '') || null,
+      commit: fields.HEAD || null, bare: Boolean(fields.bare), locked: 'locked' in fields, prunable: 'prunable' in fields }
+  })
+}
+
 function numbers(source, update) {
   for (const row of source.split('\0')) {
     const match = /^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(row)

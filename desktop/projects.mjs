@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { accessSync, constants, realpathSync, statSync } from 'node:fs'
 import { basename, isAbsolute, relative, sep } from 'node:path'
+import { listGitWorktrees } from './panel-git.mjs'
 import { protectedNativePaths } from './codex-permissions.mjs'
 import { redact } from './native.mjs'
 import { insertSection, requireSection, requireIdleChats } from './chat-management.mjs'
@@ -117,6 +118,30 @@ export function chatProjectCwd(db, chatId) {
 export function inheritProject(db, sourceChatId, chatId, destinationCwd = null) {
   db.run(`INSERT INTO chat_projects(chatId,projectId,cwd)
     SELECT ?,projectId,coalesce(?,cwd) FROM chat_projects WHERE chatId=?`, chatId,destinationCwd,sourceChatId)
+}
+
+export async function projectWorktrees(workspace, projectId) {
+  requireProject(workspace.db, projectId)
+  const folders = workspace.db.all('SELECT path FROM project_folders WHERE projectId=? ORDER BY position', projectId)
+  const rows = new Map(), issues = []
+  for (const { path } of folders) {
+    try {
+      const directory = registeredFolder(workspace.db, projectId, path)
+      for (const row of await listGitWorktrees(directory, workspace.lifetime.signal)) rows.set(row.path, row)
+    } catch (error) {
+      workspace.lifetime.signal.throwIfAborted()
+      issues.push({ path, message: redact(error.message).slice(0,500) })
+    }
+  }
+  return { rows: [...rows.values()], issues }
+}
+
+export function projectDirectories(workspace, projectId) {
+  requireProject(workspace.db, projectId)
+  const chats = workspace.db.all(`SELECT c.id,c.name FROM chat_projects p JOIN chats c ON c.id=p.chatId
+    WHERE p.projectId=? ORDER BY c.updatedAt DESC`, projectId)
+  return chats.flatMap(chat => workspace.chatDirectories(chat.id).map(({ names, directory }) =>
+    ({ chatId:chat.id, chatName:chat.name, names, directory })))
 }
 
 export function projectSnapshot(db) {

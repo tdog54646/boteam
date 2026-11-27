@@ -21,7 +21,7 @@ import { agentEntries, agentSummary, saveAgentEntries } from './subagents.mjs'
 import { labelLegacySubagents } from './subagent-names.mjs'
 import { readAntigravityChildren } from './adapters/antigravity-subagents.mjs'
 import { agentActivity } from './adapters/chat-activity.mjs'
-import { draftProjectCwd, chatProjectCwd, configureNewChatProject, inheritProject, manageProject } from './projects.mjs'
+import { draftProjectCwd, chatProjectCwd, configureNewChatProject, inheritProject, manageProject, projectDirectories, projectWorktrees } from './projects.mjs'
 
 const active = "('queued','running','approval')"
 const stamp = () => new Date().toISOString()
@@ -532,6 +532,10 @@ export class Workspace {
         return this.accountOperation(this.attachments.thumbnail(p.scope, p.id, this.makeThumbnail))
       case 'attachmentPreview':
         return this.accountOperation(attachmentPreview(this.attachments, p, this.makeThumbnail))
+      case 'projectWorktrees':
+        return this.accountOperation(projectWorktrees(this, p.projectId))
+      case 'projectDirectories':
+        return projectDirectories(this, p.projectId)
       case 'setDefaultPermission':
         return this.accountOperation(this.composer.setDefaultPermission(p))
       case 'setComposerSettings':

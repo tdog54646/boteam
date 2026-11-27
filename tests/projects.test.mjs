@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -308,4 +309,30 @@ test('importing a project binds the requesting empty chat before legacy adoption
   assert.equal(info(chatId).initialProjectCwd,f.a)
   assert.equal(info(unclaimed).projectId,null)
   assert.deepEqual(f.ws.db.all('SELECT path FROM project_folders').map(row=>row.path),[f.a])
+})
+
+
+test('coding settings list real Git worktrees and resolve chat directories independently of a changed primary folder', async t => {
+  const f = await fixture(t)
+  const git = (...args) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'user.name=BoTeam', '-c', 'user.email=test@example.invalid', ...args], { cwd: f.a })
+  git('init', '--quiet', '-b', 'main')
+  git('commit', '--quiet', '--allow-empty', '-m', 'base')
+  const linked = join(f.dir, 'linked workspace')
+  git('worktree', 'add', '--quiet', '--detach', linked, 'HEAD')
+  git('worktree', 'lock', linked)
+  const projectId = await f.call('createProject', { name: 'project', folders: [f.a, f.b, linked] })
+  const chatId = await f.call('createChat', { kind: 'group', name: 'group', projectId, members: f.bots })
+  await f.call('updateProject', { projectId, folders: [f.b, f.a, linked] })
+  assert.equal(f.snapshot().projects[0].folders[0], f.b)
+  assert.deepEqual(await f.call('projectDirectories', { projectId }), [
+    { chatId, chatName: 'group', names: ['Alice','Bob'], directory: f.a },
+  ])
+  const { rows, issues } = await f.call('projectWorktrees', { projectId })
+  assert.deepEqual(issues, [])
+  assert.deepEqual(rows.map(({path, branch, locked}) => ({path, branch, locked})), [
+    { path:f.a, branch:'main', locked:false }, { path:linked, branch:null, locked:true },
+  ])
+  const empty = await f.call('createProject', { name:'plain folder', folders:[f.b] })
+  assert.deepEqual(await f.call('projectWorktrees', { projectId:empty }), { rows:[], issues:[] })
+  await assert.rejects(f.call('projectWorktrees', { projectId:'missing' }))
 })
