@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
@@ -31,20 +32,20 @@ import {
 } from "./ui";
 import "./settings.css";
 
-function loginLabel(account) {
-  if (account.loginState === "signed-in") return "已登录";
+function loginLabel(account, tr) {
+  if (account.loginState === "signed-in") return tr("已登录", "Signed in");
   if (
     account.loginState === "signed-out" ||
     (account.status === "login" && !account.loginState)
   )
-    return "未登录";
-  if (!account.loginState && account.status === "ready") return "已登录";
-  return "登录状态待核实";
+    return tr("未登录", "Signed out");
+  if (!account.loginState && account.status === "ready") return tr("已登录", "Signed in");
+  return tr("登录状态待核实", "Sign-in unverified");
 }
-function installLabel(account) {
+function installLabel(account, tr) {
   if (account.cliInstalled ?? Boolean(account.bin))
-    return account.appInstalled ? "已安装 CLI 和桌面端" : "已安装 CLI";
-  return account.appInstalled ? "已安装桌面端" : "未检测到 CLI";
+    return account.appInstalled ? tr("已安装 CLI 和桌面端", "CLI and desktop app installed") : tr("已安装 CLI", "CLI installed");
+  return account.appInstalled ? tr("已安装桌面端", "Desktop app installed") : tr("未检测到 CLI", "CLI not detected");
 }
 function needsGoogleGrant(candidate) {
   return candidate.provider === "antigravity" && !candidate.importedId &&
@@ -78,24 +79,24 @@ function DetailList({ rows }) {
   );
 }
 
-function technicalDetails(account) {
+function technicalDetails(account, tr) {
   return [
-    [account.configFound === false ? "检测位置" : "配置目录", account.source],
+    [account.configFound === false ? tr("检测位置", "Scan location") : tr("配置目录", "Configuration directory"), account.source],
     [
-      "发现来源",
+      tr("发现来源", "Found in"),
       account.origin !== account.source && account.origin,
     ],
-    ["执行程序", account.bin],
-    ["安装状态", installLabel(account)],
-    ["登录状态", loginLabel(account)],
-    ["默认模型", account.model],
-    ["工作目录", account.cwd],
+    [tr("执行程序", "Executable"), account.bin],
+    [tr("安装状态", "Installation"), installLabel(account, tr)],
+    [tr("登录状态", "Sign-in"), loginLabel(account, tr)],
+    [tr("默认模型", "Default model"), account.model],
+    [tr("工作目录", "Working directory"), account.cwd],
   ];
 }
 
-function discoveryIdentity(account) {
+function discoveryIdentity(account, tr) {
   if (account.email && account.identity?.startsWith("source:"))
-    return `上次登录 · ${account.email}`;
+    return tr(`上次登录 · ${account.email}`, `Last sign-in · ${account.email}`);
   return identityLabel(account);
 }
 
@@ -113,6 +114,7 @@ function Candidate({
   installing,
   authError,
 }) {
+  const tr = useLanguage();
   const [expanded, setExpanded] = useState(false);
   const { provider, identity, status, reason, plan } = candidate;
   const eligible = canImport(candidate);
@@ -123,16 +125,16 @@ function Candidate({
   const rescanFailedImport = authError && !missingCli && !needsLogin && !candidate.canReuseBinding;
   const canResume = authError?.includes("已保留本次 Google 授权");
   const loginAction = canResume
-    ? "继续 Google 授权设置"
+    ? tr("继续 Google 授权设置", "Continue Google authorization")
     : candidate.existingAccountId
-      ? "重新授权并导入"
-      : "Google 授权并导入";
+      ? tr("重新授权并导入", "Reauthorize and import")
+      : tr("Google 授权并导入", "Authorize with Google and import");
   const summary =
     identity || candidate.email
-      ? [discoveryIdentity(candidate), plan].filter(Boolean).join(" · ")
+      ? [discoveryIdentity(candidate, tr), plan].filter(Boolean).join(" · ")
       : status === "missing"
-        ? installLabel(candidate)
-        : loginLabel(candidate);
+        ? installLabel(candidate, tr)
+        : loginLabel(candidate, tr);
   return (
     <div className="detected-account">
       <div className="candidate-line">
@@ -144,7 +146,7 @@ function Candidate({
             checked={selected}
             disabled={disabled || !eligible}
             onChange={toggle}
-            aria-label={`选择 ${providerName(provider)} ${discoveryIdentity(candidate)}`}
+            aria-label={tr(`选择 ${providerName(provider)} ${discoveryIdentity(candidate, tr)}`, `Select ${providerName(provider)} ${discoveryIdentity(candidate, tr)}`)}
           />
           <span
             className={`custom-check ${selected ? "checked" : ""}`}
@@ -161,16 +163,16 @@ function Candidate({
             <small title={summary}>
               {summary}
               {status !== "missing" &&
-                summary !== loginLabel(candidate) &&
-                " · " + loginLabel(candidate)}
+                summary !== loginLabel(candidate, tr) &&
+                " · " + loginLabel(candidate, tr)}
             </small>
           </span>
           <Status
             status={candidate.canReuseBinding ? "ready" : status}
             label={
-              missingCli ? "需要安装 CLI" :
-                candidate.canReuseBinding ? "可导入" :
-                needsLogin ? (candidate.existingAccountId ? "需重新授权" : "需要授权") :
+              missingCli ? tr("需要安装 CLI", "CLI installation required") :
+                candidate.canReuseBinding ? tr("可导入", "Ready to import") :
+                needsLogin ? (candidate.existingAccountId ? tr("需重新授权", "Reauthorization required") : tr("需要授权", "Authorization required")) :
                 undefined
             }
           />
@@ -179,7 +181,7 @@ function Candidate({
           icon={ChevronDown}
           className="account-disclosure"
           aria-expanded={expanded}
-          label={`${expanded ? "收起" : "查看"} ${providerName(provider)} 配置详情`}
+          label={tr(`${expanded ? "收起" : "查看"} ${providerName(provider)} 配置详情`, `${expanded ? "Hide" : "Show"} ${providerName(provider)} configuration details`)}
           onClick={() => setExpanded((open) => !open)}
         />
       </div>
@@ -187,23 +189,23 @@ function Candidate({
         <div className="candidate-auth">
           <p>
             {authorizing
-              ? "正在等待 Google 授权和原生账号核验…"
+              ? tr("正在等待 Google 授权和原生账号核验…", "Waiting for Google authorization and account verification…")
               : installing
-                ? "正在安装官方 agy…"
+                ? tr("正在安装官方 agy…", "Installing the official agy CLI…")
                 : missingCli
                 ? (candidate.sourceKind === "cli"
-                    ? "安装后会核验此 CLI 配置的登录状态。"
-                    : "安装官方 agy 后，可通过 Google 授权绑定此订阅。")
+                    ? tr("安装后会核验此 CLI 配置的登录状态。", "After installation, BoTeam will check whether this CLI is signed in.")
+                    : tr("安装官方 agy 后，可通过 Google 授权绑定此订阅。", "Install the official agy CLI to link this subscription with Google."))
                 : rescanFailedImport
-                  ? "重新检测此原生配置后可再次导入。"
+                  ? tr("重新检测此原生配置后可再次导入。", "Scan this configuration again before importing.")
                 : candidate.email
-                  ? `Google 授权时请选择 ${candidate.email}。`
-                  : "通过 agy 的官方 Google 登录，绑定要导入的订阅账号。"}
+                  ? tr(`Google 授权时请选择 ${candidate.email}。`, `Choose ${candidate.email} when signing in with Google.`)
+                  : tr("通过 agy 的官方 Google 登录，绑定要导入的订阅账号。", "Sign in with Google through agy to link the subscription you want to import.")}
           </p>
           {authError && <Notice>{authError}</Notice>}
           <div>
             {authorizing ? (
-              <Button onClick={onCancel}>取消授权</Button>
+              <Button onClick={onCancel}>{tr("取消授权", "Cancel authorization")}</Button>
             ) : missingCli ? (
               <Button
                 disabled={disabled}
@@ -211,10 +213,10 @@ function Candidate({
                 icon={Download}
                 onClick={onInstall}
               >
-                安装官方 agy
+                {tr("安装官方 agy", "Install agy")}
               </Button>
             ) : rescanFailedImport ? (
-              <Button disabled={disabled} icon={RefreshCw} onClick={onRescan}>重新检测此来源</Button>
+              <Button disabled={disabled} icon={RefreshCw} onClick={onRescan}>{tr("重新检测此来源", "Scan this source again")}</Button>
             ) : (
               <Button
                 disabled={disabled}
@@ -226,7 +228,7 @@ function Candidate({
             )}
             {missingCli && authError && (
               <button className="text-btn" onClick={onInstallGuide}>
-                官方安装说明
+                {tr("官方安装说明", "Official installation guide")}
               </button>
             )}
             {canResume && !authorizing && (
@@ -235,7 +237,7 @@ function Candidate({
                 disabled={disabled}
                 onClick={() => onLogin(true)}
               >
-                重新选择 Google 账号
+                {tr("重新选择 Google 账号", "Choose another Google account")}
               </button>
             )}
           </div>
@@ -244,9 +246,9 @@ function Candidate({
       {expanded && (
         <div className="candidate-details">
           <DetailList
-            rows={[...technicalDetails(candidate),
-              ["来源类型", candidate.sourceKind === "cli" ? "原生 CLI" : candidate.sourceKind === "desktop" ? "桌面客户端" : null],
-              ["检测说明", reason]]}
+            rows={[...technicalDetails(candidate, tr),
+              [tr("来源类型", "Source type"), candidate.sourceKind === "cli" ? tr("原生 CLI", "Native CLI") : candidate.sourceKind === "desktop" ? tr("桌面客户端", "Desktop app") : null],
+              [tr("检测说明", "Scan details"), reason]]}
           />
         </div>
       )}
@@ -260,6 +262,7 @@ export function Discovery({
   onboarding = false,
   pending = false,
 }) {
+  const tr = useLanguage();
   const [items, setItems] = useState([]);
   const [selected, setSelected] = useState([]);
   const [working, setWorking] = useState("scan");
@@ -461,7 +464,7 @@ export function Discovery({
       if (!mounted.current) return;
       if (failures.length) {
         setError(
-          (ids.length ? `${ids.length} 个账号导入成功。` : "") +
+          (ids.length ? tr(`${ids.length} 个账号导入成功。`, `Accounts imported: ${ids.length}.`) : "") +
             failures.join(" "),
         );
       } else if (ids.length) await onFinish([...new Set(ids)]);
@@ -474,14 +477,14 @@ export function Discovery({
   return (
     <div className="account-discovery">
       <div className="discovery-toolbar">
-        <h3>本机配置</h3>
+        <h3>{tr("本机配置", "Local configurations")}</h3>
         <button
           className="text-btn"
           onClick={() => scan()}
           disabled={!!working || pending}
         >
           <RefreshCw size={13} className={working === "scan" ? "spin" : ""} />
-          重新检测
+          {tr("重新检测", "Scan again")}
         </button>
       </div>
       <div className="candidates" aria-busy={working === "scan"}>
@@ -523,15 +526,15 @@ export function Discovery({
               <ProviderIcon provider={p} />
               <div className="row-copy">
                 <strong>{providerName(p)}</strong>
-                <small>正在检测本机配置…</small>
+                <small>{tr("正在检测本机配置…", "Scanning local configurations…")}</small>
               </div>
               <Spinner />
             </div>
           ))
         ) : (
           <div className="inline-empty">
-            <p>未发现可导入的本机配置</p>
-            <small>选择其他配置目录，或在账号管理中添加账号。</small>
+            <p>{tr("未发现可导入的本机配置", "No local configurations found")}</p>
+            <small>{tr("选择其他配置目录，或在账号管理中添加账号。", "Choose another configuration directory or add an account in Settings.")}</small>
           </div>
         )}
       </div>
@@ -543,13 +546,13 @@ export function Discovery({
           aria-expanded={sourceOpen}
         >
           <FolderOpen size={15} />
-          选择其他配置目录
+          {tr("选择其他配置目录", "Choose another configuration directory")}
           <ChevronDown size={13} />
         </button>
         {sourceOpen && (
           <div className="source-picker">
             <Select
-              aria-label="检测工具"
+              aria-label={tr("检测工具", "Tool to scan")}
               value={scanProvider}
               onChange={(e) => setScanProvider(e.target.value)}
             >
@@ -560,7 +563,7 @@ export function Discovery({
               ))}
             </Select>
             <Button disabled={!!working || pending} onClick={() => scan(true)}>
-              选择目录并检测
+              {tr("选择目录并检测", "Choose directory and scan")}
             </Button>
           </div>
         )}
@@ -573,7 +576,7 @@ export function Discovery({
           disabled={working === "import" || pending}
           onClick={onSkip}
         >
-          {onboarding ? "暂时跳过" : "取消"}
+          {onboarding ? tr("暂时跳过", "Skip for now") : tr("取消", "Cancel")}
         </button>
         <Button
           variant="primary"
@@ -581,13 +584,14 @@ export function Discovery({
           busy={working === "import"}
           onClick={doImport}
         >
-          {onboarding ? "导入并继续" : "导入所选账号"}
+          {onboarding ? tr("导入并继续", "Import and continue") : tr("导入所选账号", "Import selected accounts")}
         </Button>
       </div>
     </div>
   );
 }
 export function AccountList({ accounts, bots, open }) {
+  const tr = useLanguage();
   const [query, setQuery] = useState("");
   const botNames = (id) =>
     bots.filter((b) => b.accountId === id && !b.archived).map((b) => b.name);
@@ -604,24 +608,24 @@ export function AccountList({ accounts, bots, open }) {
   return (
     <div className="settings-page">
       <header className="settings-heading">
-        <h1>账号管理</h1>
-        <p>管理 Bot 使用的订阅账号。</p>
+        <h1>{tr("账号管理", "Accounts")}</h1>
+        <p>{tr("管理 Bot 使用的订阅账号。", "Manage the subscriptions your bots use.")}</p>
       </header>
-      <section aria-label="订阅账号">
+      <section aria-label={tr("订阅账号", "Subscription accounts")}>
         <div className="settings-section-heading">
-          <h2>订阅账号</h2>
+          <h2>{tr("订阅账号", "Subscription accounts")}</h2>
           <Button icon={Plus} onClick={() => open({ type: "login" })}>
-            添加账号
+            {tr("添加账号", "Add account")}
           </Button>
         </div>
         {accounts.length > 0 && (
           <div className="account-search">
             <Search size={15} />
             <input
-              aria-label="搜索账号"
+              aria-label={tr("搜索账号", "Search accounts")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索账号、备注或绑定的 Bot"
+              placeholder={tr("搜索账号、备注或绑定的 Bot", "Search accounts, notes or linked bots")}
             />
           </div>
         )}
@@ -642,39 +646,39 @@ export function AccountList({ accounts, bots, open }) {
                       .join(" · ")}
                   </small>
                   {botNames(a.id).length > 0 && (
-                    <small>绑定 Bot · {botNames(a.id).join("、")}</small>
+                    <small>{tr("绑定 Bot ·", "Linked bots ·")} {botNames(a.id).join("、")}</small>
                   )}
                 </div>
                 <Status status={a.status} />
                 <IconButton
                   icon={MoreHorizontal}
-                  label={`管理账号 ${accountLabel(a)}`}
+                  label={tr(`管理账号 ${accountLabel(a)}`, `Manage account ${accountLabel(a)}`)}
                   onClick={() => open({ type: "account", id: a.id })}
                 />
               </div>
             ))
           ) : accounts.length ? (
             <div className="settings-row">
-              <h3>没有匹配的账号</h3>
-              <Button onClick={() => setQuery("")}>清除搜索</Button>
+              <h3>{tr("没有匹配的账号", "No matching accounts")}</h3>
+              <Button onClick={() => setQuery("")}>{tr("清除搜索", "Clear search")}</Button>
             </div>
           ) : (
-            <p className="settings-empty">尚未添加订阅账号</p>
+            <p className="settings-empty">{tr("尚未添加订阅账号", "No subscription accounts yet")}</p>
           )}
         </div>
       </section>
-      <section aria-label="本机配置">
-        <h2>本机配置</h2>
+      <section aria-label={tr("本机配置", "Local configurations")}>
+        <h2>{tr("本机配置", "Local configurations")}</h2>
         <div className="settings-group">
           <div className="settings-row">
             <div className="row-copy">
-              <strong>导入本机账号</strong>
+              <strong>{tr("导入本机账号", "Import local accounts")}</strong>
               <small>
-                查找 Codex、Claude Code 和 Antigravity 已有的登录配置。
+                {tr("查找 Codex、Claude Code 和 Antigravity 已有的登录配置。", "Find existing sign-ins for Codex, Claude Code and Antigravity.")}
               </small>
             </div>
             <Button icon={ScanLine} onClick={() => open({ type: "import" })}>
-              检测本机账号
+              {tr("检测本机账号", "Scan local accounts")}
             </Button>
           </div>
         </div>
@@ -683,6 +687,7 @@ export function AccountList({ accounts, bots, open }) {
   );
 }
 export function LoginDialog({ account, invoke, onClose, onDone }) {
+  const tr = useLanguage();
   const [provider, setProvider] = useState(account?.provider || "codex");
   const [phase, setPhase] = useState("idle");
   const busy = phase !== "idle";
@@ -744,18 +749,18 @@ export function LoginDialog({ account, invoke, onClose, onDone }) {
   }
   return (
     <Modal
-      title={account ? "重新授权" : "添加订阅账号"}
+      title={account ? tr("重新授权", "Reauthorize") : tr("添加订阅账号", "Add subscription account")}
       subtitle={
         retainedLogin
-          ? "点击「继续设置」，按 Antigravity 终端提示完成剩余步骤。"
+          ? tr("点击「继续设置」，按 Antigravity 终端提示完成剩余步骤。", "Choose Continue setup and follow the remaining steps in the Antigravity terminal.")
           : provider === "antigravity"
-            ? "在浏览器中完成 Google 授权，结果会自动返回。首次使用时请按 Antigravity 提示完成设置。"
-            : "通过原生工具完成登录。"
+            ? tr("在浏览器中完成 Google 授权，结果会自动返回。首次使用时请按 Antigravity 提示完成设置。", "Authorize with Google in your browser. On first use, follow the Antigravity prompts to finish setup.")
+            : tr("通过原生工具完成登录。", "Complete sign-in through the native CLI.")
       }
       onClose={close}
     >
       <form onSubmit={(event) => { event.preventDefault(); login(); }}>
-        <Field label="原生工具">
+        <Field label={tr("原生工具", "Native CLI")}>
           <Select
             disabled={busy || !!account}
             value={provider}
@@ -775,9 +780,9 @@ export function LoginDialog({ account, invoke, onClose, onDone }) {
         {needsAntigravityBinding(account) ? (
           <p className="account-auth-hint">
             {account.email && (
-              <>请在 Google 授权页选择 <strong>{account.email}</strong>。</>
+              <>{tr("请在 Google 授权页选择", "On the Google sign-in page, choose")} <strong>{account.email}</strong>。</>
             )}
-            授权成功后，已绑定的 Bot 将使用这个账号。
+            {tr("授权成功后，已绑定的 Bot 将使用这个账号。", "Linked bots will use this account after authorization.")}
           </p>
         ) : account && (
           <div className="info-line">
@@ -788,9 +793,9 @@ export function LoginDialog({ account, invoke, onClose, onDone }) {
         {busy && (
           <p className="busy-note" role="status">
             <Spinner />
-            {phase === "restarting" ? "正在结束上一次授权…" : provider === "antigravity"
-              ? "正在等待 Google 授权和 Antigravity 账号核验…"
-              : "请完成原生登录，BoTeam 正在等待授权结果…"}
+            {phase === "restarting" ? tr("正在结束上一次授权…", "Ending the previous authorization…") : provider === "antigravity"
+              ? tr("正在等待 Google 授权和 Antigravity 账号核验…", "Waiting for Google authorization and Antigravity account verification…")
+              : tr("请完成原生登录，BoTeam 正在等待授权结果…", "Finish signing in. BoTeam is waiting for authorization…")}
           </p>
         )}
         <Notice>{error}</Notice>
@@ -800,7 +805,7 @@ export function LoginDialog({ account, invoke, onClose, onDone }) {
             className="text-btn"
             onClick={() => login({ fresh: true })}
           >
-            重新选择 Google 账号
+            {tr("重新选择 Google 账号", "Choose another Google account")}
           </button>
         )}
         {showInstallGuide && (
@@ -816,19 +821,19 @@ export function LoginDialog({ account, invoke, onClose, onDone }) {
             }}
           >
             <ExternalLink size={14} />
-            查看官方 CLI 安装说明
+            {tr("查看官方 CLI 安装说明", "View the official CLI installation guide")}
           </button>
         )}
         <div className="form-actions">
-          <Button onClick={close}>{busy ? "取消授权" : "取消"}</Button>
+          <Button onClick={close}>{busy ? tr("取消授权", "Cancel authorization") : tr("取消", "Cancel")}</Button>
           {busy ? (
             <Button variant="primary" icon={RefreshCw} busy={phase === "restarting"}
               onClick={() => login({ restart: true })}>
-              重新开始授权
+              {tr("重新开始授权", "Restart authorization")}
             </Button>
           ) : (
             <Button type="submit" variant="primary" icon={KeyRound}>
-              {retainedLogin ? "继续设置" : "开始授权"}
+              {retainedLogin ? tr("继续设置", "Continue setup") : tr("开始授权", "Start authorization")}
             </Button>
           )}
         </div>
@@ -844,6 +849,7 @@ export function AccountDialog({
   onDone,
   onLogin,
 }) {
+  const tr = useLanguage();
   const [note, setNote] = useState(account.note || "");
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -869,11 +875,11 @@ export function AccountDialog({
       ).trim()
     : account.reason;
   return (
-    <Modal title="管理订阅账号" onClose={onClose}>
+    <Modal title={tr("管理订阅账号", "Manage subscription account")} onClose={onClose}>
       <div className="account-summary">
         <ProviderIcon provider={account.provider} />
         <div className="row-copy">
-          <strong>{pendingBinding ? discoveryIdentity(account) : identityLabel(account)}</strong>
+          <strong>{pendingBinding ? discoveryIdentity(account, tr) : identityLabel(account)}</strong>
           <small>
             {providerName(account.provider)}
             {account.plan ? ` · ${account.plan}` : ""}
@@ -883,63 +889,63 @@ export function AccountDialog({
       </div>
       <DetailList
         rows={[
-          ["订阅额度", account.quota],
-          ["绑定 Bot", bound.map((b) => b.name).join("、") || "尚未绑定"],
-          [pendingBinding ? "上次检测" : "执行限制", lastProbe],
+          [tr("订阅额度", "Subscription quota"), account.quota],
+          [tr("绑定 Bot", "Linked bots"), bound.map((b) => b.name).join("、") || tr("尚未绑定", "None linked")],
+          [pendingBinding ? tr("上次检测", "Last scan") : tr("执行限制", "Execution restrictions"), lastProbe],
         ]}
       />
       <details className="account-technical">
         <summary>
-          配置详情 <ChevronDown size={14} />
+          {tr("配置详情", "Configuration details")} <ChevronDown size={14} />
         </summary>
         <DetailList
           rows={[
             [
-              "账号标识",
+              tr("账号标识", "Account identity"),
               account.identity?.startsWith("source:")
-                ? "本机配置 · 身份待核实"
+                ? tr("本机配置 · 身份待核实", "Local configuration · identity unverified")
                 : account.identity,
             ],
-            ...technicalDetails(account),
+            ...technicalDetails(account, tr),
           ]}
         />
       </details>
-      <Field label="账号备注">
+      <Field label={tr("账号备注", "Account note")}>
         <input
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          placeholder="例如，个人订阅"
+          placeholder={tr("例如，个人订阅", "For example, personal subscription")}
           maxLength={120}
         />
       </Field>
       {pendingBinding && (
         <p className="account-auth-hint">
           {account.email
-            ? "点击「重新授权」，在 Google 页面选择上次登录的邮箱。"
-            : "点击「重新授权」，在 Google 页面登录要绑定的账号。"}
-          {bound.length > 0 && "授权成功后可继续使用原有 Bot。"}
+            ? tr("点击「重新授权」，在 Google 页面选择上次登录的邮箱。", "Choose Reauthorize and select the email you last used to sign in to Google.")
+            : tr("点击「重新授权」，在 Google 页面登录要绑定的账号。", "Choose Reauthorize and sign in to the Google account you want to link.")}
+          {bound.length > 0 && tr("授权成功后可继续使用原有 Bot。", "Your existing bots will be available after authorization.")}
         </p>
       )}
       <button className="text-btn" onClick={onLogin}>
         <KeyRound size={14} />
-        重新授权
+        {tr("重新授权", "Reauthorize")}
       </button>
       <Notice>{error}</Notice>
       {confirm ? (
         <div className="danger-box">
-          <strong>移除这个账号？</strong>
+          <strong>{tr("移除这个账号？", "Remove this account?")}</strong>
           <p>
-            {bound.length ? `绑定的 ${bound.length} 个 Bot 将被归档。` : ""}
-            已有聊天记录会保留。
+            {bound.length ? tr(`绑定的 ${bound.length} 个 Bot 将被归档。`, `Linked bots will be archived (${bound.length}).`) : ""}
+            {tr("已有聊天记录会保留。", "Your chat history will be kept.")}
           </p>
           <div className="actions">
-            <Button onClick={() => setConfirm(false)}>取消</Button>
+            <Button onClick={() => setConfirm(false)}>{tr("取消", "Cancel")}</Button>
             <Button
               variant="danger"
               busy={busy}
               onClick={() => act("removeAccount", { id: account.id })}
             >
-              确认移除
+              {tr("确认移除", "Confirm removal")}
             </Button>
           </div>
         </div>
@@ -949,14 +955,14 @@ export function AccountDialog({
             className="text-btn danger-text"
             onClick={() => setConfirm(true)}
           >
-            移除账号
+            {tr("移除账号", "Remove account")}
           </button>
           <Button
             variant="primary"
             busy={busy}
             onClick={() => act("note", { id: account.id, note: note.trim() })}
           >
-            保存备注
+            {tr("保存备注", "Save note")}
           </Button>
         </div>
       )}

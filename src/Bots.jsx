@@ -1,3 +1,4 @@
+import { useLanguage } from "./preferences";
 import React, { useState } from "react";
 import { FolderOpen, MessageSquare, MoreHorizontal, Plus } from "lucide-react";
 import {
@@ -31,6 +32,7 @@ export function BotForm({
   pending = false,
   onRemove,
 }) {
+  const tr = useLanguage();
   const [accountId, setAccountId] = useState(
     initial?.accountId ||
       defaultAccountId ||
@@ -70,18 +72,18 @@ export function BotForm({
   }
   return (
     <form onSubmit={save} className="bot-form">
-      <Field label="Bot 名称">
+      <Field label={tr("Bot 名称", "Bot name")}>
         <input
           data-autofocus
           autoFocus={onboarding}
           value={name}
           required
-          placeholder="例如，代码助手"
+          placeholder={tr("例如，代码助手", "For example, coding assistant")}
           onChange={(e) => setName(e.target.value)}
           maxLength={100}
         />
       </Field>
-      <Field label="绑定账号" hint="每个 Bot 固定使用一个订阅账号。">
+      <Field label={tr("绑定账号", "Linked account")} hint={tr("每个 Bot 固定使用一个订阅账号。", "Each bot uses one subscription account.")}>
         <Select
           value={accountId}
           onChange={(e) => changeAccount(e.target.value)}
@@ -89,7 +91,7 @@ export function BotForm({
           required
         >
           <option value="" disabled>
-            选择订阅账号
+            {tr("选择订阅账号", "Choose a subscription account")}
           </option>
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
@@ -103,12 +105,12 @@ export function BotForm({
         <div className="info-line">
           <Status status={account.status} />
           {needsAntigravityBinding(account)
-            ? "请在「账号管理」中为此账号重新授权，再给 Bot 派发任务。"
-            : account.reason || "派发任务前需要完成账号验证。"}
+            ? tr("请在「账号管理」中为此账号重新授权，再给 Bot 派发任务。", "Reauthorize this account in Settings before assigning work to the bot.")
+            : account.reason || tr("派发任务前需要完成账号验证。", "Verify this account before assigning work.")}
         </div>
       )}
-      <div className="field bot-native-options" role="group" aria-label="模型与思考强度">
-        <span className="field-label">模型与思考强度</span>
+      <div className="field bot-native-options" role="group" aria-label={tr("模型与思考强度", "Model and reasoning effort")}>
+        <span className="field-label">{tr("模型与思考强度", "Model and reasoning effort")}</span>
         <NativeModelPicker
           key={accountId}
           provider={account?.provider}
@@ -122,25 +124,25 @@ export function BotForm({
             if (patch.model !== undefined) setModel(patch.model);
             if (patch.effort !== undefined) setEffort(patch.effort);
           }}
-          resetLabel="恢复原生默认设置"
+          resetLabel={tr("恢复原生默认设置", "Restore CLI defaults")}
           resetDisabled={!model && !effort}
           onReset={() => { setModel(""); setEffort(""); }}
         />
       </div>
       <div className="field">
         <label htmlFor="bot-cwd" className="field-label">
-          工作目录 <span>可选</span>
+          {tr("工作目录", "Working directory")} <span>{tr("可选", "Optional")}</span>
         </label>
         <div className="input-action">
           <input
             id="bot-cwd"
             value={cwd}
             onChange={(e) => setCwd(e.target.value)}
-            placeholder="使用默认工作目录"
+            placeholder={tr("使用默认工作目录", "Use default working directory")}
           />
           <IconButton
             icon={FolderOpen}
-            label="选择工作目录"
+            label={tr("选择工作目录", "Choose working directory")}
             onClick={async () => {
               try {
                 const path = await invoke("pickDirectory");
@@ -167,7 +169,7 @@ export function BotForm({
             onClick={onRemove}
             disabled={busy}
           >
-            移除 Bot
+            {tr("移除 Bot", "Remove bot")}
           </button>
         ) : (
           <button
@@ -176,7 +178,7 @@ export function BotForm({
             onClick={onCancel}
             disabled={busy || pending}
           >
-            {onboarding ? "稍后创建" : "取消"}
+            {onboarding ? tr("稍后创建", "Create later") : tr("取消", "Cancel")}
           </button>
         )}
         <Button
@@ -185,25 +187,26 @@ export function BotForm({
           disabled={!accountId || !name.trim() || pending}
           type="submit"
         >
-          {onboarding ? "创建并开始聊天" : initial ? "保存修改" : "创建 Bot"}
+          {onboarding ? tr("创建并开始聊天", "Create and start chatting") : initial ? tr("保存修改", "Save changes") : tr("创建 Bot", "Create bot")}
         </Button>
       </div>
     </form>
   );
 }
 export function BotList({ accounts, bots, open, startDirect }) {
+  const tr = useLanguage();
   const active = bots.filter((b) => !b.archived);
   return (
     <div className="settings-page">
       <header className="settings-heading">
-        <h1>Bot 管理</h1>
-        <p>为 Bot 选择订阅账号、默认模型和工作目录。</p>
+        <h1>{tr("Bot 管理", "Bots")}</h1>
+        <p>{tr("为 Bot 选择订阅账号、默认模型和工作目录。", "Choose your bots’ subscription accounts, default models and working directories.")}</p>
       </header>
-      <section aria-label="我的 Bot">
+      <section aria-label={tr("我的 Bot", "My bots")}>
         <div className="settings-section-heading">
-          <h2>我的 Bot</h2>
+          <h2>{tr("我的 Bot", "My bots")}</h2>
           <Button icon={Plus} onClick={() => open({ type: "bot" })}>
-            创建 Bot
+            {tr("创建 Bot", "Create bot")}
           </Button>
         </div>
         <div className="settings-group">
@@ -224,19 +227,19 @@ export function BotList({ accounts, bots, open, startDirect }) {
                   </div>
                   <IconButton
                     icon={MessageSquare}
-                    label={`与 ${b.name} 开始私聊`}
+                    label={tr(`与 ${b.name} 开始私聊`, `Start a chat with ${b.name}`)}
                     onClick={() => startDirect(b.id)}
                   />
                   <IconButton
                     icon={MoreHorizontal}
-                    label={`管理 ${b.name}`}
+                    label={tr(`管理 ${b.name}`, `Manage ${b.name}`)}
                     onClick={() => open({ type: "bot", id: b.id })}
                   />
                 </div>
               );
             })
           ) : (
-            <p className="settings-empty">尚未创建 Bot</p>
+            <p className="settings-empty">{tr("尚未创建 Bot", "No bots yet")}</p>
           )}
         </div>
       </section>
@@ -256,6 +259,7 @@ export function ChatDialog({
   onClose,
   newBot,
 }) {
+  const tr = useLanguage();
   const [name, setName] = useState(chat?.name || "");
   const [originalName] = useState(chat?.name);
   const project = projects.find((p) => p.id === initialProjectId);
@@ -290,10 +294,10 @@ export function ChatDialog({
     }
   }
   return (
-    <Modal title={chat ? "群聊设置" : "新建群聊"} onClose={() => { if (!busy) onClose(); }}>
+    <Modal title={chat ? tr("群聊设置", "Group chat settings") : tr("新建群聊", "New group chat")} onClose={() => { if (!busy) onClose(); }}>
       <form onSubmit={save}>
         {chat && (
-          <Field label="群聊名称">
+          <Field label={tr("群聊名称", "Group name")}>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -303,7 +307,7 @@ export function ChatDialog({
           </Field>
         )}
         <div className="field">
-          <h3 className="field-label">选择群成员</h3>
+          <h3 className="field-label">{tr("选择群成员", "Choose members")}</h3>
           {active.length ? (
             <MemberList
               bots={active}
@@ -316,9 +320,9 @@ export function ChatDialog({
           ) : (
             <div className="settings-group">
               <div className="settings-row">
-                <p>先创建一个 Bot，即可开始对话。</p>
+                <p>{tr("先创建一个 Bot，即可开始对话。", "Create a bot to start chatting.")}</p>
                 <Button icon={Plus} onClick={() => newBot({ kind: "group", projectId: project?.id })}>
-                  创建 Bot
+                  {tr("创建 Bot", "Create bot")}
                 </Button>
               </div>
             </div>
@@ -326,14 +330,14 @@ export function ChatDialog({
         </div>
         <Notice>{error}</Notice>
         <div className="form-actions">
-          <Button disabled={busy} onClick={onClose}>取消</Button>
+          <Button disabled={busy} onClick={onClose}>{tr("取消", "Cancel")}</Button>
           <Button
             type="submit"
             variant="primary"
             disabled={!selected.length || (chat && !name.trim())}
             busy={busy}
           >
-            {chat ? "保存修改" : "创建群聊"}
+            {chat ? tr("保存修改", "Save changes") : tr("创建群聊", "Create group chat")}
           </Button>
         </div>
       </form>
