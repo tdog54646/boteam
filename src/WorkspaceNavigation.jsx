@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Archive, ArchiveRestore, Bot, CalendarCheck, ChevronLeft, ChevronRight, House, MessageSquare, MessagesSquare, PanelLeftClose, Search, Settings, Trash2, UsersRound, WalletCards } from "lucide-react";
 import { IconButton } from "./ui";
 import { UserMenu } from "./UserMenu";
@@ -9,14 +10,43 @@ export const settingsPages = ["archived", "bots", "accounts"];
 
 export function WorkspaceNavigation({ section, select, disabled, settingsPage }) {
   const t = useLanguage();
+  const [hintAnchor, setHintAnchor] = useState(null);
+  useEffect(() => {
+    if (!hintAnchor) return;
+    const dismiss = () => setHintAnchor(null);
+    const escape = event => { if (event.key === "Escape") dismiss(); };
+    document.addEventListener("keydown", escape);
+    window.addEventListener("blur", dismiss);
+    return () => {
+      document.removeEventListener("keydown", escape);
+      window.removeEventListener("blur", dismiss);
+    };
+  }, [hintAnchor]);
+  function showHint(event) {
+    const button = event.target.closest("button");
+    if (!button || !event.currentTarget.contains(button) || button.disabled ||
+        button.getAttribute("aria-expanded") === "true" ||
+        (event.relatedTarget instanceof Node && button.contains(event.relatedTarget))) return;
+    if (event.pointerType === "touch" || (event.type === "focus" && !button.matches(":focus-visible"))) return;
+    setHintAnchor(button);
+  }
+  function leaveHint(event) {
+    const button = event.target.closest("button");
+    if (button && !(event.relatedTarget instanceof Node && button.contains(event.relatedTarget)))
+      setHintAnchor(current => current === button ? null : current);
+  }
   function link(id, label, Icon, destination = id) {
     const active = section === id;
     return <button type="button" className="workspace-destination" aria-label={label}
       disabled={disabled} aria-current={active ? "page" : undefined} onClick={() => select(destination)}>
-      <Icon size={20} strokeWidth={1.8} aria-hidden="true" />
+      {active && id === "home" ? <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M2.5 10.4c0-.9.4-1.7 1.1-2.3l6.5-5.4a3 3 0 0 1 3.8 0l6.5 5.4c.7.6 1.1 1.4 1.1 2.3v8.5a2.6 2.6 0 0 1-2.6 2.6h-3.5a.9.9 0 0 1-.9-.9v-3.5a2.5 2.5 0 0 0-5 0v3.5a.9.9 0 0 1-.9.9H5.1a2.6 2.6 0 0 1-2.6-2.6z"/>
+      </svg> : <Icon size={20} strokeWidth={1.8} aria-hidden="true" />}
     </button>;
   }
-  return <nav className="workspace-navigation" aria-label={t("主导航", "Main navigation")}>
+  return <nav className="workspace-navigation" aria-label={t("主导航", "Main navigation")}
+    onPointerOver={showHint} onPointerOut={leaveHint} onFocus={showHint} onBlur={leaveHint}
+    onClickCapture={() => setHintAnchor(null)}>
     {link("home", t("首页", "Home"), House)}
     {link("schedules", t("定时任务", "Schedules"), CalendarCheck)}
     {link("channels", t("频道", "Channels"), MessagesSquare)}
@@ -24,6 +54,8 @@ export function WorkspaceNavigation({ section, select, disabled, settingsPage })
       {link("settings", t("设置", "Settings"), Settings, settingsPage)}
       <UserMenu />
     </div>
+    {hintAnchor && !hintAnchor.disabled && createPortal(
+      <span className="workspace-nav-tooltip" aria-hidden="true">{hintAnchor.getAttribute("aria-label")}</span>, hintAnchor)}
   </nav>;
 }
 

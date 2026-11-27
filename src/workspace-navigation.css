@@ -28,6 +28,20 @@
 }
 .workspace-destination:is(:hover, :focus-visible):enabled,
 .workspace-destination[aria-current=page] { color: var(--fg); background: var(--nav-tile); }
+.workspace-destination[aria-current=page] :is(.lucide-calendar-check rect, .lucide-settings path, .lucide-messages-square path:first-child) {
+  fill: currentColor;
+}
+.workspace-destination[aria-current=page] .lucide-calendar-check rect ~ path { stroke: var(--nav-tile); }
+.workspace-destination[aria-current=page] .lucide-settings circle { fill: var(--nav-tile); stroke: none; }
+.workspace-nav-tooltip {
+  position: absolute; z-index: 40; inset-inline-start: calc(100% + 2px); top: 50%; transform: translateY(-50%);
+  width: max-content; padding: 5px 12px; border-radius: 999px;
+  background: var(--fg); color: var(--canvas); box-shadow: 0 2px 7px rgb(0 0 0 / 12%);
+  font-size: 13px; line-height: 19px; font-weight: 500; white-space: nowrap;
+  pointer-events: none; animation: workspace-hint-appear 90ms ease-out 220ms backwards;
+}
+@keyframes workspace-hint-appear { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .workspace-nav-tooltip { animation: none; } }
 .workspace-navigation-bottom { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .shell .sidebar-titlebar { padding-inline: max(8px, calc(85px - var(--nav-width))) 12px; }
 .shell .sidebar-titlebar .icon-btn:first-child { margin-right: auto; }
