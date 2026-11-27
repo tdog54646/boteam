@@ -1344,6 +1344,7 @@ export function Conversation({
                 const task = m.taskId && jobs.find((t) => t.id === m.taskId);
                 const account = accounts.find((a) => a.id === (task?.accountId || bot?.accountId));
                 const user = m.author === "user";
+                const sender = user && m.name && m.name !== "我" ? m.name : null;
                 const quoted = publicMessages.get(m.replyToMessageId);
                 const canQuote = !chat.archived && publicMessages.has(m.id);
 
@@ -1356,7 +1357,8 @@ export function Conversation({
                   >
                     {user ? (
                       <>
-                        <div className="user-bubble" aria-label="你的消息">
+                        <div className="user-bubble" aria-label={sender ? tr(sender + "的消息", "Message from " + sender) : tr("你的消息", "Your message")}>
+                          {sender && <div className="channel-sender-name">{sender}</div>}
                           {group && m.recipients?.length > 0 && (
                             <div className="sent-recipients">
                               {m.recipients
