@@ -13,7 +13,7 @@ function focusItem(menu, key) {
   rows[next]?.focus();
 }
 
-export function ActionMenu({ label, groups, anchor, variant, onAction, onClose }) {
+export function ActionMenu({ label, groups, anchor, variant, heading, onAction, onClose }) {
   const main = useRef(null);
   const child = useRef(null);
   const owner = useRef(null);
@@ -35,8 +35,8 @@ export function ActionMenu({ label, groups, anchor, variant, onAction, onClose }
     const node = main.current;
     function place() {
       const trigger = anchor.anchor?.getBoundingClientRect();
-      const x = header && trigger ? trigger.right - node.offsetWidth : anchor.x ?? trigger?.left ?? edge;
-      const y = header && trigger ? trigger.bottom + 5 : anchor.y ?? trigger?.bottom ?? edge;
+      const x = variant === "user" && trigger ? trigger.right + 8 : header && trigger ? trigger.right - node.offsetWidth : anchor.x ?? trigger?.left ?? edge;
+      const y = variant === "user" && trigger ? trigger.bottom - node.offsetHeight : header && trigger ? trigger.bottom + 5 : anchor.y ?? trigger?.bottom ?? edge;
       node.style.left = clamp(x, node.offsetWidth, window.innerWidth) + "px";
       node.style.top = clamp(y, node.offsetHeight, window.innerHeight) + "px";
       setBranch(null);
@@ -45,7 +45,7 @@ export function ActionMenu({ label, groups, anchor, variant, onAction, onClose }
     node.querySelector("button")?.focus({ preventScroll: true });
     window.addEventListener("resize", place);
     return () => window.removeEventListener("resize", place);
-  }, [anchor, header]);
+  }, [anchor, header, variant]);
 
   useLayoutEffect(() => {
     const node = child.current;
@@ -96,7 +96,8 @@ export function ActionMenu({ label, groups, anchor, variant, onAction, onClose }
 
   function row(item, submenu = false) {
     const Icon = item.icon;
-    return <button type="button" role="menuitem" key={item.payload?.sectionId || item.payload?.projectId || item.payload?.target || item.id}
+    return <button type="button" role={variant === "user" && submenu ? "menuitemradio" : "menuitem"}
+      aria-checked={variant === "user" && submenu ? item.selected : undefined} key={item.payload?.sectionId || item.payload?.projectId || item.payload?.target || item.id}
       tabIndex={-1} disabled={item.disabled} data-action={item.id}
       className={`${branch === item.id ? "active " : ""}${header && item.danger ? "danger" : ""}`}
       aria-haspopup={item.children ? "menu" : undefined} aria-expanded={item.children ? branch === item.id : undefined}
@@ -122,6 +123,7 @@ export function ActionMenu({ label, groups, anchor, variant, onAction, onClose }
     <div ref={main} className={`chat-action-menu cam-${variant}`} role="menu"
       aria-label={label} onKeyDown={event => keyboard(event)}
       onScroll={() => setBranch(null)} onContextMenu={event => event.preventDefault()}>
+      {heading && <div className="action-menu-heading" role="presentation">{heading}</div>}
       {groups.map((group, index) => <React.Fragment key={group[0].id}>
         {index > 0 && <div role="separator" />}
         {group.map(item => row(item))}

@@ -1,0 +1,40 @@
+.user-menu-trigger {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 9px;
+  -webkit-app-region: no-drag;
+}
+.user-menu-trigger:hover, .user-menu-trigger[aria-expanded="true"] { background: var(--selected); }
+.local-user-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--solid);
+  color: var(--on-solid);
+  font-size: 13px;
+  font-weight: 580;
+}
+.chat-action-menu.cam-user {
+  background: var(--surface);
+  width: min(202px, calc(100vw - 10px));
+  box-shadow: var(--popover-shadow);
+}
+.cam-user .action-menu-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  padding: 4px 8px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 550;
+}
+.cam-user button { min-height: 29px; text-align: start; }
+.cam-user button > svg:first-child { color: var(--muted); }
+.chat-action-menu.cam-user.cam-child { width: max-content; min-width: 146px; }
