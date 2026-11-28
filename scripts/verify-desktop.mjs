@@ -43,6 +43,7 @@ async function seedChannelHistory() {
       // Mimic an existing offline binding without starting an IM transport.
       workspace.db.run('INSERT INTO channels(id,botId,enabled,credentials,generation) VALUES(?,?,0,?,?)',
         'telegram', 'antigravity', Buffer.alloc(0), 'fixture-generation')
+      workspace.db.run("UPDATE channel_permissions SET mode='workspace-auto' WHERE channel='telegram'")
       workspace.insertChat(chatId, { kind: 'direct', members: ['antigravity'] })
       workspace.db.run('UPDATE chats SET name=? WHERE id=?', title, chatId)
       workspace.db.run('INSERT INTO channel_chats(channel,identity,room,sender,botId,chatId) VALUES(?,?,?,?,?,?)',
@@ -70,23 +71,77 @@ async function seedChannelHistory() {
 }
 
 async function verifyChannelPermissions(page) {
+  const pending = await app.evaluateHandle(({ app, BrowserWindow }) => {
+    const load = process.getBuiltinModule('node:module').createRequire(app.getAppPath() + '/package.json')
+    const { Workspace } = load('./desktop/workspace.mjs')
+    const original = { snapshot: Workspace.prototype.snapshot, composerActions: Workspace.prototype.composerActions }
+    const requests = new Set()
+    const providers = new Map(['codex', 'antigravity'].map(id => [id, Promise.withResolvers()]))
+    // Only render these isolated fixtures as ready. Their stored accounts stay
+    // blocked and their native catalogs are resolved entirely in memory.
+    Workspace.prototype.snapshot = function () {
+      const state = original.snapshot.call(this)
+      for (const account of state.accounts) if (providers.has(account.id)) account.status = 'ready'
+      return state
+    }
+    Workspace.prototype.composerActions = function (payload) {
+      const gate = providers.get(payload.botId)
+      if (!gate) return original.composerActions.call(this, payload)
+      requests.add(payload.botId)
+      return gate.promise
+    }
+    const refresh = () => BrowserWindow.getAllWindows().forEach(window => window.webContents.send('workspace:changed'))
+    const release = id => providers.get(id).resolve({ workspaceAuto: id === 'antigravity', autoReview: id === 'codex' })
+    refresh()
+    return {
+      requests, release,
+      restore() {
+        for (const id of providers.keys()) release(id)
+        Object.assign(Workspace.prototype, original)
+        refresh()
+      },
+    }
+  })
+  try { await verifyChannelPermissionChoices(page, pending) }
+  finally {
+    await pending.evaluate(fixture => fixture.restore())
+    await pending.dispose()
+  }
+}
+
+async function verifyChannelPermissionChoices(page, pending) {
   const manage = page.locator('[data-channel="telegram"]').getByRole('button')
   await manage.click()
   const dialog = page.getByRole('dialog')
   const bot = dialog.getByRole('combobox', { name: '接收消息的 Bot' })
   const permission = dialog.getByRole('combobox', { name: '操作权限' })
+  const waitForCatalog = id => expect.poll(() => pending.evaluate((fixture, key) => fixture.requests.has(key), id)).toBe(true)
+  await waitForCatalog('antigravity')
+  await expect(permission).toHaveValue('workspace-auto')
+  await expect(permission.locator('option[value="workspace-auto"]')).toBeEnabled()
+  await expect(permission.locator('option[value="auto-review"]')).toHaveCount(0)
+  await permission.selectOption('edits')
+  const stored = () => page.evaluate(async () =>
+    (await window.boteam.invoke('snapshot')).channels.find(c => c.id === 'telegram')?.permission)
+  await expect.poll(stored).toBe('edits')
   for (const [id, mode, excluded] of [
     ['fixture-bot', 'edits', 'full'],
     ['codex', 'read-only', 'edits'],
     ['antigravity', 'edits', 'full'],
   ]) {
     await bot.selectOption(id)
+    if (id === 'codex') {
+      await waitForCatalog(id)
+      await expect(permission.locator('option[value="auto-review"]')).toBeEnabled()
+      await expect(permission.locator('option[value="workspace-auto"]')).toHaveCount(0)
+      await pending.evaluate(fixture => fixture.release('antigravity'))
+    }
     await expect(permission).toBeEnabled()
     await expect(permission.locator(`option[value="${mode}"]`)).toHaveCount(1)
     await expect(permission.locator(`option[value="${excluded}"]`)).toHaveCount(0)
     await permission.selectOption(mode)
-    await expect.poll(() => page.evaluate(async () =>
-      (await window.boteam.invoke('snapshot')).channels.find(c => c.id === 'telegram')?.permission)).toBe(mode)
+    await expect.poll(stored).toBe(mode)
+    if (id === 'codex') await pending.evaluate(fixture => fixture.release('codex'))
   }
   await page.keyboard.press('Escape')
   await manage.click()

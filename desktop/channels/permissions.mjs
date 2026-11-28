@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { permissionCapability, permissionModesForCatalog } from '../permission-modes.mjs'
 
-const nativeCapability = { 'auto-review': 'autoReview', 'workspace-auto': 'workspaceAuto' }
 const stale = () => new Error('频道绑定或操作权限已更改，请检查最新设置后重试。')
 
 export class ChannelPermissions {
@@ -47,18 +47,17 @@ export class ChannelPermissions {
     const { permission, revision, provider } = this.binding(id, botId)
     const modes = this.modes(provider)
     let capabilities, unavailable = false
-    if (modes.some(mode => Object.hasOwn(nativeCapability, mode))) {
+    if (modes.some(permissionCapability)) {
       try { capabilities = await this.workspace.composerActions({ botId, refresh }) }
       catch { unavailable = true }
       this.binding(id, botId, revision)
     }
-    return { permission, revision, unavailable, modes: modes.filter(mode =>
-      !Object.hasOwn(nativeCapability, mode) || capabilities?.[nativeCapability[mode]] === true) }
+    return { permission, revision, unavailable, modes: permissionModesForCatalog(modes, capabilities || {}) }
   }
   async validate(id, botId, permission, revision, signal) {
     const { provider } = this.binding(id, botId, revision)
     if (!this.modes(provider).includes(permission)) throw new Error('此原生工具不支持所选权限模式。')
-    const capability = nativeCapability[permission]
+    const capability = permissionCapability(permission)
     if (capability) {
       const available = await this.workspace.composerActions({ botId, refresh:true })
       signal?.throwIfAborted()

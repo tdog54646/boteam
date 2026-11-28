@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { accountLabel, errorText, Modal, Select } from "./ui";
 import { NativeModelPicker, describeModel, modelLabelFor } from "./NativeModelPicker";
 import { useModelCatalog } from "./useModelCatalog";
+import { permissionModesForCatalog } from "../desktop/permission-modes.mjs";
 
 import {
   AddMenu,
@@ -497,14 +498,7 @@ export function ComposerTools({
   const [detail, setDetail] = useState(null);
   const actions = actionCatalog.data;
   const codex = account?.provider === "codex";
-  const modes = providerModes.filter((mode) => {
-    if (permission === mode) return true;
-    if (mode === "auto-review") return Boolean(actions?.autoReview);
-    if (mode === "workspace-auto" && account?.provider === "antigravity") {
-      return actions ? Boolean(actions.workspaceAuto) : account?.status === "ready";
-    }
-    return true;
-  });
+  const modes = permissionModesForCatalog(providerModes, actions ?? (account?.status === "ready" ? null : {}), permission);
   const menuModes = codex
     ? [
         "default",

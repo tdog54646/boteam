@@ -3,6 +3,8 @@ import { RotateCw, X } from "lucide-react";
 import { PlatformIcon, statusLabel } from "./ChannelPlatform";
 import { ChannelAccessSettings } from "./ChannelAccessSettings";
 import { permissionInfo, permissionLabel } from "./ComposerActionMenu";
+import { permissionCapability, permissionModesForCatalog } from "../desktop/permission-modes.mjs";
+import { useNativeCatalog } from "./useNativeCatalog";
 import { useLanguage } from "./preferences";
 import { IconButton, Notice, Spinner, errorText, providerName } from "./ui";
 import "./channel-setup.css";
@@ -194,24 +196,38 @@ function QrSetup({ platform, config, invoke, saved = false }) {
   </div>;
 }
 
-function ChannelPermission({ config, state, bot, invoke, action, busy }) {
+const pendingPermissionReads = new Map();
+
+export function useChannelPermissionOptions(config, state, invoke) {
+  const bot = state.bots.find(b => b.id === config?.botId && !b.archived);
+  const account = state.accounts.find(a => a.id === bot?.accountId);
+  const { id, permissionRevision } = config || {};
+  const botId = bot?.id;
+  const enabled = Boolean(bot && account?.status === "ready" && state.permissionModes?.[account.provider]?.some(permissionCapability));
+  const binding = JSON.stringify(["channel-permissions", id, botId, permissionRevision, account?.id,
+    account?.provider, account?.identity, account?.bindingRevision, account?.status, bot?.cwd, bot?.model, bot?.effort]);
+  const query = useCallback(refresh => {
+    const pending = pendingPermissionReads.get(binding);
+    if (pending) return pending;
+    const request = invoke("channelPermissionOptions", { id, botId, refresh })
+      .finally(() => pendingPermissionReads.delete(binding));
+    pendingPermissionReads.set(binding, request);
+    return request;
+  }, [invoke, id, botId, binding]);
+  const result = useNativeCatalog({ id: "channel-permissions:" + id, binding, enabled, query });
+  return { ...result, botId, data: result.data?.revision === permissionRevision ? result.data : null };
+}
+
+function ChannelPermission({ config, state, bot, catalog, action, busy, switching }) {
   const t = useLanguage();
   const account = state.accounts.find(a => a.id === bot?.accountId);
   const provider = account?.provider;
-  const { id, permission, permissionRevision } = config;
-  const [catalog, setCatalog] = useState(null);
-  const [attempt, setAttempt] = useState(0);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let active = true;
-    setCatalog(null); setError("");
-    if (bot) invoke("channelPermissionOptions", { id, botId:bot.id, refresh:attempt > 0 })
-      .then(result => { if (active && result.revision === permissionRevision) setCatalog(result); })
-      .catch(e => { if (active) setError(errorText(e)); });
-    return () => { active = false; };
-  }, [id, bot?.id, permissionRevision, account?.bindingRevision, attempt, invoke]);
+  const permission = switching ? "default" : config.permission;
+  const { permissionRevision } = config;
+  const read = !switching && catalog.botId === bot?.id ? catalog : null;
   const baseModes = state.permissionModes?.[provider] || ["default"];
-  const modes = catalog?.modes || baseModes.filter(mode => mode !== "auto-review" && mode !== "workspace-auto");
+  const modes = read?.data ? baseModes.filter(mode => mode === permission || read.data.modes.includes(mode))
+    : permissionModesForCatalog(baseModes, account?.status === "ready" ? null : {}, permission);
   const inherited = permission == null;
   return <div className="channel-operation-permission">
     <label className="setup-field"><span>{t("操作权限", "Action permissions")}</span>
@@ -226,16 +242,25 @@ function ChannelPermission({ config, state, bot, invoke, action, busy }) {
       </select></label>
     {bot && <small>{inherited ? t("频道消息沿用该会话的权限。", "Incoming messages use the chat’s permissions.")
       : t("适用于频道收到的消息。", "Applies to incoming channel messages. ") + permissionInfo(permission, provider, t).detail}</small>}
-    {(error || catalog?.unavailable) && <small>{error || t("暂时无法读取 CLI 的可选权限。", "Could not read optional CLI permissions. ")}{" "}
-      <button type="button" className="text-btn" onClick={() => setAttempt(value => value + 1)}>{t("重试", "Retry")}</button></small>}
+    {(read?.error || read?.data?.unavailable) && <small>{read.error || t("暂时无法读取 CLI 的可选权限。", "Could not read optional CLI permissions. ")}{" "}
+      <button type="button" className="text-btn" onClick={read.retry}>{t("重试", "Retry")}</button></small>}
   </div>;
 }
 
-function ConfiguredChannel({ platform, config, state, invoke, action, busy, onManageBots, onClose, edit }) {
+function ConfiguredChannel({ platform, config, state, invoke, action, busy, catalog, onManageBots, onClose, edit }) {
   const t = useLanguage();
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [pendingBot, setPendingBot] = useState(null);
   const bots = state.bots.filter(bot => !bot.archived);
-  const activeBot = bots.find(bot => bot.id === config.botId);
+  const activeBot = bots.find(bot => bot.id === (pendingBot ?? config.botId));
+  const switching = pendingBot !== null && pendingBot !== config.botId;
+  async function changeBot(event) {
+    const botId = event.target.value;
+    setPendingBot(botId);
+    try {
+      await action("channelSetBot", { botId, expectedBotId: config.botId, expectedRevision: config.permissionRevision });
+    } finally { setPendingBot(null); }
+  }
   const qrNeeded = platform.qr && config.enabled && ["pairing","pin","scanned","expired"].includes(config.status);
   return <div className="setup-configured">
     {qrNeeded && <QrSetup platform={platform} config={config} invoke={invoke} saved={config.status !== "expired"}/>}
@@ -248,14 +273,12 @@ function ConfiguredChannel({ platform, config, state, invoke, action, busy, onMa
     </div>
     <section className="channel-binding-section">
       <label className="setup-field"><span>{t("接收消息的 Bot", "Bot for incoming messages")}</span>
-        <select value={activeBot?.id || ""} disabled={busy} onChange={e => action("channelSetBot", {
-          botId: e.target.value, expectedBotId:config.botId, expectedRevision:config.permissionRevision,
-        })}>
+        <select value={activeBot?.id || ""} disabled={busy} onChange={changeBot}>
           <option value="">{t("未绑定 Bot", "No bot assigned")}</option>
           {bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name} · {providerName(state.accounts.find(a => a.id === bot.accountId)?.provider)}</option>)}
         </select></label>
       {!bots.length && <button type="button" className="channel-guide-link" onClick={() => { onClose(); onManageBots(); }}>{t("添加 Bot", "Add bot")}</button>}
-      <ChannelPermission key={activeBot?.id || ""} config={config} state={state} bot={activeBot} invoke={invoke} action={action} busy={busy}/>
+      <ChannelPermission config={config} state={state} bot={activeBot} catalog={catalog} action={action} busy={busy || switching} switching={switching}/>
     </section>
     <ChannelAccessSettings config={config} invoke={invoke}/>
     <div className="setup-actions">
@@ -273,6 +296,7 @@ function ConfiguredChannel({ platform, config, state, invoke, action, busy, onMa
 
 function Dialog({ platform, config, state, invoke, refreshSnapshot, onClose, onManageBots }) {
   const t = useLanguage();
+  const catalog = useChannelPermissionOptions(config, state, invoke);
   const ref = useRef(null);
   const mounted = useRef(false);
   const titleId = useId(), subtitleId = useId();
@@ -335,7 +359,7 @@ function Dialog({ platform, config, state, invoke, refreshSnapshot, onClose, onM
       <IconButton icon={X} label={t("关闭", "Close")} onClick={onClose}/></header>
     <div className="channel-setup-body">
       <Notice>{error || config?.detail}</Notice>
-      {configured && !edit ? <ConfiguredChannel {...{ platform, config, state, invoke, action, busy, onManageBots, onClose }}
+      {configured && !edit ? <ConfiguredChannel {...{ platform, config, state, invoke, action, busy, catalog, onManageBots, onClose }}
         edit={() => { setError(""); setEdit(true); }}/>
         : platform.qr ? <QrSetup {...{ platform, config, invoke }}/>
         : <CredentialForm {...{ platform, config, invoke, action, busy }} onSaved={() => setEdit(false)} onCancel={edit ? () => setEdit(false) : null}/>}

@@ -11,6 +11,7 @@ import { chunks, verifiedUrl, jsonRequest } from '../desktop/channels/transport.
 import { permissionModes as codexModes } from '../desktop/adapters/codex.mjs'
 import { permissionModes as claudeModes } from '../desktop/adapters/claude.mjs'
 import { permissionModes as agyModes } from '../desktop/adapters/antigravity.mjs'
+import { permissionModesForCatalog } from '../desktop/permission-modes.mjs'
 import { antigravityLocationError } from '../desktop/adapters/antigravity-errors.mjs'
 
 const safeStorage = { isEncryptionAvailable: () => true,
@@ -672,6 +673,37 @@ test('legacy channel permissions follow the existing chat until selected explici
   await send('third')
   assert.equal(settings().permission,'default')
   assert.equal(f.ws.composer.read(chatId,f.ws.bot(botId)).permission,'edits')
+})
+
+test('cold permission menus offer the adapter candidates and retain the saved mode after a capability check', () => {
+  assert.deepEqual(permissionModesForCatalog(agyModes, null), agyModes)
+  assert.deepEqual(permissionModesForCatalog(codexModes, null), codexModes)
+  assert.deepEqual(permissionModesForCatalog(claudeModes, null), claudeModes)
+  assert.ok(!permissionModesForCatalog(agyModes, { workspaceAuto: false }).includes('workspace-auto'))
+  assert.ok(permissionModesForCatalog(agyModes, {}, 'workspace-auto').includes('workspace-auto'))
+})
+
+test('a channel prefetch and a cold optional permission change share the native read and save only after confirmation', async t => {
+  const f = await workspace(t), id = 'telegram', botId = f.bots.antigravity
+  const entered = Promise.withResolvers(), gate = Promise.withResolvers()
+  let reads = 0
+  f.ws.adapters.antigravity.permissionModes = agyModes
+  f.ws.adapters.antigravity.composerActions = () => {
+    reads++
+    entered.resolve()
+    return gate.promise
+  }
+  await f.ws.handle('channelSave', { id, botId, fields: { token: '123:fixture' } })
+  const config = () => f.ws.channels.permissions.read(id)
+  const options = f.ws.handle('channelPermissionOptions', { id, botId })
+  await entered.promise
+  const saving = f.ws.handle('channelSetPermission', { id, botId, permission: 'workspace-auto', expectedRevision: config().permissionRevision })
+  assert.equal(config().permission, 'default')
+  gate.resolve({ workspaceAuto: true })
+  const [menu] = await Promise.all([options, saving])
+  assert.deepEqual(menu.modes, agyModes)
+  assert.equal(config().permission, 'workspace-auto')
+  assert.equal(reads, 1)
 })
 
 test('channel permission changes reject stale or unsupported native capabilities and cannot elevate an already queued request', async t => {

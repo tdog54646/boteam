@@ -1,4 +1,5 @@
 import { redact } from './native.mjs'
+import { permissionCapability } from './permission-modes.mjs'
 
 export function validateSelection(catalog, model, effort) {
   if (
@@ -54,7 +55,7 @@ export class ComposerSettings {
     }
     if (permission !== null) {
       this.validateMode(provider, permission)
-      await this.validateNativePermission(provider, permission, { botId: bot?.id, ...(project && { catalogProject: { projectId } }) })
+      await this.validateNativePermission(permission, { botId: bot?.id, ...(project && { catalogProject: { projectId } }) })
       this.workspace.lifetime.signal.throwIfAborted()
     }
     this.db.transaction(() => {
@@ -74,15 +75,14 @@ export class ComposerSettings {
     if (!(this.workspace.adapters[provider]?.permissionModes || ['default']).includes(permission))
       throw new Error('此原生工具不支持所选权限模式。')
   }
-  async validateNativePermission(provider, permission, scope, checkPlan = false) {
-    const autoReview = permission === 'auto-review'
-    const workspaceAuto = permission === 'workspace-auto' && provider === 'antigravity'
-    if (!checkPlan && !autoReview && !workspaceAuto) return
+  async validateNativePermission(permission, scope, checkPlan = false) {
+    const capability = permissionCapability(permission)
+    if (!checkPlan && !capability) return
     if (!scope.botId) throw new Error('请先绑定可用的 Bot 以核实此工具的原生权限。')
     const capabilities = await this.workspace.composerActions({ ...scope, refresh: true })
     if (checkPlan && !capabilities.plan) throw new Error('当前原生工具未提供计划模式。')
-    if (autoReview && !capabilities.autoReview) throw new Error('当前原生工具未提供自动审批。')
-    if (workspaceAuto && !capabilities.workspaceAuto) throw new Error('当前 Antigravity 未提供工作区自动执行。')
+    if (capability && capabilities[capability] !== true)
+      throw new Error(permission === 'auto-review' ? '当前原生工具未提供自动审批。' : '当前 Antigravity 未提供工作区自动执行。')
   }
   read(chatId, bot) {
     const row = this.db.get(
@@ -122,7 +122,7 @@ export class ComposerSettings {
     const previous = draft ? { ...bot, permission: this.defaultPermission(bot, draft.projectId) } : this.read(chatId, bot)
     const planIsPermission = adapter.permissionModes?.includes('plan')
     const checkPlan = hasPlan && p.planMode && (!planIsPermission || adapter.composerActions)
-    await this.validateNativePermission(account.provider, p.permission, { chatId, botId, draft }, checkPlan)
+    await this.validateNativePermission(p.permission, { chatId, botId, draft }, checkPlan)
     const model = hasModel ? (p.model ?? bot.model) : previous.model
     const effort = hasEffort ? (p.effort ?? bot.effort) : previous.effort
     if (hasModel || hasEffort) {

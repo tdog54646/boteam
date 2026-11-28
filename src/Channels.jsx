@@ -4,6 +4,7 @@ import { platforms } from "../desktop/channels/catalog.mjs";
 import { useLanguage } from "./preferences";
 import { Button, IconButton, Notice, errorText } from "./ui";
 import { PlatformIcon, statusLabel } from "./ChannelPlatform";
+import { useChannelPermissionOptions } from "./ChannelSetupDialog";
 import { ChatRowTitle } from "./ChatRowTitle";
 import "./channels.css";
 
@@ -123,10 +124,12 @@ export function ChannelNavigation({ state, activeChatId, onOverview, onOpenChat,
 
 export function Channels({ open, state, invoke, refreshSnapshot, inSettings = false }) {
   const t = useLanguage();
+  const [focusedChannel, setFocusedChannel] = useState("");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const configs = new Map((state.channels || []).map(row => [row.id, row]));
+  useChannelPermissionOptions(configs.get(focusedChannel), state, invoke);
   const needle = query.trim().toLocaleLowerCase();
   const cards = platforms.filter(p => [p.name, ...p.description].some(text => text.toLocaleLowerCase().includes(needle)));
 
@@ -162,7 +165,8 @@ export function Channels({ open, state, invoke, refreshSnapshot, inSettings = fa
               : <><h2>{p.name}</h2><p>{t(...p.description)}</p></>}
               {config?.configured && <small className={"channel-status " + config.status}>{statusLabel(config.status, t)}</small>}
             </div>
-            <Button aria-label={t("配置 ", "Configure ") + p.name} onClick={() => open({ type: "channelSetup", id: p.id })}>
+            <Button aria-label={t("配置 ", "Configure ") + p.name} onPointerEnter={() => setFocusedChannel(p.id)}
+              onFocus={() => setFocusedChannel(p.id)} onClick={() => open({ type: "channelSetup", id: p.id })}>
               {config?.configured ? t("管理", "Manage") : t("配置", "Configure")}</Button>
           </article>;
         })}

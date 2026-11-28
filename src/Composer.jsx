@@ -33,6 +33,7 @@ import {
 import { GoalDialog } from "./GoalDialog";
 import { ComposerTools } from "./ComposerTools";
 import { useComposerActions } from "./useComposerActions";
+import { permissionCapability } from "../desktop/permission-modes.mjs";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { SketchDialog } from "./SketchDialog";
 import { MessageQuote } from "./MessageQuote";
@@ -66,6 +67,7 @@ export function Composer({
   const projectCwd = chat ? chat.initialProjectCwd ?? null : draft?.folder ??
     state.projects?.find(project => project.id === draft?.projectId)?.folders[0] ?? null;
   const [settingsByBot, setSettingsByBot] = useState(() => getComposerDraft(scope)?.settingsByBot || {});
+  const [checkingDraftPermission, setCheckingDraftPermission] = useState(false);
   const [pausedGoals, setPausedGoals] = useState(() => getComposerDraft(scope)?.pausedGoals || {});
   const [text, setText] = useState(() => getComposerDraft(scope)?.text || "");
   const [replyToMessageId, setReplyToMessageId] = useState(() => getComposerDraft(scope)?.replyToMessageId || null);
@@ -239,6 +241,7 @@ export function Composer({
       (recipients.length || slash.match) &&
       !ambiguous &&
       !editingMention &&
+      !checkingDraftPermission &&
       !busy &&
       !firstProject?.disabled &&
       filesReady &&
@@ -566,7 +569,7 @@ export function Composer({
   }, [text, slashTarget?.id, actions.scope, slash.ready, slash.error]);
   const settingsSaveChain = useRef(Promise.resolve());
   const activeSettingsSave = useRef(null);
-  function saveSettings(botId, patch) {
+  async function saveSettings(botId, patch) {
     if (!draft) {
       const next = settingsSaveChain.current
         .catch(() => {})
@@ -585,6 +588,15 @@ export function Composer({
     }
     const accountId = members.find(member => member.id === botId)?.accountId;
     const provider = accounts.find(account => account.id === accountId)?.provider;
+    const capability = permissionCapability(patch.permission);
+    if (capability && actions.permission !== patch.permission && actions.data?.[capability] !== true) {
+      setCheckingDraftPermission(true);
+      try {
+        const available = await invoke("composerActions", { botId, draft, settings: settingsByBot[botId], refresh: true });
+        if (available[capability] !== true)
+          throw new Error(tr("当前原生工具未提供所选操作权限。", "This CLI does not offer that permission mode."));
+      } finally { setCheckingDraftPermission(false); }
+    }
     setSettingsByBot(previous => {
       const settings = { ...previous[botId], ...patch };
       if (state.permissionModes?.[provider]?.includes("plan")) {
