@@ -124,6 +124,9 @@ async function verifyChannelPermissionChoices(page, pending) {
   const stored = () => page.evaluate(async () =>
     (await window.boteam.invoke('snapshot')).channels.find(c => c.id === 'telegram')?.permission)
   await expect.poll(stored).toBe('edits')
+  await expect(dialog.locator('.setup-connection-row strong')).toHaveCSS('font-weight', '400')
+  await expect(dialog.getByRole('heading', { name: '访问控制' })).toHaveCSS('font-weight', '400')
+  await expect(dialog.locator('.setup-field').first()).toHaveCSS('font-weight', '400')
   for (const [id, mode, excluded] of [
     ['fixture-bot', 'edits', 'full'],
     ['codex', 'read-only', 'edits'],
@@ -323,6 +326,11 @@ async function verifySettings(page) {
     '插件与技能','MCP 服务器','工具审批与文件访问','Git 工作树','通知']) {
     await nav.getByRole('button', { name, exact: true }).click()
     await expect(main.getByRole('heading', { name, level: 1 })).toBeVisible()
+    if (name === '频道配置') {
+      await expect(main.getByRole('heading', { name })).toHaveCSS('font-weight', '400')
+      await expect(main.locator('[data-channel="telegram"] strong')).toHaveCSS('font-weight', '400')
+      await expect(main.getByRole('button', { name: '配置 Telegram' })).toHaveCSS('font-weight', '400')
+    }
   }
   const toggle = main.getByRole('switch', { name: '运行失败' })
   await toggle.click()
@@ -564,6 +572,10 @@ try {
     const cards = page.locator('.channel-card')
     const platformNames = ['WeChat', 'WeCom', 'QQ', 'Feishu / Lark', 'DingTalk', 'Telegram', 'Discord', 'WhatsApp']
     await expect(cards).toHaveCount(platformNames.length)
+    await expect(page.locator('.window-title')).toHaveCSS('font-weight', '400')
+    await expect(page.getByRole('heading', { name: '平台配置' })).toHaveCSS('font-weight', '400')
+    await expect(cards.first().getByRole('heading')).toHaveCSS('font-weight', '400')
+    await expect(cards.first().getByRole('button')).toHaveCSS('font-weight', '400')
     for (const name of platformNames) {
       await expect(sideButton(name)).toBeVisible()
       await expect(cards.getByRole('button', { name: '配置 ' + name, exact: true })).toBeVisible()
@@ -574,6 +586,7 @@ try {
     await expect(sideButton('Telegram')).toBeVisible()
     await cards.getByRole('button', { name: '配置 WeCom' }).click()
     const channelDialog = page.getByRole('dialog')
+    await expect(channelDialog.getByRole('heading', { name: 'WeCom' })).toHaveCSS('font-weight', '400')
     await expect(channelDialog.getByRole('textbox', { name: /Bot ID/i })).toBeVisible()
     await expect(channelDialog.locator('input[type=password]')).toBeVisible()
     await page.keyboard.press('Escape')
@@ -633,6 +646,7 @@ try {
     await expect(button('频道')).toHaveAttribute('aria-current', 'page')
     const main = page.getByRole('main')
     await expect(main.getByRole('log').getByRole('article').filter({ hasText: history.message })).toBeVisible()
+    await expect(page.locator('.window-title')).toHaveCSS('font-weight', '400')
     const legacyReply = main.locator('#message-old-agy-reply')
     await expect(legacyReply).toContainText('运行失败')
     await expect(legacyReply.locator('.task-error')).toContainText(/地区|区域/)

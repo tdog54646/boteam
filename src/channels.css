@@ -1,4 +1,5 @@
 /* The desktop shell owns the canvas, title bar and both navigation columns. */
+.channel-topbar .window-title { font-weight: 400; }
 .channel-page { container-type: inline-size; }
 .channel-directory {
   width: min(100%, 960px);
@@ -16,7 +17,7 @@
   margin-bottom: 18px;
   border-bottom: 1px solid var(--line);
 }
-.channel-toolbar h2 { font-size: 20px; line-height: 27px; font-weight: 600; letter-spacing: -.025em; }
+.channel-toolbar h2 { font-size: 20px; line-height: 27px; font-weight: 400; letter-spacing: -.025em; }
 .channel-toolbar p { margin-top: 4px; font-size: 13px; line-height: 20px; color: var(--muted); }
 .channel-tools { display: flex; align-items: center; gap: 5px; }
 .channel-search {
@@ -49,9 +50,9 @@
   background: var(--surface);
 }
 .channel-card-info { flex: 1; min-width: 0; }
-.channel-card-info h2 { font-size: 15px; line-height: 20px; font-weight: 590; }
+.channel-card-info h2 { font-size: 15px; line-height: 20px; font-weight: 400; }
 .channel-card-info p { color: var(--muted); margin-top: 3px; font-size: 13px; line-height: 18px; }
-.channel-card .btn { flex: none; }
+.channel-card .btn { flex: none; font-weight: 400; }
 .channel-status { display: inline-flex; align-items: center; gap: 5px; margin-top: 5px; font-size: 12px; color: var(--muted); }
 .channel-status::before { content: ""; width: 5px; height: 5px; background: currentColor; border-radius: 100%; }
 .channel-status.connected { color: var(--success); }

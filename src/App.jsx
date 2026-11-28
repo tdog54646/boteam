@@ -566,7 +566,7 @@ export default function App() {
         </>
       )}
       <main className="main" hidden={panelVisible && panel.expanded}>
-        <header className="topbar">
+        <header className={section === "channels" ? "topbar channel-topbar" : "topbar"}>
           {collapsed && !profilePage && (
             <IconButton
               icon={PanelLeftOpen}

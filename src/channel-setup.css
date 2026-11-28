@@ -8,6 +8,7 @@
 }
 .channel-setup-dialog[open] { display: flex; flex-direction: column; }
 .channel-setup-dialog::backdrop { background: rgb(0 0 0 / 27%); }
+.channel-setup-dialog :is(h2, h3, h4, strong, b, .btn) { font-weight: 400; }
 .channel-setup-heading { flex: none; }
 .channel-setup-heading .channel-icon { width: 32px; height: 32px; border-radius: 8px; }
 .channel-setup-heading > div { flex: 1; min-width: 0; }
@@ -20,7 +21,7 @@
 }
 .channel-setup-body > .notice { margin: 0 0 16px; }
 .channel-guide { margin-bottom: 20px; }
-.channel-setup-body h3 { margin: 0 0 8px; font-size: 13px; line-height: 18px; font-weight: 550; }
+.channel-setup-body h3 { margin: 0 0 8px; font-size: 13px; line-height: 18px; }
 .channel-guide ol { padding-left: 1.4em; color: var(--muted); font-size: 13px; line-height: 19px; }
 .channel-guide li + li { margin-top: 4px; }
 .channel-guide-link { color: var(--accent); text-decoration: underline; font-size: inherit; }
@@ -32,7 +33,6 @@
   gap: 6px;
   color: var(--fg);
   font-size: 13px;
-  font-weight: 520;
 }
 .setup-field b { color: var(--danger); }
 .setup-field :is(input, select, textarea), .setup-qr-pin input, .channel-setup-body .channel-policy-input {
@@ -62,7 +62,6 @@
   border-radius: 8px;
   font-size: 13px;
   line-height: 18px;
-  font-weight: 510;
   background: var(--surface);
   box-shadow: inset 0 0 0 1px var(--line-strong);
 }
@@ -78,7 +77,7 @@
 .setup-configured { display: grid; gap: 16px; }
 .setup-connection-row, .setup-access-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .setup-connection-row > div, .setup-access-row > div { min-width: 0; }
-.setup-connection-row strong, .setup-access-row strong { display: block; font-size: 14px; font-weight: 540; overflow-wrap: anywhere; }
+.setup-connection-row strong, .setup-access-row strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
 .setup-connection-row small, .channel-binding-section small { display: block; font-size: 12px; line-height: 17px; color: var(--muted); overflow-wrap: anywhere; }
 .channel-binding-section { border-top: 1px solid var(--line); padding-top: 16px; }
 .channel-operation-permission { margin-top: 14px; }
