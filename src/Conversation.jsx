@@ -20,6 +20,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { shouldOfferAccountReauth } from "../desktop/auth-errors.mjs";
+import { antigravityLocationMessage, isAntigravityLocationWarning } from "../desktop/adapters/antigravity-errors.mjs";
 import { linkedChatId } from "../desktop/chat-transfer.mjs";
 import { classifyPreviewFile, fileBasename, parseFileReference } from "../desktop/file-preview-rules.mjs";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -829,6 +830,7 @@ function AssistantTurnBody({
   onQuote,
   invoke,
   onLogin,
+  onConfigureChannel,
   onError,
   openWorkspace,
 }) {
@@ -859,6 +861,7 @@ function AssistantTurnBody({
       : "";
 
   const failed = task && ["failed", "interrupted"].includes(task.status);
+  const locationFailure = task?.status === "failed" && task.error === antigravityLocationMessage;
   const botId = message?.botId || task?.botId || bot?.id;
 
   const handleOpenFile = useCallback(
@@ -1089,8 +1092,12 @@ function AssistantTurnBody({
       )}
 
       {/* Errors, re-auth, & interactive approval / NativeQuestions */}
-      {task?.status === "failed" && task.error && <div className="task-error">{task.error}</div>}
-      {shouldOfferAccountReauth(task, account) && (
+      {task?.status === "failed" && task.error && <div className="task-error">{locationFailure
+        ? tr(antigravityLocationMessage, "Google rejected this Antigravity request because the region is unsupported (400 FAILED_PRECONDITION). Use the service in a supported region or select another available bot.")
+        : task.error}</div>}
+      {locationFailure && onConfigureChannel &&
+        <button type="button" className="text-btn" onClick={onConfigureChannel}>{tr("更换频道 Bot", "Change channel bot")}</button>}
+      {!locationFailure && shouldOfferAccountReauth(task, account) && (
         <button type="button" className="text-btn reauth" onClick={() => onLogin(account.id)}>
           <KeyRound size={12} />
           {tr("重新授权", "Reauthorize")}
@@ -1227,6 +1234,8 @@ export function Conversation({
 }) {
   const tr = useLanguage();
   const { accounts, bots, messages, tasks } = state;
+  const channel = state.channels?.find(c => c.configured && c.chats?.some(entry => entry.id === chat.id));
+  const configureChannel = channel ? () => open({ type: "channelSetup", id: channel.id }) : undefined;
   function chatLink(url, children, key) {
     return (
       <a
@@ -1284,6 +1293,7 @@ export function Conversation({
           canQuote={false}
           invoke={invoke}
           onLogin={(id) => open({ type: "login", id })}
+          onConfigureChannel={configureChannel}
           onError={onError}
           openWorkspace={openWorkspace}
         />
@@ -1344,6 +1354,10 @@ export function Conversation({
                 const task = m.taskId && jobs.find((t) => t.id === m.taskId);
                 const account = accounts.find((a) => a.id === (task?.accountId || bot?.accountId));
                 const user = m.author === "user";
+                // Older agy versions reported the standalone regional warning as a completed reply.
+                const legacyLocationFailure = !user && task?.status === "done" && account?.provider === "antigravity"
+                  && task.totalTokens == null && isAntigravityLocationWarning(m.text)
+                  && !(Array.isArray(m.segments) && m.segments.some(segment => segment?.phase === "final_answer"));
                 const sender = user && m.name && m.name !== "我" ? m.name : null;
                 const quoted = publicMessages.get(m.replyToMessageId);
                 const canQuote = !chat.archived && publicMessages.has(m.id);
@@ -1422,15 +1436,16 @@ export function Conversation({
                     ) : (
                       <>
                         <AssistantTurnBody
-                          message={m}
-                          task={task}
+                          message={legacyLocationFailure ? { ...m, text: "", segments: [] } : m}
+                          task={legacyLocationFailure ? { ...task, status: "failed", error: antigravityLocationMessage } : task}
                           bot={bot}
                           account={account}
                           group={group}
-                          canQuote={canQuote}
+                          canQuote={canQuote && !legacyLocationFailure}
                           onQuote={() => quoteControl.current?.select(m.id)}
                           invoke={invoke}
                           onLogin={(id) => open({ type: "login", id })}
+                          onConfigureChannel={configureChannel}
                           onError={onError}
                           openWorkspace={openWorkspace}
                         />

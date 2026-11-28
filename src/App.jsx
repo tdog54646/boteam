@@ -20,6 +20,8 @@ import { Sidebar, ChatSearch } from "./Sidebar";
 import { ProjectActionDialog, ProjectDialog } from "./ProjectDialog";
 import { Home } from "./Home";
 import { ChannelNavigation, Channels } from "./Channels";
+import { ChannelSetupDialog } from "./ChannelSetupDialog";
+import { platforms } from "../desktop/channels/catalog.mjs";
 import { ScheduleNavigation, SchedulesPage, scheduleCreatePages } from "./Schedules";
 import { ArchivedChats, HistoryButtons, SidebarTitlebar, WorkspaceNavigation } from "./WorkspaceNavigation";
 import { SettingsNavigation, settingsPages } from "./SettingsNavigation";
@@ -462,6 +464,7 @@ export default function App() {
   const dialogAccount =
     dialog?.id && state.accounts.find((a) => a.id === dialog.id);
   const dialogProject = dialog?.id && state.projects.find(p => p.id === dialog.id);
+  const dialogPlatform = dialog?.type === "channelSetup" && platforms.find(p => p.id === dialog.id);
   const draftTitle = draft && !draft.legacyHome && (draft.name || (draft.kind === "group" ? t("新群聊", "New group chat") : panelMembers[0]?.name));
   const channelPage = page === "channels";
   const schedulePage = page === "schedules" || page.startsWith(schedulePrefix);
@@ -633,7 +636,7 @@ export default function App() {
         ) : profilePage ? (
           <ProfilePage state={state} invoke={invoke}/>
         ) : channelPage ? (
-          <Channels state={state} invoke={invoke} refreshSnapshot={refresh} select={select}/>
+          <Channels state={state} invoke={invoke} refreshSnapshot={refresh} open={setDialog}/>
         ) : schedulePage ? (
           <SchedulesPage state={state} page={page} invoke={invoke} select={select} refresh={refresh} open={setDialog}/>
         ) : ["general", "appearance", "notifications", "shortcuts"].includes(page) ? (
@@ -737,6 +740,9 @@ export default function App() {
           <ChatSearch state={state} select={select} />
         </Modal>
       )}
+      {dialogPlatform && <ChannelSetupDialog key={dialogPlatform.id} platform={dialogPlatform}
+        config={state.channels?.find(channel => channel.id === dialogPlatform.id)} state={state}
+        invoke={invoke} refreshSnapshot={refresh} onClose={close} onManageBots={() => select("bots")}/>}
       {dialog?.type === "project" && (!dialog.id || dialogProject) && (
         <ProjectDialog key={dialog.id || "import"} project={dialogProject} initialChat={dialog.initialChat}
           initialFolder={dialog.initialFolder} invoke={invoke} onDone={async createdId => {

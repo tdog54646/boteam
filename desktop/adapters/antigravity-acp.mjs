@@ -5,8 +5,10 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { invocation } from './antigravity-profile.mjs'
 import { inputWindowError } from './usage.mjs'
+import { antigravityLocationError, isAntigravityLocationRpcError } from './antigravity-errors.mjs'
 
 function rpcError(error, method, configId) {
+  if (isAntigravityLocationRpcError(error)) return antigravityLocationError()
   if (method === 'session/prompt') {
     const overflow = inputWindowError(error?.message)
     if (overflow) return overflow

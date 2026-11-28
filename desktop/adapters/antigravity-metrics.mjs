@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { uuid } from './antigravity-profile.mjs'
 import { disjointTurnMetrics } from './usage.mjs'
+import { antigravityLocationReason } from './antigravity-errors.mjs'
 
 const maxTranscriptBytes = 8 * 1024 * 1024
 const plannerStepType = 15
@@ -109,6 +110,23 @@ export async function readAntigravityStepWatermark(home, sessionId) {
   } catch {
     return -1
   }
+}
+
+// agy stores a provider refusal in an ERROR_MESSAGE step (17), while a model
+// quoting the identical diagnostic writes it in a PLANNER_RESPONSE step (15).
+export async function readAntigravityLocationFailure(home, sessionId, afterIdx) {
+  if (!uuid.test(sessionId)) return
+  let db
+  try {
+    db = await openConversationDb(await resolveCliDir(home), sessionId)
+    const row = db.prepare(`SELECT step_type, instr(step_payload, CAST(? AS BLOB)) AS hasReason
+      FROM steps WHERE idx > ? AND step_type IN (14,15,17) ORDER BY idx DESC LIMIT 1`).get(antigravityLocationReason, afterIdx)
+    if (row?.hasReason) {
+      if (row.step_type === 17) return true
+      if (row.step_type === plannerStepType) return false
+    }
+  } catch { /* The native archive may still be flushing, or may use a different schema. */ }
+  finally { db?.close() }
 }
 
 async function readTranscriptPlannerSteps(directory, sessionId, afterIdx) {

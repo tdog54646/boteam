@@ -1,11 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import { ChevronRight, RotateCw, Search, SlidersHorizontal } from "lucide-react";
 import { platforms } from "../desktop/channels/catalog.mjs";
 import { useLanguage } from "./preferences";
 import { Button, IconButton, Notice, errorText } from "./ui";
 import { PlatformIcon, statusLabel } from "./ChannelPlatform";
-import { ChannelSetupDialog } from "./ChannelSetupDialog";
 import { ChatRowTitle } from "./ChatRowTitle";
 import "./channels.css";
 
@@ -123,15 +121,13 @@ export function ChannelNavigation({ state, activeChatId, onOverview, onOpenChat,
   </>;
 }
 
-export function Channels({ select, state, invoke, refreshSnapshot, inSettings = false }) {
+export function Channels({ open, state, invoke, refreshSnapshot, inSettings = false }) {
   const t = useLanguage();
-  const [dialogId, setDialogId] = useState("");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const configs = new Map((state.channels || []).map(row => [row.id, row]));
   const needle = query.trim().toLocaleLowerCase();
-  const setup = platforms.find(p => p.id === dialogId);
   const cards = platforms.filter(p => [p.name, ...p.description].some(text => text.toLocaleLowerCase().includes(needle)));
 
   async function refresh() {
@@ -166,14 +162,12 @@ export function Channels({ select, state, invoke, refreshSnapshot, inSettings = 
               : <><h2>{p.name}</h2><p>{t(...p.description)}</p></>}
               {config?.configured && <small className={"channel-status " + config.status}>{statusLabel(config.status, t)}</small>}
             </div>
-            <Button aria-label={t("配置 ", "Configure ") + p.name} onClick={() => setDialogId(p.id)}>
+            <Button aria-label={t("配置 ", "Configure ") + p.name} onClick={() => open({ type: "channelSetup", id: p.id })}>
               {config?.configured ? t("管理", "Manage") : t("配置", "Configure")}</Button>
           </article>;
         })}
       </div>
       {!cards.length && <p className="channel-no-results">{t("没有匹配的平台", "No matching platforms")}</p>}
     </section>
-    {setup && createPortal(<ChannelSetupDialog key={setup.id} platform={setup} config={configs.get(setup.id)}
-      state={state} invoke={invoke} refreshSnapshot={refreshSnapshot} onClose={() => setDialogId("")} onManageBots={() => select("bots")}/>, document.body)}
   </div>;
 }

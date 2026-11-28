@@ -11,6 +11,7 @@ import { chunks, verifiedUrl, jsonRequest } from '../desktop/channels/transport.
 import { permissionModes as codexModes } from '../desktop/adapters/codex.mjs'
 import { permissionModes as claudeModes } from '../desktop/adapters/claude.mjs'
 import { permissionModes as agyModes } from '../desktop/adapters/antigravity.mjs'
+import { antigravityLocationError } from '../desktop/adapters/antigravity-errors.mjs'
 
 const safeStorage = { isEncryptionAvailable: () => true,
   encryptString: value => Buffer.from(value).reverse(), decryptString: bytes => Buffer.from(bytes).reverse().toString() }
@@ -161,6 +162,36 @@ test('authorized overload is visible and answered, and disconnecting during a ru
   assert.ok(f.ws.snapshot().messages.some(m => m.text === 'local answer'))
   await f.restart()
   assert.equal(f.ws.channels.snapshot()[0].chats[0].unconfirmed, 1)
+})
+
+test('Telegram reports a regional refusal once and keeps other native error details on the desktop', async t => {
+  const f = await workspace(t), id = 'telegram'
+  const replies = []
+  let attempts = 0
+  f.ws.adapters.antigravity.run = async ({ emit, account }) => {
+    emit({ type: 'identity', key: account.identity, value: account.identity })
+    if (++attempts === 1) throw antigravityLocationError()
+    throw new Error('private fixture detail')
+  }
+  await f.ws.handle('channelSave', { id, botId: f.bots.antigravity, fields: { token: '123:fixture' } })
+  const receive = event => f.contexts.get(id).receive({ id: event, room: 'r', sender: 'u', text: 'hi',
+    reply: async text => replies.push(text) })
+  receive('pair')
+  await f.ws.handle('channelPair', { id, requestId: f.ws.channels.snapshot()[0].pending[0].id })
+  receive('first')
+  receive('first')
+  await Promise.all([...f.ws.lanes.values()])
+  assert.equal(attempts, 1)
+  assert.match(replies.at(-1), /Google.*地区.*频道配置/)
+  const task = f.ws.snapshot().tasks[0]
+  assert.equal(task.status, 'failed')
+  assert.match(task.error, /400 FAILED_PRECONDITION/)
+  assert.ok(!task.authExpired)
+  receive('next')
+  await Promise.all([...f.ws.lanes.values()])
+  assert.equal(attempts, 2)
+  assert.match(replies.at(-1), /桌面端查看任务状态/)
+  assert.doesNotMatch(replies.join(' '), /private fixture detail/)
 })
 
 test('Telegram authenticates, confirms long-poll eligibility, routes one text and acknowledges its update', async t => {

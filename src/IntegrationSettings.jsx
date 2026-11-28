@@ -178,7 +178,7 @@ function AccountUsage({ account, bots, quotas, invoke, open, refresh }) {
 export function IntegrationSettings({ page, state, invoke, open, select, refresh }) {
   const t = useLanguage();
   if (page === "integrations-channels")
-    return <Channels inSettings select={select} state={state} invoke={invoke} refreshSnapshot={refresh}/>;
+    return <Channels inSettings open={open} state={state} invoke={invoke} refreshSnapshot={refresh}/>;
   if (page !== "usage") return <CatalogPage page={page} state={state} invoke={invoke} select={select}/>;
   return <SettingsPage title={t("使用情况", "Usage")} detail={t("按订阅账号查看套餐、模型额度和重置时间。", "View plans, model quotas and reset times by subscription account.")}>
     {state.accounts.map(account => <AccountUsage key={account.id + "/" + account.bindingRevision} account={account}

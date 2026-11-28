@@ -7,6 +7,7 @@ import { ChannelError, PairingExpired, PairingRestart, chunks } from './channels
 import { telegram, dingtalk, discord } from './channels/gateways.mjs'
 import { wecom, feishu, whatsapp, qq } from './channels/clients.mjs'
 import { wechat } from './channels/wechat.mjs'
+import { antigravityLocationMessage } from './adapters/antigravity-errors.mjs'
 
 const adapters = { telegram, dingtalk, discord, qq, wechat, wecom, feishu, whatsapp }
 const diagnostic = e => e instanceof ChannelError ? e.message : '请检查网络、平台凭据与机器人配置。'
@@ -481,9 +482,12 @@ export class Channels {
       await this.workspace.lanes.get(chatId + '/' + botId)
       if (signal.aborted) return
       checkAccess()
-      const result = this.db.get(`SELECT t.status,m.text FROM tasks t LEFT JOIN messages m ON m.taskId=t.id
+      const result = this.db.get(`SELECT t.status,t.error,m.text FROM tasks t LEFT JOIN messages m ON m.taskId=t.id
         WHERE t.messageId=? AND t.botId=?`, messageId, botId)
-      const output = result?.status === 'done' && result.text ? result.text : 'BoTeam 未生成回复，请在桌面端查看任务状态。'
+      let output = 'BoTeam 未生成回复，请在桌面端查看任务状态。'
+      if (result?.status === 'done' && result.text) output = result.text
+      if (result?.status === 'failed' && result.error === antigravityLocationMessage)
+        output = 'Google 拒绝了当前地区的 Antigravity 请求。请联系工作台管理员，在频道配置中选择其他可用的 Bot 后重新发送。'
       const parts = row.id === 'discord' ? discordChunks(output, delivery.chunkSize) : chunks(output)
       for (const [i, part] of parts.entries()) {
         if (signal.aborted) return

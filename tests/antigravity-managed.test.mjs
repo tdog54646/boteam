@@ -82,6 +82,65 @@ test('ACP distinguishes input-size errors, subscription limits and a max_tokens 
   }
 })
 
+test('a native location refusal fails the turn once, even when ACP presents it as a successful message', mac, async t => {
+  const { account, cwd, state, seen } = await setup(t)
+  Object.assign(account, await adapter.detect(account))
+  const warning = '\n⚠ FAILED_PRECONDITION (code 400): User location is not supported for the API use.\n'
+  const chunks = texts => texts.map(text => ({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } }))
+  const split = chunks([warning.slice(0, 15), warning.slice(15)])
+  const events = []
+  const run = () => adapter.run({ account, cwd, prompt: 'test', emit: event => events.push(event) })
+  for (const [i, outcome] of [
+    { promptUpdates: split, stopReason: 'end_turn' },
+    { promptError: { code: -32000, message: warning.trim() } },
+  ].entries()) {
+    await state(outcome)
+    await assert.rejects(run(), error => error.code === 'AGY_UNSUPPORTED_LOCATION' && !error.authExpired)
+    assert.equal(events.filter(e => e.type === 'text').length, 0)
+    assert.equal((await seen()).trim().split('\n').map(JSON.parse).filter(e => e.method === 'session/prompt').length, i + 1)
+  }
+  const reply = '这段提示是 Google 返回的错误。'
+  await state({ promptUpdates: chunks([warning, reply]), stopReason: 'end_turn' })
+  await run()
+  assert.equal(events.filter(e => e.type === 'text').map(e => e.value).join(''), warning + reply)
+})
+
+test('only a current native error step marks mixed output or a quoted location warning as failed', mac, async t => {
+  const { account, cwd, state } = await setup(t)
+  Object.assign(account, await adapter.detect(account))
+  const directory = join(account.source, '.gemini/antigravity-cli/conversations')
+  await mkdir(directory, { recursive: true })
+  const warning = '\n⚠ FAILED_PRECONDITION (code 400): User location is not supported for the API use.\n'
+  for (const [stepType, before, fails] of [[17, '开始检查。', true], [15, '', false], [null, '引用原文：', false]]) {
+    await state({ batchPromptResult: true, promptUpdates: [
+      { sessionUpdate: 'tool_call', toolCallId: 'progress', kind: 'read', title: 'Read', status: 'completed' },
+      { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: before + warning } },
+    ] })
+    let db
+    let reply = ''
+    const finalSegments = []
+    try {
+      const run = adapter.run({ account, cwd, prompt: 'request', emit(event) {
+        if (event.type === 'session') {
+          db = new DatabaseSync(join(directory, event.value + '.db'))
+          db.exec('CREATE TABLE steps(idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)')
+          db.prepare('INSERT INTO steps VALUES(0,17,?)').run(Buffer.from(warning))
+        }
+        if (event.callId === 'progress' && stepType)
+          db.prepare('INSERT INTO steps VALUES(1,?,?)').run(stepType, Buffer.from(warning))
+        if (event.type === 'text') {
+          reply += event.value
+          if (event.phase === 'final_answer') finalSegments.push(event.value)
+        }
+      } })
+      if (fails) await assert.rejects(run, { code: 'AGY_UNSUPPORTED_LOCATION' })
+      else await run
+      assert.equal(reply, fails ? before : before + warning)
+      assert.deepEqual(finalSegments, stepType === 15 ? [warning] : [])
+    } finally { db?.close() }
+  }
+})
+
 test(
   'managed native profile binds paid statusline identity, reads per-model effort, and runs ACP',
   mac,

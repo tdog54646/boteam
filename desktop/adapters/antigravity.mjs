@@ -17,6 +17,7 @@ import {
   uuid,
 } from './antigravity-profile.mjs'
 import { authenticatePersonal, withAcp } from './antigravity-acp.mjs'
+import { antigravityLocationError, couldBeAntigravityLocationWarning, isAntigravityLocationWarning } from './antigravity-errors.mjs'
 import { cliPreferences, externalSource, hasCliLogin, installCliLogin, withCliLogin } from './antigravity-import.mjs'
 import { commandUpdates, sessionSkills, sessionSlashCommands } from './antigravity-actions.mjs'
 import { slashPrompt } from './native-slash.mjs'
@@ -26,6 +27,7 @@ import { agentActivity, commandActivity, fileActivity, toolCallActivity, webActi
 import { dispatchAgentName } from '../subagent-names.mjs'
 import { existingAntigravityChildren, waitForAntigravityChildren } from './antigravity-subagents.mjs'
 import {
+  readAntigravityLocationFailure,
   readAntigravityStepWatermark,
   readAntigravityTurnMetrics,
   usageUpdateMetrics,
@@ -568,6 +570,16 @@ export async function run({
     accumulatedApiMs = 0,
     latestUsageUpdate = null,
     autoApproveRecovery = false
+  let pendingWarning = null, promptHasText = false
+  const emitText = async (text, phase) => {
+    if (text.trim()) promptHasText = true
+    if (emittedText && turnHasTool) {
+      segmentSeq++
+      turnHasTool = false
+    }
+    emittedText = true
+    await emit({ type: 'text', value: text, itemId: 'agy-seg-' + segmentSeq, ...(phase && { phase }) })
+  }
   const toolCalls = new Map()
   const currentApiDurationMs = () =>
     Math.max(
@@ -645,12 +657,18 @@ export async function run({
       await emit({ type: 'title', value: p.update.title })
     if (p.update?.sessionUpdate === 'agent_message_chunk' && p.update.content?.type === 'text') {
       if (apiCallStartMs === null) apiCallStartMs = performance.now()
-      if (emittedText && turnHasTool) {
-        segmentSeq++
-        turnHasTool = false
+      let text = p.update.content.text
+      if (pendingWarning !== null) {
+        text = pendingWarning + text
+        pendingWarning = ''
+        const marker = text.lastIndexOf('⚠')
+        if (couldBeAntigravityLocationWarning(marker < 0 ? text : text.slice(marker))) {
+          const preceding = marker > 0 ? text.slice(0, marker).replace(/\r?\n$/, '') : ''
+          pendingWarning = text.slice(preceding.length)
+          text = preceding
+        }
       }
-      emittedText = true
-      await emit({ type: 'text', value: p.update.content.text, itemId: 'agy-seg-' + segmentSeq })
+      if (text) await emitText(text)
     }
     if (p.update?.sessionUpdate === 'usage_update') {
       latestUsageUpdate = p.update
@@ -764,12 +782,24 @@ export async function run({
       }
       toolCalls.clear()
     }
-    apiCallStartMs = performance.now()
-    const result = await request('session/prompt', {
-      sessionId: id,
-      prompt: [{ type: 'text', text: prompt }, ...images],
-    })
-    await drainEvents()
+    async function promptSession(content, watermark, isFreshSession = false) {
+      pendingWarning = ''
+      promptHasText = false
+      apiCallStartMs = performance.now()
+      const result = await request('session/prompt', { sessionId: id, prompt: content })
+      await drainEvents()
+      let phase
+      if (isAntigravityLocationWarning(pendingWarning)) {
+        const nativeFailure = watermark >= 0 || isFreshSession
+          ? await readAntigravityLocationFailure(profile.home, id, watermark) : undefined
+        if (nativeFailure ?? !promptHasText) throw antigravityLocationError()
+        if (nativeFailure === false) phase = 'final_answer'
+      }
+      if (pendingWarning) await emitText(pendingWarning, phase)
+      pendingWarning = null
+      return result
+    }
+    const result = await promptSession([{ type: 'text', text: prompt }, ...images], baselineStepIdx, !threadId)
     if (apiCallStartMs !== null) {
       accumulatedApiMs += Math.max(0, performance.now() - apiCallStartMs)
       apiCallStartMs = null
@@ -860,12 +890,8 @@ export async function run({
             }
 
             turnHasTool = true
-            apiCallStartMs = performance.now()
-            const followup = await request('session/prompt', {
-              sessionId: id,
-              prompt: [{ type: 'text', text: recoveryPrompt }],
-            })
-            await drainEvents()
+            const watermark = await readAntigravityStepWatermark(profile.home, id)
+            const followup = await promptSession([{ type: 'text', text: recoveryPrompt }], watermark)
             if (apiCallStartMs !== null) {
               accumulatedApiMs += Math.max(0, performance.now() - apiCallStartMs)
               apiCallStartMs = null

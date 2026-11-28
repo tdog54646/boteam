@@ -42,12 +42,26 @@ async function seedChannelHistory() {
       }
       // Mimic an existing offline binding without starting an IM transport.
       workspace.db.run('INSERT INTO channels(id,botId,enabled,credentials,generation) VALUES(?,?,0,?,?)',
-        'telegram', 'fixture-bot', Buffer.alloc(0), 'fixture-generation')
-      workspace.insertChat(chatId, { kind: 'direct', members: ['fixture-bot'] })
+        'telegram', 'antigravity', Buffer.alloc(0), 'fixture-generation')
+      workspace.insertChat(chatId, { kind: 'direct', members: ['antigravity'] })
+      workspace.db.run('UPDATE chats SET name=? WHERE id=?', title, chatId)
       workspace.db.run('INSERT INTO channel_chats(channel,identity,room,sender,botId,chatId) VALUES(?,?,?,?,?,?)',
-        'telegram', 'fixture', 'room', 'sender', 'fixture-bot', chatId)
+        'telegram', 'fixture', 'room', 'sender', 'antigravity', chatId)
+      const now = new Date().toISOString()
       workspace.db.run('INSERT INTO messages(id,chatId,author,name,text,createdAt,recipients) VALUES(?,?,?,?,?,?,?)',
-        'fixture-message', chatId, 'user', '频道用户', message, new Date().toISOString(), JSON.stringify(['fixture-bot']))
+        'fixture-message', chatId, 'user', '频道用户', message, now, JSON.stringify(['antigravity']))
+      workspace.db.run('INSERT INTO tasks(id,chatId,botId,accountId,messageId,status,tool,createdAt) VALUES(?,?,?,?,?,?,?,?)',
+        'old-agy-task', chatId, 'antigravity', 'antigravity', 'fixture-message', 'done', 'agy', now)
+      const quote = '\n⚠ FAILED_PRECONDITION (code 400): User location is not supported for the API use.\n'
+      workspace.db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId) VALUES(?,?,?,?,?,?,?,?,?)',
+        'old-agy-reply', chatId, 'antigravity', 'bot', 'Antigravity', quote, now, '[]', 'old-agy-task')
+      workspace.db.run('INSERT INTO messages(id,chatId,author,name,text,createdAt,recipients) VALUES(?,?,?,?,?,?,?)',
+        'quote-request', chatId, 'user', '频道用户', '请原样引用这条报错。', now, JSON.stringify(['antigravity']))
+      workspace.db.run('INSERT INTO tasks(id,chatId,botId,accountId,messageId,status,tool,createdAt) VALUES(?,?,?,?,?,?,?,?)',
+        'quote-task', chatId, 'antigravity', 'antigravity', 'quote-request', 'done', 'agy', now)
+      workspace.db.run('INSERT INTO messages(id,chatId,botId,author,name,text,createdAt,recipients,taskId,segments) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        'quote-reply', chatId, 'antigravity', 'bot', 'Antigravity', quote, now, '[]', 'quote-task',
+        JSON.stringify([{ id: 'agy-seg-0', text: quote, phase: 'final_answer' }]))
     })
     return { title, message }
   } finally {
@@ -564,6 +578,16 @@ try {
     await expect(button('频道')).toHaveAttribute('aria-current', 'page')
     const main = page.getByRole('main')
     await expect(main.getByRole('log').getByRole('article').filter({ hasText: history.message })).toBeVisible()
+    const legacyReply = main.locator('#message-old-agy-reply')
+    await expect(legacyReply).toContainText('运行失败')
+    await expect(legacyReply.locator('.task-error')).toContainText(/地区|区域/)
+    await expect(legacyReply.locator('.turn-final-answer')).toHaveCount(0)
+    const quotedReply = main.locator('#message-quote-reply')
+    await expect(quotedReply.locator('.turn-final-answer')).toContainText('User location is not supported')
+    await expect(quotedReply.locator('.task-error')).toHaveCount(0)
+    await legacyReply.getByRole('button', { name: '更换频道 Bot' }).click()
+    await expect(page.getByRole('dialog', { name: 'Telegram' }).getByRole('combobox', { name: '接收消息的 Bot' })).toHaveValue('antigravity')
+    await page.keyboard.press('Escape')
     await channelSidebar.getByRole('button', { name: /频道配置/ }).click()
     await expect(main.locator('.channel-card')).toHaveCount(platformNames.length)
     await verifyChannelPermissions(page)
